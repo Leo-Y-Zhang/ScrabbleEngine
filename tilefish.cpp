@@ -2012,6 +2012,8 @@ class MoveGen {
     u64 key;    // multiset key of the non-blank tiles played
   };
   ShadowSubset front_[RACK_SIZE + 1][64];
+  ShadowSubset frontw_[RACK_SIZE + 1][64];  // frontier of the subsets that spell a word on their own
+  int nfrontw_[RACK_SIZE + 1];
   ShadowSubset allsub_[RACK_SIZE + 1][130];
   int nallsub_[RACK_SIZE + 1];
   int nfront_[RACK_SIZE + 1];
@@ -2120,7 +2122,7 @@ class MoveGen {
         anchor_ = 7;
         last_anchor_ = -1;
         no_right_ = true;
-        if (mode_ == GEN_BEST && use_shadow_ && use_wmp_ && rk_[BLANK] < 2 && !lex_->amap0.empty()) {
+        if (mode_ == GEN_BEST && use_shadow_ && use_wmp_ && !lex_->amap0.empty()) {
           prepare_shadow();
           wmp_search_anchor(7);  // the opening: every span through the centre square
         } else {
@@ -2252,22 +2254,29 @@ class MoveGen {
       }
       if (i == nd) break;
     }
+    for (int k = 0; k <= RACK_SIZE; ++k) nfrontw_[k] = 0;
     for (int k = 1; k <= nr_; ++k) {
-      for (int x = 0; x < nall[k]; ++x) {
-        const ShadowSubset& X = all_sub[k][x];
-        bool dominated = false;
-        for (int y = 0; y < nall[k] && !dominated; ++y) {
-          if (y == x) continue;
-          const ShadowSubset& Y = all_sub[k][y];
-          if (Y.rest < X.rest) continue;
-          bool ge = true, gt = Y.rest > X.rest;
-          for (int t = 0; t < k && ge; ++t) {
-            if (Y.sc[t] < X.sc[t]) ge = false;
-            else if (Y.sc[t] > X.sc[t]) gt = true;
+      for (int pass = 0; pass < 2; ++pass) {
+        // pass 0: all subsets; pass 1: only those that spell a word by themselves
+        for (int x = 0; x < nall[k]; ++x) {
+          const ShadowSubset& X = all_sub[k][x];
+          if (pass == 1 && !X.ok0) continue;
+          bool dominated = false;
+          for (int y = 0; y < nall[k] && !dominated; ++y) {
+            if (y == x) continue;
+            const ShadowSubset& Y = all_sub[k][y];
+            if (Y.rest < X.rest || (pass == 1 && !Y.ok0)) continue;
+            bool ge = true, gt = Y.rest > X.rest;
+            for (int t = 0; t < k && ge; ++t) {
+              if (Y.sc[t] < X.sc[t]) ge = false;
+              else if (Y.sc[t] > X.sc[t]) gt = true;
+            }
+            dominated = ge && (gt || y < x);  // ties: keep the first copy only
           }
-          dominated = ge && (gt || y < x);  // ties: keep the first copy only
+          if (dominated) continue;
+          if (pass == 0 && nfront_[k] < 64) front_[k][nfront_[k]++] = X;
+          if (pass == 1 && nfrontw_[k] < 64) frontw_[k][nfrontw_[k]++] = X;
         }
-        if (!dominated && nfront_[k] < 64) front_[k][nfront_[k]++] = X;
       }
     }
   }
@@ -2297,29 +2306,40 @@ class MoveGen {
       if (x && rest1_[BLANK] > -1e29f && lex_->spell1.has(kt)) var = std::max(var, rest1_[BLANK]);
       return var;
     }
+    if (!through) {
+      // Exact: the best subset that spells a word by itself (Pareto frontier).
+      float var = -1e30f;
+      for (int f = 0; f < nfrontw_[k]; ++f) {
+        const ShadowSubset& F = frontw_[k][f];
+        int dot = 0;
+        for (int j = 0; j < k; ++j) dot += F.sc[j] * eff[j];
+        var = std::max(var, (float)std::min(dot, capped) + F.rest);
+      }
+      return var;
+    }
     const int n = nallsub_[k];
-    std::pair<float, int> hp[130];
-    int nh = 0;
-    float below = -1e30f;  // best value among the subsets left out (all at or below the floor)
+    float val[130];
     for (int f = 0; f < n; ++f) {
       const ShadowSubset& F = allsub_[k][f];
       int dot = 0;
       for (int j = 0; j < k; ++j) dot += F.sc[j] * eff[j];
-      const float v = (float)std::min(dot, capped) + F.rest;
-      if (v > floor) hp[nh++] = {v, f};
-      else below = std::max(below, v);
+      val[f] = (float)std::min(dot, capped) + F.rest;
     }
-    std::make_heap(hp, hp + nh);
-    while (nh > 0) {
-      std::pop_heap(hp, hp + nh);
-      --nh;
-      const ShadowSubset& F = allsub_[k][hp[nh].second];
-      const bool ok = through ? (F.blanks >= 2 || (F.blanks ? lex_->spell1.has(F.key + kt) : lex_->spell0.has(F.key + kt)))
-                              : F.ok0;
-      if (ok) return hp[nh].first;
+    while (true) {
+      int bi = -1;
+      float bv = -1e30f;
+      for (int f = 0; f < n; ++f)
+        if (val[f] > bv) {
+          bv = val[f];
+          bi = f;
+        }
+      // At or below the floor (or nothing left): bv still bounds every subset not yet
+      // ruled out, which is all that matters.
+      if (bi < 0 || bv <= floor) return bv;
+      const ShadowSubset& F = allsub_[k][bi];
+      if (F.blanks >= 2 || (F.blanks ? lex_->spell1.has(F.key + kt) : lex_->spell0.has(F.key + kt))) return bv;
+      val[bi] = -1e30f;
     }
-    // Nothing above the floor can spell a word: `below` still bounds the rest.
-    return below;
   }
 
   // Upper bound for anchor a of the loaded line (last_anchor_ must be set).  With
@@ -2494,8 +2514,10 @@ class MoveGen {
           last_anchor_ = k;
         }
       }
-    // Best bound first.  An anchor's quick bound is refined (word-spelling check on
-    // its promising spans) only when it reaches the top of the queue.
+    // Best bound first.  Without word maps, an anchor's quick bound is refined
+    // (word-spelling check on its promising spans) when it reaches the top of the
+    // queue; with word maps the anchor search itself does that work.
+    const bool wmp_on = use_wmp_ && !lex_->amap0.empty();
     std::make_heap(anchors_, anchors_ + na);
     anchors_total += na;
     int cur_d = -1, cur_line = -1;
@@ -2510,7 +2532,7 @@ class MoveGen {
         cur_line = A.line;
       }
       last_anchor_ = A.last;
-      if (!A.refined && use_refine_) {
+      if (!A.refined && use_refine_ && !wmp_on) {
         A.bound = shadow_bound(A.col, true, best_eq_);
         A.refined = true;
         if (A.bound > best_eq_) {
@@ -2522,7 +2544,7 @@ class MoveGen {
       anchor_ = A.col;
       no_right_ = (A.col == N - 1) || lt_[A.col + 1] == 0;
       ++anchors_searched;
-      if (use_wmp_ && rk_[BLANK] < 2 && !lex_->amap0.empty()) {
+      if (wmp_on) {
         wmp_search_anchor(A.col);
         continue;
       }
@@ -2538,7 +2560,7 @@ class MoveGen {
   // rack tiles are taken in order of their bound.  The words spelled by a subset plus
   // the tiles played through come straight from the anagram maps; each is checked
   // against the positions of the through tiles and the cross-checks and scored
-  // exactly.  Racks with two blanks use the GADDAG instead.
+  // exactly.  With two blanks, every letter is tried for one of them.
   struct WSpan {
     float bound;
     int lo, hi, k, fixed, capped, wmt, through_sum;
@@ -2656,55 +2678,77 @@ class MoveGen {
   void wmp_search_span(const WSpan& S) {
     const int k = S.k;
     const int n = nallsub_[k];
-    std::pair<float, int> hp[130];
-    int nh = 0;
+    float val[130];
+    int idx[130];
+    int nv = 0;
     for (int f = 0; f < n; ++f) {
       const ShadowSubset& F = allsub_[k][f];
+      if (!S.through && !F.ok0) continue;  // must spell a word on its own
       int dot = 0;
       for (int j = 0; j < k; ++j) dot += F.sc[j] * S.eff_sorted[j];
       const float v = (float)S.fixed + (float)std::min(dot, S.capped) + F.rest;
-      if (v > best_eq_) hp[nh++] = {v, f};
+      if (v > best_eq_) {
+        val[nv] = v;
+        idx[nv++] = f;
+      }
     }
-    std::make_heap(hp, hp + nh);
-    while (nh > 0) {
-      std::pop_heap(hp, hp + nh);
-      --nh;
-      if (hp[nh].first <= best_eq_) return;  // no subset left can beat the best play
-      const ShadowSubset& F = allsub_[k][hp[nh].second];
+    while (nv > 0) {
+      int bi = 0;
+      for (int i = 1; i < nv; ++i)
+        if (val[i] > val[bi]) bi = i;
+      if (val[bi] <= best_eq_) return;  // no subset left can beat the best play
+      const ShadowSubset& F = allsub_[k][idx[bi]];
+      val[bi] = val[--nv];
+      idx[bi] = idx[nv];
       const u32* list;
-      const int cnt = F.blanks ? lex_->amap1.find(F.key + S.kt, list) : lex_->amap0.find(F.key + S.kt, list);
-      for (int e = 0; e < cnt; ++e) wmp_try_word(S, F, list[e]);
+      if (F.blanks < 2) {
+        const int cnt = F.blanks ? lex_->amap1.find(F.key + S.kt, list) : lex_->amap0.find(F.key + S.kt, list);
+        for (int e = 0; e < cnt; ++e) wmp_try_word(S, F, list[e], 0);
+      } else {
+        // Two blanks: try every letter for one of them, the one-blank map does the other.
+        for (int x = 1; x < NLET; ++x) {
+          const int cnt = lex_->amap1.find(F.key + S.kt + lex_->lkey[x], list);
+          for (int e = 0; e < cnt; ++e) wmp_try_word(S, F, list[e], x);
+        }
+      }
     }
   }
 
-  void wmp_try_word(const WSpan& S, const ShadowSubset& F, u32 entry) {
+  void wmp_try_word(const WSpan& S, const ShadowSubset& F, u32 entry, int y2) {
     const u32 id = entry & 0xFFFFFFu;
-    const int y = (int)(entry >> 24);  // letter played by the blank (0: no blank)
+    const int y = (int)(entry >> 24);  // letter played by a blank (0: no blank); y2: the second blank
     const u8* w = lex_->wl_letters.data() + lex_->wl_off[id];
     const int len = S.hi - S.lo + 1;
     if ((int)(lex_->wl_off[id + 1] - lex_->wl_off[id]) != len) return;
     // Through tiles must sit where the word has them.
     for (int c = S.lo; c <= S.hi; ++c)
       if (lt_[c] && (lt_[c] & 31) != w[c - S.lo]) return;
-    // Cross-checks, and where the blank goes: on the placed square holding its letter
-    // with the smallest multiplier (one blank per word at most here).
-    int blank_at = -1, blank_eff = 1 << 30;
+    // Cross-checks, and where the blanks go: each on a placed square holding its letter,
+    // the one with the smallest multiplier.
     for (int i = 0; i < S.k; ++i) {
       const int p = S.pos[i];
-      const int c = w[p - S.lo];
-      if (!((lx_[p] >> c) & 1u)) return;
-      if (y && c == y) {
+      if (!((lx_[p] >> w[p - S.lo]) & 1u)) return;
+    }
+    int blank_at = -1, blank2_at = -1;
+    auto place_blank = [&](int letter, int taken) {
+      int at = -1, best_e = 1 << 30;
+      for (int i = 0; i < S.k; ++i) {
+        const int p = S.pos[i];
+        if (p == taken || w[p - S.lo] != letter) continue;
         const int e = llm_[p] * S.wmt + (lxs_[p] >= 0 ? llm_[p] * lwm_[p] : 0);
-        if (e < blank_eff) {
-          blank_eff = e;
-          blank_at = p;
+        if (e < best_e) {
+          best_e = e;
+          at = p;
         }
       }
-    }
+      return at;
+    };
+    if (y) blank_at = place_blank(y, -1);
+    if (y2) blank2_at = place_blank(y2, blank_at);
     int lsum = S.through_sum, xsum = 0;
     for (int i = 0; i < S.k; ++i) {
       const int p = S.pos[i];
-      const int ls = p == blank_at ? 0 : TILE_SCORE[w[p - S.lo]] * llm_[p];
+      const int ls = (p == blank_at || p == blank2_at) ? 0 : TILE_SCORE[w[p - S.lo]] * llm_[p];
       lsum += ls;
       if (lxs_[p] >= 0) xsum += (lxs_[p] + ls) * lwm_[p];
     }
@@ -2712,7 +2756,8 @@ class MoveGen {
     const float eq = (float)score + F.rest;
     if (eq <= best_eq_) return;
     best_eq_ = eq;
-    for (int c = S.lo; c <= S.hi; ++c) strip_[c] = lt_[c] ? 0 : (u8)(w[c - S.lo] | (c == blank_at ? BLANK_BIT : 0));
+    for (int c = S.lo; c <= S.hi; ++c)
+      strip_[c] = lt_[c] ? 0 : (u8)(w[c - S.lo] | ((c == blank_at || c == blank2_at) ? BLANK_BIT : 0));
     tiles_played_ = S.k;
     fill(best_, S.lo, S.hi, score, eq);
     tiles_played_ = 0;
@@ -6033,6 +6078,7 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
   void cmd_selftest(bool quick);
   void cmd_bench();
   void cmd_benchgen(int games, int reps, const std::string& mode);
+  void cmd_benchsim(double secs);
   int cmd_verifybest(int npos, bool quiet = false);
 
   // Returns false on quit.
@@ -6193,6 +6239,8 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
       cmd_selftest(!args.empty() && args[0] == "quick");
     } else if (cmd == "bench") {
       cmd_bench();
+    } else if (cmd == "benchsim") {
+      cmd_benchsim(args.empty() ? 3.0 : std::atof(args[0].c_str()));
     } else if (cmd == "verifybest") {
       cmd_verifybest(args.empty() ? 200 : std::atoi(args[0].c_str()));
     } else if (cmd == "benchgen") {
@@ -6511,7 +6559,9 @@ inline int App::cmd_verifybest(int npos, bool quiet) {
       Rack rack;
       const int want = t == 3 ? 1 + (int)r.below(7) : RACK_SIZE;
       while (rack.n < want && pool.n) rack.add(draw_tile(pool, r));
-      if (t == 1 && rack.n && !rack.c[BLANK]) {
+      // t == 1: at least one blank (two on every other position)
+      const int blanks_wanted = t == 1 ? 1 + (done / 4) % 2 : 0;
+      while (rack.c[BLANK] < blanks_wanted && rack.n > rack.c[BLANK]) {
         for (int L = 1; L < NLET; ++L)
           if (rack.c[L]) {
             rack.sub(L);
@@ -6546,7 +6596,7 @@ inline int App::cmd_verifybest(int npos, bool quiet) {
 inline void App::cmd_benchgen(int games, int reps, const std::string& mode) {
   if (!need_lex()) return;
   MoveGen gen(&lex, &leaves);
-  gen.set_refine(mode != "norefine");
+  gen.set_refine(mode != "norefine" && mode != "wmponly");
   gen.set_wmp(mode != "norefine" && mode != "nowmp");
   // The positions come from games played by the plain generator, so every variant
   // is timed on exactly the same positions.
@@ -6579,6 +6629,31 @@ inline void App::cmd_benchgen(int games, int reps, const std::string& mode) {
   std::cout << fmt("best move: %.1f us/position over %zu positions x %d (checksum %.3f); anchors searched %.1f of %.1f\n",
                    1e6 * t / (pos.size() * reps), pos.size(), reps, checksum / reps,
                    (double)gen.anchors_searched / (pos.size() * (reps + 1)), (double)gen.anchors_total / (pos.size() * (reps + 1)));
+}
+
+// Simulation throughput on a fixed early-midgame position (single thread).
+inline void App::cmd_benchsim(double secs) {
+  if (!need_lex()) return;
+  MoveGen gen(&lex, &leaves);
+  Game G;
+  Rng rr(5);
+  G.reset(rr);
+  for (int k = 0; k < 5; ++k) {
+    Position P = Position::from_game(G);
+    G.apply(lex, gen.generate_best(P.board, P.rack, Simulator::ctx_for(P)), rr);
+  }
+  Position P = Position::from_game(G);
+  SimParams sp;
+  sp.threads = 1;
+  sp.time_limit = secs;
+  sp.max_iterations = 1000000;
+  sp.prune_z = 100;
+  sp.seed = 99;
+  Simulator& sim = eng().simulator();
+  const auto cands = sim.candidates(P, 10);
+  const SimResult R = sim.run(P, cands, sp);
+  std::cout << fmt("simulation (rack %s, bag %d): %.0f plies/s  (%d iterations x %zu candidates in %.1fs)\n", P.rack.str().c_str(), P.bag_n, R.positions / R.seconds, R.iterations,
+                   cands.size(), R.seconds);
 }
 
 inline void App::cmd_bench() {
