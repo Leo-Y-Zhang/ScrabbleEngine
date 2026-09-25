@@ -1,0 +1,5 @@
+tilefish
+tilefish.exe
+*.o
+/work/
+__pycache__/
