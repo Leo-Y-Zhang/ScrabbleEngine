@@ -2242,11 +2242,16 @@ class MoveGen {
         p.equity = pass_equity();
         out_->push_back(p);
       }
-    } else if (best_eq_ <= -1e29f) {
-      best_ = Move();
-      best_.type = MT_PASS;
-      best_.equity = pass_equity();
-      best_eq_ = best_.equity;
+    } else if (best_eq_ <= -1e29f || ctx_.add_pass) {
+      // Passing, when nothing else is possible or it has the best equity (as in the
+      // full move list, e.g. a lone blank kept while the bag still has tiles).
+      const float pe = pass_equity();
+      if (best_eq_ <= -1e29f || pe > best_eq_) {
+        best_ = Move();
+        best_.type = MT_PASS;
+        best_.equity = pe;
+        best_eq_ = pe;
+      }
     }
   }
 
