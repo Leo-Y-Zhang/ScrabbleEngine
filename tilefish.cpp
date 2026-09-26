@@ -2770,12 +2770,15 @@ class MoveGen {
     int eff_sorted[RACK_SIZE];
   };
   std::vector<WSpan> spans_;
-  struct SpanRef {
-    float bound;
-    int idx;
-    bool operator<(const SpanRef& o) const { return bound < o.bound; }
-  };
-  std::vector<SpanRef> span_heap_;
+  // Spans are taken best first from buckets one point of bound wide (linked lists).
+  static constexpr int NBUCKET = 512;
+  static constexpr float BUCKET_LO = -128.f;  // bucket b holds bounds in [BUCKET_LO + b, BUCKET_LO + b + 1)
+  std::vector<int> bucket_head_;              // allocated on first use; -1 = empty
+  std::vector<int> span_next_;
+  static int bucket_of(float bound) {
+    const float x = bound - BUCKET_LO;
+    return x < 0.f ? 0 : (x >= (float)(NBUCKET - 1) ? NBUCKET - 1 : (int)x);
+  }
   // The loaded line of each (direction, line), saved when its spans are collected.
   struct LineData {
     u8 lt[N];
@@ -2921,27 +2924,38 @@ class MoveGen {
     }
   }
 
-  // Searches the collected spans best bound first, until no bound beats the best play.
+  // Searches the collected spans best bound first (to within a point), until no bound
+  // beats the best play.
   void search_spans() {
     const int n = (int)spans_.size();
-    span_heap_.resize(n);
-    for (int i = 0; i < n; ++i) span_heap_[i] = {spans_[i].bound, i};
-    std::make_heap(span_heap_.begin(), span_heap_.end());
+    if (bucket_head_.empty()) bucket_head_.assign(NBUCKET, -1);
+    span_next_.resize(n);
+    int top = -1, bottom = NBUCKET;
+    for (int i = 0; i < n; ++i) {
+      const int b = bucket_of(spans_[i].bound);
+      span_next_[i] = bucket_head_[b];
+      bucket_head_[b] = i;
+      top = std::max(top, b);
+      bottom = std::min(bottom, b);
+    }
     anchors_total += n;
     int cur_d = -1, cur_line = -1;
-    for (int left = n; left > 0; --left) {
-      const SpanRef top = span_heap_[0];
-      if (top.bound <= best_eq_) break;
-      std::pop_heap(span_heap_.begin(), span_heap_.begin() + left);
-      const WSpan& S = spans_[top.idx];
-      if (S.dir != cur_d || S.line != cur_line) {
-        restore_line(S.dir, S.line);
-        cur_d = S.dir;
-        cur_line = S.line;
+    for (int b = top; b >= bottom; --b) {
+      // every bound left is below this bucket's upper edge (the top bucket has none)
+      if (b < NBUCKET - 1 && BUCKET_LO + (float)(b + 1) <= best_eq_) break;
+      for (int i = bucket_head_[b]; i >= 0; i = span_next_[i]) {
+        const WSpan& S = spans_[i];
+        if (S.bound <= best_eq_) continue;
+        if (S.dir != cur_d || S.line != cur_line) {
+          restore_line(S.dir, S.line);
+          cur_d = S.dir;
+          cur_line = S.line;
+        }
+        ++anchors_searched;
+        wmp_search_span(S);
       }
-      ++anchors_searched;
-      wmp_search_span(S);
     }
+    for (int b = bottom; b <= top; ++b) bucket_head_[b] = -1;
   }
 
   u64 word_mask(int k, u64 kt, bool through) {
