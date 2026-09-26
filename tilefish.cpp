@@ -7407,10 +7407,14 @@ inline void App::cmd_benchgen(int games, int reps, const std::string& mode) {
 }
 
 // Endgame solver: n endgames from static self-play (bag empty, both racks full-ish),
-// each solved with a time limit; reports how many were proven and how fast.
+// each solved with a time limit; reports how many were proven and how fast.  The games
+// are played by the plain generator, so every build is timed on the same endgames (the
+// fast search may break ties between equal plays differently).
 inline void App::cmd_benchendgame(int n, double secs) {
   if (!need_lex() || n <= 0) return;
   MoveGen gen(&lex, &leaves);
+  gen.set_refine(false);
+  gen.set_wmp(false);
   Rng r(31337);
   int solved = 0, done = 0;
   double tsum = 0, tmax = 0;
