@@ -2081,7 +2081,7 @@ class MoveGen {
   void set_shadow(bool on) { use_shadow_ = on; }
   void set_refine(bool on) { use_refine_ = on; }
   void set_wmp(bool on) { use_wmp_ = on; }
-  long anchors_searched = 0, anchors_total = 0;
+  long anchors_searched = 0, anchors_total = 0;  // with word maps: spans
 
  private:
 
@@ -2172,7 +2172,10 @@ class MoveGen {
         no_right_ = true;
         if (mode_ == GEN_BEST && use_shadow_ && use_wmp_ && !lex_->amap0.empty()) {
           prepare_shadow();
-          wmp_search_anchor(7);  // the opening: every span through the centre square
+          spans_.clear();
+          save_line();
+          collect_spans(7);  // the opening: every span through the centre square
+          search_spans();
         } else {
           rec(7, lex_->gaddag_root, 0, 1, 0, 7);
         }
@@ -2586,6 +2589,27 @@ class MoveGen {
     const Board& b = *B_;
     prepare_shadow();
     for (int s = 0; s < NSQ; ++s) is_anchor_[s] = !b.sq[s] && b.has_neighbor(s);
+    const bool wmp_on = use_wmp_ && !lex_->amap0.empty();
+    if (wmp_on) {
+      // Every span of every anchor with its bound, then all of them best first.
+      spans_.clear();
+      for (int d = 0; d < 2; ++d)
+        for (int line = 0; line < N; ++line) {
+          bool any = false;
+          for (int k = 0; k < N && !any; ++k) any = is_anchor_[d == 0 ? line * N + k : k * N + line];
+          if (!any) continue;
+          load_line(d, line);
+          save_line();
+          last_anchor_ = -1;
+          for (int k = 0; k < N; ++k) {
+            if (!is_anchor_[d == 0 ? line * N + k : k * N + line]) continue;
+            collect_spans(k);
+            last_anchor_ = k;
+          }
+        }
+      search_spans();
+      return;
+    }
     int na = 0;
     for (int d = 0; d < 2; ++d)
       for (int line = 0; line < N; ++line) {
@@ -2601,10 +2625,8 @@ class MoveGen {
           last_anchor_ = k;
         }
       }
-    // Best bound first.  Without word maps, an anchor's quick bound is refined
-    // (word-spelling check on its promising spans) when it reaches the top of the
-    // queue; with word maps the anchor search itself does that work.
-    const bool wmp_on = use_wmp_ && !lex_->amap0.empty();
+    // Best bound first; an anchor's quick bound is refined (word-spelling check on its
+    // promising spans) when it reaches the top of the queue.
     std::make_heap(anchors_, anchors_ + na);
     anchors_total += na;
     int cur_d = -1, cur_line = -1;
@@ -2619,7 +2641,7 @@ class MoveGen {
         cur_line = A.line;
       }
       last_anchor_ = A.last;
-      if (!A.refined && use_refine_ && !wmp_on) {
+      if (!A.refined && use_refine_) {
         A.bound = shadow_bound(A.col, true, best_eq_);
         A.refined = true;
         if (A.bound > best_eq_) {
@@ -2631,98 +2653,157 @@ class MoveGen {
       anchor_ = A.col;
       no_right_ = (A.col == N - 1) || lt_[A.col + 1] == 0;
       ++anchors_searched;
-      if (wmp_on) {
-        wmp_search_anchor(A.col);
-        continue;
-      }
       if (use_refine_) prepare_span_tables(A.col);
       rec(A.col, lex_->gaddag_root, 0, 1, 0, A.col);
       span_prune_ = false;
     }
   }
 
-  // --- Anagram ("word map") generation of the best play through one anchor ------------
-  // Every span (contiguous squares containing the anchor, with its tiles played
-  // through) is bounded; spans are taken best first, and in each span the subsets of
-  // rack tiles are taken in order of their bound.  The words spelled by a subset plus
-  // the tiles played through come straight from the anagram maps; each is checked
-  // against the positions of the through tiles and the cross-checks and scored
-  // exactly.  With two blanks, every letter is tried for one of them.
+  // --- Anagram ("word map") generation of the best play -------------------------------
+  // Every span (contiguous squares containing an anchor, with its tiles played
+  // through) of every anchor is bounded; spans are taken best first over the whole
+  // board, and in each span the subsets of rack tiles that spell a word there are
+  // tried.  The words spelled by a subset plus the tiles played through come straight
+  // from the anagram maps; each is checked against the positions of the through tiles
+  // and the cross-checks and scored exactly.  With two blanks, every letter is tried
+  // for one of them.
   struct WSpan {
     float bound;
-    int lo, hi, k, fixed, capped, wmt, through_sum;
-    u64 kt;
+    u8 dir, line, lo, hi, k;
     bool through;
-    u8 pos[RACK_SIZE];
+    u8 pos[RACK_SIZE];  // squares played: the anchor, then leftwards, then rightwards
+    int fixed, capped, wmt, through_sum;
+    u64 kt;
     int eff_sorted[RACK_SIZE];
   };
+  std::vector<WSpan> spans_;
+  struct SpanRef {
+    float bound;
+    int idx;
+    bool operator<(const SpanRef& o) const { return bound < o.bound; }
+  };
+  std::vector<SpanRef> span_heap_;
+  // The loaded line of each (direction, line), saved when its spans are collected.
+  struct LineData {
+    u8 lt[N];
+    u32 lx[N];
+    i16 lxs[N];
+    u8 llm[N], lwm[N];
+  };
+  LineData lsave_[2][N];
 
-  void wmp_search_anchor(int a) {
-    WSpan sp[112];
-    int ns = 0;
-    int placedL[N];
+  void save_line() {
+    LineData& D = lsave_[dir_][line_];
+    std::memcpy(D.lt, lt_, sizeof lt_);
+    std::memcpy(D.lx, lx_, sizeof lx_);
+    std::memcpy(D.lxs, lxs_, sizeof lxs_);
+    std::memcpy(D.llm, llm_, sizeof llm_);
+    std::memcpy(D.lwm, lwm_, sizeof lwm_);
+  }
+  void restore_line(int d, int line) {
+    const LineData& D = lsave_[d][line];
+    dir_ = d;
+    line_ = line;
+    std::memcpy(lt_, D.lt, sizeof lt_);
+    std::memcpy(lx_, D.lx, sizeof lx_);
+    std::memcpy(lxs_, D.lxs, sizeof lxs_);
+    std::memcpy(llm_, D.llm, sizeof llm_);
+    std::memcpy(lwm_, D.lwm, sizeof lwm_);
+  }
+
+  // Appends the spans of anchor a of the loaded line (last_anchor_ set) whose quick
+  // bound beats the best play so far.  The walk is shadow_bound's.
+  void collect_spans(int a) {
+    if (!placeable(a)) return;
+    int plm[N], pwm[N], pxs[N], pcap[N];  // placed squares: left part (from the anchor leftwards), then right part
+    u8 ppos[N];
     int lk = 1;
-    placedL[0] = a;
-    int L = a;
+    plm[0] = llm_[a];
+    pwm[0] = lwm_[a];
+    pxs[0] = lxs_[a];
+    pcap[0] = square_cap(a);
+    ppos[0] = (u8)a;
+    int l_through = 0, l_tc = 0, l_tl = 0;
     u64 l_key = 0;
-    int l_sum = 0, l_tc = 0;
+    int L = a;
     while (true) {
       if (L == 0 || lt_[L - 1] == 0) {
-        int placedR[N];
-        int k = lk, nr = 0;
-        int R = a;
+        int k = lk;
+        int r_through = 0, r_tc = 0, r_tl = 0;
         u64 r_key = 0;
-        int r_sum = 0, r_tc = 0;
+        int R = a;
         while (true) {
-          if ((R == N - 1 || lt_[R + 1] == 0) && ns < 112) {
+          if (R == N - 1 || lt_[R + 1] == 0) {
             const int tc = l_tc + r_tc;
             // A lone tile needs a main word here; in the down pass it must not also
             // form an across word (that play belongs to the across pass).
-            const bool ok = (k >= 2 || tc > 0) && !(k == 1 && dir_ == 1 && lxs_[a] >= 0);
-            if (ok) {
-              WSpan& S = sp[ns];
-              S.lo = L;
-              S.hi = R;
-              S.k = k;
-              int q = 0;
-              for (int i = 0; i < lk; ++i) S.pos[q++] = (u8)placedL[i];
-              for (int i = 0; i < nr; ++i) S.pos[q++] = (u8)placedR[i];
-              int wmt = 1, cross = 0, capped = 0;
-              for (int i = 0; i < k; ++i) {
-                const int p = S.pos[i];
-                wmt *= lwm_[p];
-                if (lxs_[p] >= 0) cross += lxs_[p] * lwm_[p];
+            bool feasible = (k >= 2 || tc > 0) && !(k == 1 && dir_ == 1 && lxs_[a] >= 0);
+            if (feasible && k == RACK_SIZE) {
+              // A 7-tile play spells exactly this span: rule out impossible bingos.
+              if (tc == 0) feasible = bingo7_;
+              else if (tc == 1) feasible = (bingo8_ >> (l_tc ? l_tl : r_tl)) & 1u;
+            }
+            if (feasible) {
+              int wmt = 1, cross = 0;
+              for (int j = 0; j < k; ++j) {
+                wmt *= pwm[j];
+                if (pxs[j] >= 0) cross += pxs[j] * pwm[j];
               }
-              for (int i = 0; i < k; ++i) {
-                const int p = S.pos[i];
-                const int e = llm_[p] * wmt + (lxs_[p] >= 0 ? llm_[p] * lwm_[p] : 0);
-                S.eff_sorted[i] = e;
-                capped += square_cap(p) * e;
+              int eff[RACK_SIZE];
+              int capped = 0;
+              for (int j = 0; j < k; ++j) {
+                eff[j] = plm[j] * wmt + (pxs[j] >= 0 ? plm[j] * pwm[j] : 0);
+                capped += pcap[j] * eff[j];
               }
-              std::sort(S.eff_sorted, S.eff_sorted + k, [](int x, int y) { return x > y; });
-              S.wmt = wmt;
-              S.through_sum = l_sum + r_sum;
-              S.fixed = (l_sum + r_sum) * wmt + cross + (k == RACK_SIZE ? BINGO_BONUS : 0);
-              S.capped = capped;
-              S.kt = l_key + r_key;
-              S.through = tc > 0;
-              // Quick bound; the subset loop in wmp_search_span does the exact work,
-              // best subset first.
-              S.bound = (float)S.fixed + quick_var(k, S.eff_sorted, capped, a);
-              if (S.bound > best_eq_) ++ns;
+              for (int x = 1; x < k; ++x) {  // insertion sort, descending
+                const int v = eff[x];
+                int y = x - 1;
+                while (y >= 0 && eff[y] < v) {
+                  eff[y + 1] = eff[y];
+                  --y;
+                }
+                eff[y + 1] = v;
+              }
+              const int fixed = (l_through + r_through) * wmt + cross + (k == RACK_SIZE ? BINGO_BONUS : 0);
+              const float bound = (float)fixed + quick_var(k, eff, capped, a);
+              if (bound > best_eq_) {
+                spans_.emplace_back();
+                WSpan& S = spans_.back();
+                S.bound = bound;
+                S.dir = (u8)dir_;
+                S.line = (u8)line_;
+                S.lo = (u8)L;
+                S.hi = (u8)R;
+                S.k = (u8)k;
+                S.through = tc > 0;
+                for (int j = 0; j < k; ++j) {
+                  S.pos[j] = ppos[j];
+                  S.eff_sorted[j] = eff[j];
+                }
+                S.fixed = fixed;
+                S.capped = capped;
+                S.wmt = wmt;
+                S.through_sum = l_through + r_through;
+                S.kt = l_key + r_key;
+              }
             }
           }
           if (R == N - 1) break;
           const int nx = R + 1;
           if (lt_[nx]) {
-            r_sum += tile_face(lt_[nx]);
+            r_through += tile_face(lt_[nx]);
             r_key += lex_->lkey[lt_[nx] & 31];
             ++r_tc;
+            r_tl = lt_[nx] & 31;
             R = nx;
             continue;
           }
           if (k + 1 > nr_ || !placeable(nx)) break;
-          placedR[nr++] = nx;
+          plm[k] = llm_[nx];
+          pwm[k] = lwm_[nx];
+          pxs[k] = lxs_[nx];
+          pcap[k] = square_cap(nx);
+          ppos[k] = (u8)nx;
           ++k;
           R = nx;
         }
@@ -2730,21 +2811,45 @@ class MoveGen {
       if (L == 0) break;
       const int nx = L - 1;
       if (lt_[nx]) {
-        l_sum += tile_face(lt_[nx]);
+        l_through += tile_face(lt_[nx]);
         l_key += lex_->lkey[lt_[nx] & 31];
         ++l_tc;
+        l_tl = lt_[nx] & 31;
         L = nx;
         continue;
       }
       if (nx == last_anchor_ || lk + 1 > nr_ || !placeable(nx)) break;
-      placedL[lk++] = nx;
+      // shift right-part slots: left part occupies [0, lk)
+      plm[lk] = llm_[nx];
+      pwm[lk] = lwm_[nx];
+      pxs[lk] = lxs_[nx];
+      pcap[lk] = square_cap(nx);
+      ppos[lk] = (u8)nx;
+      ++lk;
       L = nx;
     }
-    // Spans best first.
-    std::sort(sp, sp + ns, [](const WSpan& x, const WSpan& y) { return x.bound > y.bound; });
-    for (int i = 0; i < ns; ++i) {
-      if (sp[i].bound <= best_eq_) break;
-      wmp_search_span(sp[i]);
+  }
+
+  // Searches the collected spans best bound first, until no bound beats the best play.
+  void search_spans() {
+    const int n = (int)spans_.size();
+    span_heap_.resize(n);
+    for (int i = 0; i < n; ++i) span_heap_[i] = {spans_[i].bound, i};
+    std::make_heap(span_heap_.begin(), span_heap_.end());
+    anchors_total += n;
+    int cur_d = -1, cur_line = -1;
+    for (int left = n; left > 0; --left) {
+      const SpanRef top = span_heap_[0];
+      if (top.bound <= best_eq_) break;
+      std::pop_heap(span_heap_.begin(), span_heap_.begin() + left);
+      const WSpan& S = spans_[top.idx];
+      if (S.dir != cur_d || S.line != cur_line) {
+        restore_line(S.dir, S.line);
+        cur_d = S.dir;
+        cur_line = S.line;
+      }
+      ++anchors_searched;
+      wmp_search_span(S);
     }
   }
 
@@ -7146,8 +7251,9 @@ inline void App::cmd_benchgen(int games, int reps, const std::string& mode) {
       checksum += gen.generate_best(pos[i].first, pos[i].second, ctx).equity;
     }
   const double t = now_s() - t0;
-  std::cout << fmt("best move: %.1f us/position over %zu positions x %d (checksum %.3f); anchors searched %.1f of %.1f\n",
-                   1e6 * t / (pos.size() * reps), pos.size(), reps, checksum / reps,
+  const bool wmp = mode != "norefine" && mode != "nowmp";  // word maps search spans, not anchors
+  std::cout << fmt("best move: %.1f us/position over %zu positions x %d (checksum %.3f); %s searched %.1f of %.1f\n",
+                   1e6 * t / (pos.size() * reps), pos.size(), reps, checksum / reps, wmp ? "spans" : "anchors",
                    (double)gen.anchors_searched / (pos.size() * reps), (double)gen.anchors_total / (pos.size() * reps));
 }
 
