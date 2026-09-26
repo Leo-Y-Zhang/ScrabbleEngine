@@ -457,7 +457,7 @@ class AnagramMap {
     while ((1ull << bits) < distinct + distinct / 2) ++bits;
     shift_ = 64 - bits;
     mask_ = (1u << bits) - 1;
-    slots_.assign((size_t)1 << bits, Slot());
+    slots_.assign((size_t)1 << bits, Slot());  // empty slots hold the largest key
     vals_.resize(kv.size());
     for (size_t i = 0; i < kv.size();) {
       size_t j = i;
@@ -471,12 +471,14 @@ class AnagramMap {
       i = j;
     }
   }
-  // Returns the number of values for `key` and sets `out` to them.
+  // Returns the number of values for `key` and sets `out` to them.  Keys went in in
+  // ascending order, so every slot a probe passes before reaching its key holds a
+  // smaller key: the first slot holding a key >= `key` decides.
   inline int find(u64 key, const u32*& out) const {
     for (u32 h = (u32)(key >> shift_);; h = (h + 1) & mask_) {
       const Slot& sl = slots_[h];
-      if (!sl.n) return 0;
-      if (sl.key == key) {
+      if (sl.key >= key) {
+        if (sl.key != key || !sl.n) return 0;
         out = vals_.data() + sl.off;
         return (int)sl.n;
       }
@@ -487,7 +489,7 @@ class AnagramMap {
 
  private:
   struct Slot {
-    u64 key = 0;
+    u64 key = ~0ull;
     u32 off = 0, n = 0;
   };
   std::vector<Slot> slots_;
@@ -2681,21 +2683,29 @@ class MoveGen {
 
   void run_best_shadow() {
     const Board& b = *B_;
-    for (int s = 0; s < NSQ; ++s) is_anchor_[s] = !b.sq[s] && b.has_neighbor(s);
     const bool wmp_on = use_wmp_ && !lex_->amap0.empty();
     if (wmp_on) {
       // Every span of every anchor with its bound, then all of them best first.
+      // Anchors (empty squares next to a tile) of each row and column as bitmasks.
+      u32 occ[2][N] = {};  // occ[0][row] bit col, occ[1][col] bit row
+      for (int r = 0; r < N; ++r)
+        for (int c = 0; c < N; ++c)
+          if (b.sq[r * N + c]) {
+            occ[0][r] |= 1u << c;
+            occ[1][c] |= 1u << r;
+          }
       spans_.clear();
       for (int d = 0; d < 2; ++d)
         for (int line = 0; line < N; ++line) {
-          bool any = false;
-          for (int k = 0; k < N && !any; ++k) any = is_anchor_[d == 0 ? line * N + k : k * N + line];
-          if (!any) continue;
+          const u32 o = occ[d][line];
+          u32 anchors = ~o & ((o << 1) | (o >> 1) | (line > 0 ? occ[d][line - 1] : 0) | (line < N - 1 ? occ[d][line + 1] : 0)) &
+                        ((1u << N) - 1);
+          if (!anchors) continue;
           load_line(d, line);
           save_line();
           last_anchor_ = -1;
-          for (int k = 0; k < N; ++k) {
-            if (!is_anchor_[d == 0 ? line * N + k : k * N + line]) continue;
+          for (; anchors; anchors &= anchors - 1) {
+            const int k = lowest_bit64(anchors);
             collect_spans(k);
             last_anchor_ = k;
           }
@@ -2703,6 +2713,7 @@ class MoveGen {
       search_spans();
       return;
     }
+    for (int s = 0; s < NSQ; ++s) is_anchor_[s] = !b.sq[s] && b.has_neighbor(s);
     int na = 0;
     for (int d = 0; d < 2; ++d)
       for (int line = 0; line < N; ++line) {
