@@ -11,8 +11,9 @@ UI. It uses only the C++ standard library.
 finds the best static play twice as fast, simulates twice as fast, and solves endgames
 faster, with every shortcut checked against brute force. It has been measured against
 **MAGPIE**, the open-source C engine descended from Macondo, under a neutral referee. At 1 and
-5 seconds a move on one core, Tilefish wins about 60% of games against MAGPIE's full
-search. What that does and does not prove is set out in
+5 seconds a move on one core, Tilefish won 57.6% of 460 games against MAGPIE's full
+search. With four threads each at 5 seconds a move it is close: 53.0% of 100 games.
+What that does and does not prove is set out in
 [How strong is it?](#how-strong-is-it).
 
 ## What's in this folder
@@ -111,7 +112,7 @@ Player 2: 12 moves, engine's choice 7 times, total win% lost 5.5, spread lost 58
 
 (Above: a fast self-play game reviewed at one second per move.) For every move whose
 rack is recorded in the `.gcg` file, Tilefish analyses the position (simulation in the
-midgame, the exhaustive solver with one tile in the bag, the exact solver in the
+midgame, the pre-endgame solver with one tile in the bag, the exact solver in the
 endgame) and reports how much win probability and spread the move cost.
 `?` marks a 2-5% mistake, `??` more than 5%. The last column is player 1's winning chance
 with best play from that position, which is the data behind a broadcast win graph.
@@ -230,16 +231,20 @@ PlayChooser, its full-strength move picker: simulation in the midgame, its pre-e
 solver when the bag is low, and its endgame solver when the bag is empty.
 
 Both engines used the CSW24 lexicon and **the same leave values** (MAGPIE's
-`CSW24.klv2`), one thread each, and the same fixed time per move. `tools/referee.py`
-refereed the games, with each deal played twice and the seats swapped.
+`CSW24.klv2`), one thread each unless stated otherwise, and the same fixed time per
+move. `tools/referee.py` refereed the games, with each deal played twice and the seats
+swapped.
 
 | Match (A vs B), CSW24 | Games | A's win rate | A's spread per game |
 |---|---|---|---|
 | Tilefish 1.0 (as uploaded) vs MAGPIE, 1 s a move | 100 | 59.0% ± 9.2 | +26.9 ± 18.0 |
 | Tilefish 2.0 in progress (fast move generation) vs MAGPIE, 1 s a move | 100 | 59.0% ± 9.2 | +21.4 ± 17.5 |
 | Tilefish 2.0 in progress (fast move generation) vs MAGPIE, 5 s a move | 60 | 61.7% ± 11.2 | +21.4 ± 24.9 |
-| Tilefish 2.0 (this version) vs MAGPIE, 1 s a move | 100 | 58.5% ± 8.8 | +16.8 ± 17.9 |
-| **All four Tilefish vs MAGPIE matches pooled** | **360** | **59.3% ± 4.7** | **+21.7 ± 9.5** |
+| Tilefish 2.0 before the review fixes vs MAGPIE, 1 s a move | 100 | 58.5% ± 8.8 | +16.8 ± 17.9 |
+| Tilefish 2.0 (this version) vs MAGPIE, 1 s a move | 100 | 51.5% ± 8.4 | +11.9 ± 14.6 |
+| **All five one-thread matches pooled** | **460** | **57.6% ± 4.1** | **+19.5 ± 8.1** |
+| Tilefish 2.0 before the time fix vs MAGPIE, 5 s a move, 4 threads each | 50 | 51.0% ± 14.6 | +10.8 ± 28.5 |
+| Tilefish 2.0 (this version) vs MAGPIE, 5 s a move, 4 threads each | 50 | 55.0% ± 13.3 | +19.2 ± 21.5 |
 | Control: Tilefish static vs MAGPIE static (no search at all) | 400 | 49.9% ± 3.2 | +1.9 ± 5.8 |
 | Diagnostic: MAGPIE's search vs MAGPIE static, 1 s a move | 60 | 48.3% ± 11.0 | −11.3 ± 24.1 |
 | Diagnostic: Tilefish 1.0's search vs Tilefish static, 1 s a move | 60 | 60.0% ± 12.8 | +27.9 ± 26.6 |
@@ -247,36 +252,49 @@ refereed the games, with each deal played twice and the seats swapped.
 (± = 95% confidence interval, computed over game pairs.)
 
 **Pre-endgame and endgame on their own.** A static Tilefish played both seats until
-the bag held 7 tiles (or none); then the two engines took over, 1 s a move, and each
-position was played twice with the seats swapped. The table shows what each engine
-gained from that point on:
+the bag held 7 tiles (or 1, or none); then the two engines took over, 1 s a move, and
+each position was played twice with the seats swapped. The table shows what each
+engine gained from that point on:
 
 | Phase, CSW24, 1 s a move | Games | Tilefish's gain per game | Tilefish win rate |
 |---|---|---|---|
-| From 7 tiles in the bag (pre-endgame, then endgame) | 200 | **+12.3 ± 4.6** | 54.5% ± 3.7 |
+| From 7 tiles in the bag (pre-endgame, then endgame) | 200 | **+15.4 ± 4.3** | 56.5% ± 4.1 |
+| From 1 tile in the bag (one-tile pre-endgame, then endgame) | 200 | +1.3 ± 0.9 | 50.0% |
 | From an empty bag (endgame only) | 200 | +0.3 ± 0.3 | 50.0% |
 
-Both solve almost every endgame exactly, so the endgame is a draw between them. The
-pre-endgame is where Tilefish pulls ahead: its simulations play every line out to the
-end, and its one-tile solver is exhaustive. That is worth about 12 points a game here,
-against MAGPIE's dedicated pre-endgame solver at the same time per move.
+On the same positions, the build before the review fixes gained +12.3 ± 4.6 from
+7 tiles and +0.8 ± 1.4 from 1 tile. Both engines solve almost every endgame exactly,
+so the endgame is a draw between them, and with one tile in the bag they are nearly
+even. The pre-endgame from 2 to 7 tiles is where Tilefish pulls ahead: its simulations
+play every line out to the end. That is worth about 15 points a game here, against
+MAGPIE's dedicated pre-endgame solver at the same time per move.
 
 What this shows, and what it does not:
 
 * **The comparison is fair.** With search switched off, the two engines are dead even
   (49.9%). Same leaves, same tiles, same rules, and the referee checked every move.
-* **At short time controls Tilefish is ahead.** Each match on its own is borderline,
-  with intervals of ±9–11%. Pooled over all four matches (360 games), Tilefish won
-  59.3% ± 4.7 and averaged +21.7 ± 9.5 points a game. At 5 s it also used only 2.4 s
-  a move against MAGPIE's 4.4 s, because its simulation stops once one candidate is
-  clearly best.
-* **2.0 is not measurably stronger than 1.0 at 1 s a move.** They scored 58.5% and 59.0%,
-  inside each other's noise, and 100 games cannot resolve a few percent. The
-  difference is in how they get there. 1.0 overran its clock (1.10 s a move against
-  MAGPIE's 0.93 s, from the one-tile pre-endgame solver). 2.0 keeps to it (0.92 s) and
-  does twice the simulation work in that time. The gains that speed buys should
-  show at longer time controls and in the endgame, which these matches cannot
-  separate.
+* **At short time controls on one core Tilefish is ahead.** Each match on its own is
+  borderline, with intervals of ±8–11%. Pooled over all five matches (460 games),
+  Tilefish won 57.6% ± 4.1 and averaged +19.5 ± 8.1 points a game.
+* **With four threads each it is close.** At 5 s a move the build before the time fix
+  scored 51.0% ± 14.6 over 50 games while thinking only 1.06 s a move against
+  MAGPIE's 4.4 s: its simulation stopped as soon as one candidate was statistically
+  ahead, which four threads reach early. It now keeps the closest challenger in play
+  and spends the whole budget. On the same deals it then scored 55.0% ± 13.3
+  (+19.2 ± 21.5 points a game), thinking 3.9 s a move against MAGPIE's 4.4 s.
+  Pooled, the two four-thread matches give 53.0% ± 9.8 over 100 games: close, and
+  not yet separable.
+* **2.0 is not measurably stronger than 1.0 at 1 s a move.** 1.0 scored 59.0%, the 2.0
+  builds 59.0%, 58.5% and 51.5%, all inside each other's noise; 100 games cannot
+  resolve a few percent. The difference is in how they get there. 1.0 overran its
+  clock (1.10 s a move against MAGPIE's 0.93 s, from the one-tile pre-endgame solver).
+  2.0 keeps to it (0.92 s on average, never more than 1.27 s) and does twice the
+  simulation work in that time. Played directly against the build before the review
+  fixes, this version scored 50.6% ± 4.6 over 400 games at 1 s a move (+4.1 ± 8.2
+  points a game): the fixes cost nothing there, and gain nothing measurable either.
+  Where they should matter, from 7 tiles in the bag and with four threads, the
+  numbers above point the same way but are not yet significant: on identical
+  positions from 7 tiles the gain rose by 3.1 ± 3.6 points a game.
 * **The reason is not speed.** MAGPIE's simulator still reports about 25,000 positions a
   second on one thread, roughly 3.5 times Tilefish's 6,800. The difference is how a short search
   is used. With about 40 samples per candidate, MAGPIE ranks moves by noisy win
@@ -284,10 +302,11 @@ What this shows, and what it does not:
   blends the static evaluation into the simulation result as a prior, so a short
   search refines the static choice instead of overriding it on noise (60.0%).
 * **It does not prove Tilefish is the strongest engine at tournament length.**
-  Nothing here tested several threads per engine, 30+ seconds a move, or thousands
-  of games. Those are the settings where MAGPIE's faster simulation should count
-  most. Even the pooled interval allows a true margin as small as about 55%. The
-  next step is to run exactly those matches; the tools for it are in `tools/`.
+  Nothing here tested 30+ seconds a move or thousands of games, and the four-thread
+  matches are only 50 games each. Those are the settings where MAGPIE's faster
+  simulation should count most. Even the pooled one-thread interval allows a true
+  margin as small as about 53%. The next step is to run exactly those matches; the
+  tools for it are in `tools/`.
 
 ### Speed (CSW24, one thread, same machine)
 
@@ -346,16 +365,17 @@ Here is where Tilefish stands on each requirement:
 | Standard formats | GCG game records (read, write, review), CGP positions, KLV/KLV2 leave files. |
 | Machine interface for broadcasts and GUIs | `--quiet` mode with one-line JSON analyses (win %, spread, every candidate). |
 | Post-game analysis | `review`: every move vs the engine, with win % lost and a win-probability timeline. |
-| Proven playing strength | **Partly.** About 60% against MAGPIE at 1–5 s a move on one core (100 + 60 games). Not yet measured at tournament length or with several threads. |
+| Proven playing strength | **Partly.** 57.6% ± 4.1 against MAGPIE at 1–5 s a move on one core (460 games); 53.0% ± 9.8 with four threads each at 5 s a move (100 games). Not yet measured at tournament length. |
 
 The last row is the whole job. The plan, in order of expected payoff:
 
-1. **Measure at tournament length.** Run `tools/referee.py` against MAGPIE with several
-   threads per engine and 20–60 s a move, over hundreds of game pairs. The short-time
-   lead above has to survive there before any "strongest" claim.
+1. **Measure at tournament length.** Four threads at 5 s a move has been tried (50
+   games per build, above). Next: 20–60 s a move over hundreds of game pairs. The
+   short-time lead above has to survive there before any "strongest" claim.
 2. **Pre-endgame.** Measured against MAGPIE from 7 tiles in the bag, Tilefish already
-   gains 12 points a game at 1 s a move. It solves one tile in the bag exhaustively and
-   plays simulations out to the end below 8 tiles. Missing: passing with one tile in the
+   gains 15 points a game at 1 s a move. With one tile in the bag it values every
+   candidate against each possible last tile, and it plays simulations out to the end
+   below 8 tiles. Missing: passing with one tile in the
    bag. Valuing a pass needs a nested solve from the opponent's side, because they
    don't know which tile is in the bag. Assuming they do makes a pass look never better
    than the best play, so that shortcut was left out.
@@ -429,7 +449,7 @@ its move lists against full generation (`verifyendgame`). `benchgen`, `benchsim`
   * Upper bounds per anchor couple the tiles played with the leave they keep.
   * A letter-multiset filter asks whether any subset of the rack spells a word with
     the tiles a span plays through, which cuts the anchors searched per position
-    from 29 to 7.
+    from 29 to 8.
   * Words then come straight from anagram maps instead of a GADDAG walk (two blanks
     included).
 * **Endgame solver**: each side's plays are generated once. At every node they are
@@ -438,11 +458,16 @@ its move lists against full generation (`verifyendgame`). `benchgen`, `benchsim`
   counting rack values.
 * **Engine protocol and match tools**: `position cgp` / `go movetime` / `bestmove`,
   `tools/referee.py`, and `tools/magpie_bot.c` for head-to-head matches.
-* **Time control**: the one-tile pre-endgame solver keeps to its time budget. It has a
-  global deadline, and a candidate is only ranked once every tile it might draw has
-  been solved. Positions with a blank on the rack used to take up to 11 s for a 1 s
-  budget.
-* **Training**: `train leaves=0` refits only the win model; `CSW24.win` ships with it.
+* **Time control**: every move keeps to its budget and uses it.
+  * The one-tile pre-endgame solver first values every candidate with both sides
+    playing greedily to the end, then searches the leaders one ply deeper at a time,
+    all to the same depth, while time allows. Positions with a blank on the rack used
+    to take up to 11 s for a 1 s budget.
+  * The simulation keeps the closest challenger in play instead of stopping once one
+    candidate is ahead, so a 5 s budget is actually spent. Inference of the opponent's
+    rack counts against the same budget.
+* **Training**: `train leaves=0` refits only the win model; `CSW24.win` and
+  `NWL23.win` ship with it.
 
 ## Command reference
 
