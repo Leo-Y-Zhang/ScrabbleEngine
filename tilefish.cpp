@@ -2040,6 +2040,9 @@ class MoveGen {
   int nfront_[RACK_SIZE + 1];
   float rest1_[NLET];  // rest of the equity after playing just this one tile (-inf if not on the rack)
   u32 rack_letters_ = 0;
+  u32 cap_mask_[RACK_SIZE];  // rack letters grouped by tile score, highest score first
+  int cap_val_[RACK_SIZE];
+  int ncap_ = 0;
   bool has_blank_ = false;
   bool use_shadow_ = true;
   bool use_refine_ = true;
@@ -2218,6 +2221,24 @@ class MoveGen {
     rack_letters_ = 0;
     for (int L = 1; L < NLET; ++L)
       if (rk_[L]) rack_letters_ |= 1u << L;
+    ncap_ = 0;
+    for (int L = 1; L < NLET; ++L) {
+      if (!((rack_letters_ >> L) & 1u)) continue;
+      const int v = TILE_SCORE[L];
+      int i = 0;
+      while (i < ncap_ && cap_val_[i] > v) ++i;
+      if (i < ncap_ && cap_val_[i] == v) {
+        cap_mask_[i] |= 1u << L;
+        continue;
+      }
+      for (int j = ncap_; j > i; --j) {
+        cap_mask_[j] = cap_mask_[j - 1];
+        cap_val_[j] = cap_val_[j - 1];
+      }
+      cap_mask_[i] = 1u << L;
+      cap_val_[i] = v;
+      ++ncap_;
+    }
     has_blank_ = rk_[BLANK] > 0;
     bingo7_ = true;
     bingo8_ = ALL_LETTERS;
@@ -2318,13 +2339,10 @@ class MoveGen {
 
   // Highest-scoring rack tile that may be placed on square k of the loaded line.
   inline int square_cap(int k) const {
-    const u32 x = lx_[k] & rack_letters_;
-    int best = 0;
-    for (int i = 0; i < nr_; ++i) {
-      const int L = rt_[i];
-      if (L && ((x >> L) & 1u) && TILE_SCORE[L] > best) best = TILE_SCORE[L];
-    }
-    return best;
+    const u32 x = lx_[k];
+    for (int i = 0; i < ncap_; ++i)
+      if (x & cap_mask_[i]) return cap_val_[i];
+    return 0;
   }
 
   // Quick bound on what the rack tiles of a k-tile span add (tile scores times the
@@ -5916,7 +5934,7 @@ struct App {
     verifyendgame [N]     endgame move source and values vs full generation/minimax
     bench                 speed benchmarks
     benchgen [G] [R]      best-move generation speed on fixed positions
-    benchsim [SECS]       simulation throughput (one thread)
+    benchsim [SECS [THREADS [ITERS]]]  simulation throughput (fixed ITERS: deterministic)
     benchendgame [N] [S]  N self-play endgames, S seconds each
     quit
 Player SPECs: static (no search), static+ (static + endgame solvers), sim (fast search),
@@ -6471,7 +6489,7 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
   void cmd_selftest(bool quick);
   void cmd_bench();
   void cmd_benchgen(int games, int reps, const std::string& mode);
-  void cmd_benchsim(double secs);
+  void cmd_benchsim(double secs, int nthreads, int iters);
   void cmd_benchendgame(int n, double secs);
   int cmd_verifybest(int npos, bool quiet = false);
   int cmd_verifyendgame(int n, bool quiet = false);
@@ -6637,7 +6655,8 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
     } else if (cmd == "benchendgame") {
       cmd_benchendgame(args.empty() ? 20 : std::atoi(args[0].c_str()), args.size() > 1 ? std::atof(args[1].c_str()) : 10.0);
     } else if (cmd == "benchsim") {
-      cmd_benchsim(args.empty() ? 3.0 : std::atof(args[0].c_str()));
+      cmd_benchsim(args.empty() ? 3.0 : std::atof(args[0].c_str()), args.size() > 1 ? std::atoi(args[1].c_str()) : 1,
+                   args.size() > 2 ? std::atoi(args[2].c_str()) : 0);
     } else if (cmd == "verifyendgame") {
       cmd_verifyendgame(args.empty() ? 30 : std::atoi(args[0].c_str()));
     } else if (cmd == "verifybest") {
@@ -7128,7 +7147,9 @@ inline void App::cmd_benchendgame(int n, double secs) {
 }
 
 // Simulation throughput on a fixed early-midgame position (single thread).
-inline void App::cmd_benchsim(double secs) {
+// With `iters` > 0 the run is a fixed number of iterations (deterministic, for
+// profiling) instead of a fixed time.
+inline void App::cmd_benchsim(double secs, int nthreads, int iters) {
   if (!need_lex()) return;
   MoveGen gen(&lex, &leaves);
   Game G;
@@ -7140,16 +7161,17 @@ inline void App::cmd_benchsim(double secs) {
   }
   Position P = Position::from_game(G);
   SimParams sp;
-  sp.threads = 1;
-  sp.time_limit = secs;
-  sp.max_iterations = 1000000;
+  sp.threads = std::max(1, nthreads);
+  sp.time_limit = iters > 0 ? 1e9 : secs;
+  sp.max_iterations = iters > 0 ? iters : 1000000;
   sp.prune_z = 100;
   sp.seed = 99;
   Simulator& sim = eng().simulator();
   const auto cands = sim.candidates(P, 10);
   const SimResult R = sim.run(P, cands, sp);
-  std::cout << fmt("simulation (rack %s, bag %d): %.0f plies/s  (%d iterations x %zu candidates in %.1fs)\n", P.rack.str().c_str(), P.bag_n, R.positions / R.seconds, R.iterations,
-                   cands.size(), R.seconds);
+  std::cout << fmt("simulation (rack %s, bag %d, %d thread(s)): %.0f plies/s  (%d iterations x %zu candidates, %ld plies in %.1fs)\n",
+                   P.rack.str().c_str(), P.bag_n, sp.threads, R.positions / R.seconds, R.iterations, cands.size(), R.positions,
+                   R.seconds);
 }
 
 inline void App::cmd_bench() {
