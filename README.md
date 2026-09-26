@@ -27,6 +27,7 @@ search. What that does and does not prove is set out in
 | `build.sh`, `build.bat` | One-line builds for Linux/macOS and Windows. |
 | `tools/referee.py` | Neutral referee for engine-vs-engine matches (its own rules code, paired games, parallel play). |
 | `tools/magpie_bot.c`, `tools/build_magpie_bot.sh` | Lets MAGPIE play through the same protocol, for head-to-head matches. |
+| `.github/workflows/selftest.yml` | Builds and runs the quick self-test on every push. |
 | `README.md` | This file. |
 
 ## Build

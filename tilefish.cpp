@@ -5682,6 +5682,7 @@ struct App {
   Rng rng{time_seed()};
   bool color = false;
   bool quiet = false;  // protocol mode: no board echo after commands
+  int exit_code = 0;   // non-zero after a failed selftest (for scripts and CI)
   std::unique_ptr<Engine> engine;
 
   App() {
@@ -6831,6 +6832,7 @@ inline void App::cmd_selftest(bool quick) {
     check(cmd_verifyendgame(ne, true) == 0, fmt("endgame move source == full generation, values == minimax (%d endgames)", ne));
   }
   std::cout << (failures ? fmt("SELF-TEST FAILED (%d problem(s))\n", failures) : std::string("All self-tests passed.\n"));
+  if (failures) exit_code = 1;
 }
 
 // Endgame checks: (1) the solver's move source equals full move generation along
@@ -7166,9 +7168,9 @@ int main(int argc, char** argv) {
       std::string item;
       std::istringstream is(c);
       while (std::getline(is, item, ';'))
-        if (!app.execute(item)) return 0;
+        if (!app.execute(item)) return app.exit_code;
     }
-    return 0;
+    return app.exit_code;
   }
   if (!quiet) std::cout << "Type 'help' for commands, 'play' to play a game.\n";
   std::string line;
