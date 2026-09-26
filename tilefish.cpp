@@ -1,6 +1,6 @@
 /*
  * =====================================================================================
- *   TILEFISH  -  a championship-style Scrabble(R) engine in one C++17 file
+ *   TILEFISH 2.0  -  a championship-style Scrabble(R) engine in one C++17 file
  * =====================================================================================
  *
  *  "Stockfish, but for tiles."  Everything lives in this single file: the lexicon
@@ -30,14 +30,19 @@
  *    (JSON for `go ... json`).
  *
  *  A LEXICON IS REQUIRED.  Any plain word list works (one word per line, extra
- *  columns such as definitions are ignored).  Tournament play uses CSW (Collins,
- *  WESPA / world championship) or NWL (NASPA, North America).  Those lists are
- *  copyrighted, so they are not bundled: load your own copy with --lexicon and run
- *  `train` so the engine learns leave values for that exact dictionary.
+ *  columns such as definitions are ignored), and so does a binary .kwg lexicon as
+ *  used by wolges, MAGPIE and Macondo.  Tournament play uses CSW (Collins, WESPA /
+ *  world championship) or NWL (NASPA, North America).  Those lists are copyrighted,
+ *  so they are not bundled: load your own copy with --lexicon, together with leave
+ *  values for it (FILE.klv2 or FILE.leaves next to it is picked up automatically),
+ *  or run `train` so the engine learns leave values for that exact dictionary.
  *
  *  HOW THE ENGINE THINKS  (chess analogies in brackets)
- *    1. Move generation   GADDAG (Gordon 1994) compiled into a compact node array.
- *                         Generates every legal play, exchange and pass.  [movegen]
+ *    1. Move generation   GADDAG (Gordon 1994) compiled into a compact node array
+ *                         generates every legal play, exchange and pass.  The best
+ *                         play alone (the inner loop of simulation) is found
+ *                         best-first: upper bounds per anchor and span, then words
+ *                         looked up by their letters in anagram maps.  [movegen]
  *    2. Static equity     score + value(tiles kept) + end-of-game adjustments.
  *                         Leave values are *learned by self-play*, because face
  *                         values mis-price tiles (S and ? are worth far more than
@@ -51,7 +56,9 @@
  *                         bags, so luck cancels out.   [search]
  *    4. Endgame           Bag empty = perfect information.  Negamax + alpha-beta,
  *                         iterative deepening, transposition table: exact
- *                         solutions.   [tablebase-like]
+ *                         solutions.  Each side's plays are generated once and
+ *                         filtered as tiles land; at the depth limit both sides
+ *                         play greedily to the end.   [tablebase-like]
  *    5. Pre-endgame       One tile in the bag: every possible draw is enumerated
  *                         and each resulting endgame is solved.
  *    6. Inference         The opponent's last play tells us about the tiles they
@@ -382,6 +389,102 @@ namespace tf {
 //  Both automata are built from sorted input with Daciuk et al.'s incremental
 //  minimisation and share identical sub-structures.
 
+// A set of letter multisets ("which bags of letters spell some word?") used to
+// tighten the move generator's upper bounds.  A multiset's key is the sum of a
+// random 64-bit number per letter, so the key of a union is the sum of the keys.
+// Only 16-bit fingerprints are stored, in a cache-friendly open-addressing table:
+// a lookup can wrongly answer "yes" (harmless: a looser bound) but never "no"
+// for a key that was inserted.
+class WordFilter {
+ public:
+  void build(std::vector<u64>& keys) {
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    int bits = 10;
+    while ((1ull << bits) < keys.size() * 2) ++bits;
+    shift_ = 64 - bits;
+    mask_ = (1u << bits) - 1;
+    t_.assign((size_t)1 << bits, 0);
+    for (u64 k : keys) {
+      const u16 f = fp(k);
+      u32 i = (u32)(k >> shift_);
+      while (t_[i] && t_[i] != f) i = (i + 1) & mask_;
+      t_[i] = f;
+    }
+  }
+  inline bool has(u64 k) const {
+    const u16 f = fp(k);
+    for (u32 i = (u32)(k >> shift_);; i = (i + 1) & mask_) {
+      const u16 v = t_[i];
+      if (v == f) return true;
+      if (!v) return false;
+    }
+  }
+  bool empty() const { return t_.empty(); }
+
+ private:
+  std::vector<u16> t_;
+  int shift_ = 64;
+  u32 mask_ = 0;
+  static inline u16 fp(u64 k) {
+    const u16 f = (u16)(k >> 5);
+    return f ? f : 1;
+  }
+};
+
+// Anagram map: letter-multiset key -> the words spelled by exactly those letters.
+// The one-blank variant maps key(word - x) -> (word, x) for every distinct letter x
+// of the word, i.e. "these tiles plus a blank as x spell this word".
+class AnagramMap {
+ public:
+  // Values are word ids (optionally | letter << 24).  Builds from (key, value) pairs.
+  void build(std::vector<std::pair<u64, u32>>& kv) {
+    std::sort(kv.begin(), kv.end());
+    size_t distinct = 0;
+    for (size_t i = 0; i < kv.size(); ++i) distinct += (i == 0 || kv[i].first != kv[i - 1].first);
+    int bits = 10;
+    while ((1ull << bits) < distinct + distinct / 2) ++bits;
+    shift_ = 64 - bits;
+    mask_ = (1u << bits) - 1;
+    slots_.assign((size_t)1 << bits, Slot());
+    vals_.resize(kv.size());
+    for (size_t i = 0; i < kv.size();) {
+      size_t j = i;
+      while (j < kv.size() && kv[j].first == kv[i].first) {
+        vals_[j] = kv[j].second;
+        ++j;
+      }
+      u32 h = (u32)(kv[i].first >> shift_);
+      while (slots_[h].n) h = (h + 1) & mask_;
+      slots_[h] = Slot{kv[i].first, (u32)i, (u32)(j - i)};
+      i = j;
+    }
+  }
+  // Returns the number of values for `key` and sets `out` to them.
+  inline int find(u64 key, const u32*& out) const {
+    for (u32 h = (u32)(key >> shift_);; h = (h + 1) & mask_) {
+      const Slot& sl = slots_[h];
+      if (!sl.n) return 0;
+      if (sl.key == key) {
+        out = vals_.data() + sl.off;
+        return (int)sl.n;
+      }
+    }
+  }
+  bool empty() const { return slots_.empty(); }
+  size_t bytes() const { return slots_.size() * sizeof(Slot) + vals_.size() * 4; }
+
+ private:
+  struct Slot {
+    u64 key = 0;
+    u32 off = 0, n = 0;
+  };
+  std::vector<Slot> slots_;
+  std::vector<u32> vals_;
+  int shift_ = 64;
+  u32 mask_ = 0;
+};
+
 class Lexicon {
  public:
   std::vector<u32> nodes;
@@ -405,6 +508,14 @@ class Lexicon {
   //   bingo8 : for every 8-letter word and every letter X in it, sorted(word - X) -> bit X
   std::unordered_set<u64> bingo7;
   std::unordered_map<u64, u32> bingo8;
+  // Multiset filters: words (spell0) and words with one letter removed (spell1,
+  // i.e. "plus one blank spells a word").  lkey[L] is letter L's random key.
+  u64 lkey[NLET] = {0};
+  WordFilter spell0, spell1;
+  // Word maps for anagram-based move generation (words of 2..15 letters).
+  AnagramMap amap0, amap1;
+  std::vector<u8> wl_letters;  // all words' letters, concatenated
+  std::vector<u32> wl_off;     // word id -> offset into wl_letters (size = words + 1)
   static u64 sorted_key(const int* cnt /* 27 counts, letters 1..26 only */) {
     u64 k = 0;
     for (int L = 1; L < 27; ++L)
@@ -508,17 +619,126 @@ class Lexicon {
       return false;
     }
     if (!build(words, err)) return false;
-    std::string base = path;
-    const size_t slash = base.find_last_of("/\\");
-    if (slash != std::string::npos) base = base.substr(slash + 1);
-    const size_t dot = base.find_last_of('.');
-    if (dot != std::string::npos && dot > 0) base = base.substr(0, dot);
-    name = base;
+    name = base_name(path);
     return true;
   }
 
   // Builds from words encoded as bytes 1..26.  Sorts/deduplicates in place.
   bool build(std::vector<std::string>& words, std::string& err);
+
+  // Loads a KWG (Kurnia Word Graph, the binary lexicon format of wolges, MAGPIE and
+  // Macondo).  Its arcs use exactly our bit layout; arc 0 points at the DAWG root
+  // and arc 1 at the GADDAG root.  Only the English alphabet (tiles 1..26) is
+  // accepted.
+  bool load_kwg(const std::string& path, std::string& err) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+      err = "cannot open " + path;
+      return false;
+    }
+    std::vector<unsigned char> buf((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (buf.size() < 8 || buf.size() % 4) {
+      err = "not a KWG file (size)";
+      return false;
+    }
+    std::vector<u32> nd(buf.size() / 4);
+    for (size_t i = 0; i < nd.size(); ++i)
+      nd[i] = (u32)buf[4 * i] | ((u32)buf[4 * i + 1] << 8) | ((u32)buf[4 * i + 2] << 16) | ((u32)buf[4 * i + 3] << 24);
+    for (size_t i = 2; i < nd.size(); ++i)
+      if (child(nd[i]) >= nd.size() || label(nd[i]) > 26) {
+        err = "not an English KWG file (bad arc " + std::to_string(i) + ")";
+        return false;
+      }
+    const u32 d = child(nd[0]), g = child(nd[1]);
+    if (!d || !g || d >= nd.size() || g >= nd.size()) {
+      err = "KWG without both a DAWG and a GADDAG";
+      return false;
+    }
+    nodes = std::move(nd);
+    dawg_root = d;
+    gaddag_root = g;
+    std::vector<std::string> words;
+    for_each_word([&](const std::string& w) {
+      if (w.size() <= (size_t)N) words.push_back(w);  // KWGs may hold longer, unplayable words
+    });
+    nwords = words.size();
+    build_bingo_index(words);
+    name = base_name(path);
+    return true;
+  }
+
+  static std::string base_name(std::string base) {
+    const size_t slash = base.find_last_of("/\\");
+    if (slash != std::string::npos) base = base.substr(slash + 1);
+    const size_t dot = base.find_last_of('.');
+    if (dot != std::string::npos && dot > 0) base = base.substr(0, dot);
+    return base;
+  }
+
+  void build_bingo_index(const std::vector<std::string>& words) {
+    {
+      Rng r(0x5EED5EED1234ULL);
+      for (int L = 0; L < NLET; ++L) lkey[L] = L ? r.next() : 0;
+      std::vector<u64> k0, k1;
+      k0.reserve(words.size());
+      k1.reserve(words.size() * 7);
+      for (const auto& w : words) {
+        if (w.size() > (size_t)N) continue;
+        u64 k = 0;
+        u32 seen = 0;
+        for (char ch : w) k += lkey[(u8)ch];
+        k0.push_back(k);
+        for (char ch : w) {
+          if ((seen >> (u8)ch) & 1u) continue;
+          seen |= 1u << (u8)ch;
+          k1.push_back(k - lkey[(u8)ch]);
+        }
+      }
+      spell0.build(k0);
+      spell1.build(k1);
+      std::vector<std::pair<u64, u32>> kv0, kv1;
+      wl_letters.clear();
+      wl_off.assign(1, 0);
+      kv0.reserve(words.size());
+      kv1.reserve(words.size() * 7);
+      for (const auto& w : words) {
+        if (w.size() > (size_t)N || w.size() < 2) continue;
+        const u32 id = (u32)wl_off.size() - 1;
+        u64 k = 0;
+        for (char ch : w) {
+          k += lkey[(u8)ch];
+          wl_letters.push_back((u8)ch);
+        }
+        wl_off.push_back((u32)wl_letters.size());
+        kv0.push_back({k, id});
+        u32 seen = 0;
+        for (char ch : w) {
+          if ((seen >> (u8)ch) & 1u) continue;
+          seen |= 1u << (u8)ch;
+          kv1.push_back({k - lkey[(u8)ch], id | ((u32)(u8)ch << 24)});
+        }
+      }
+      amap0.build(kv0);
+      amap1.build(kv1);
+    }
+    bingo7.clear();
+    bingo8.clear();
+    for (const auto& w : words) {
+      if (w.size() != 7 && w.size() != 8) continue;
+      int cnt[27] = {0};
+      for (char ch : w) cnt[(u8)ch]++;
+      if (w.size() == 7) {
+        bingo7.insert(sorted_key(cnt));
+      } else {
+        for (int X = 1; X < 27; ++X) {
+          if (!cnt[X]) continue;
+          --cnt[X];
+          bingo8[sorted_key(cnt)] |= 1u << X;
+          ++cnt[X];
+        }
+      }
+    }
+  }
 
   // Enumerates every word (DAWG order).  Used by self-tests.
   void for_each_word(const std::function<void(const std::string&)>& f) const {
@@ -691,23 +911,7 @@ inline bool Lexicon::build(std::vector<std::string>& words, std::string& err) {
     err = "lexicon too large for the 22-bit node format";
     return false;
   }
-  bingo7.clear();
-  bingo8.clear();
-  for (const auto& w : words) {
-    if (w.size() != 7 && w.size() != 8) continue;
-    int cnt[27] = {0};
-    for (char ch : w) cnt[(u8)ch]++;
-    if (w.size() == 7) {
-      bingo7.insert(sorted_key(cnt));
-    } else {
-      for (int X = 1; X < 27; ++X) {
-        if (!cnt[X]) continue;
-        --cnt[X];
-        bingo8[sorted_key(cnt)] |= 1u << X;
-        ++cnt[X];
-      }
-    }
-  }
+  build_bingo_index(words);
   return true;
 }
 
@@ -1731,6 +1935,20 @@ class MoveGen {
     out_ = &out;
     run();
   }
+  // Like generate_all, but only plays that cover at least one of the squares in
+  // `anchors` (each play once, from its leftmost such square); no exchanges or pass.
+  void generate_near(const Board& b, const Rack& rack, const EvalCtx& ctx, const bool* anchors, std::vector<Move>& out) {
+    setup(b, rack, ctx);
+    mode_ = GEN_ALL;
+    out_ = &out;
+    near_ = anchors;
+    EvalCtx c = ctx;
+    c.allow_exchange = false;
+    c.add_pass = false;
+    ctx_ = c;
+    run();
+    near_ = nullptr;
+  }
   // Returns the move with the highest static equity.
   Move generate_best(const Board& b, const Rack& rack, const EvalCtx& ctx) {
     setup(b, rack, ctx);
@@ -1799,18 +2017,44 @@ class MoveGen {
     float bound;
     u8 dir, line, col;
     int8_t last;
+    bool refined;
+    bool operator<(const AnchorInfo& o) const { return bound < o.bound; }
   };
   AnchorInfo anchors_[2 * NSQ];
   int ts_[RACK_SIZE];                 // rack tile scores, descending
   float best_rest_[RACK_SIZE + 1];    // best (leave + adjustment) part of equity by tiles played
+  // Leave and score are coupled: for each number k of tiles played, the Pareto
+  // frontier of (scores of the tiles played, descending; rest of the equity).
+  struct ShadowSubset {
+    float rest;
+    u8 sc[RACK_SIZE];
+    u8 blanks;  // blanks among the tiles played
+    bool ok0;   // do the tiles played (alone) spell a word?
+    u64 key;    // multiset key of the non-blank tiles played
+  };
+  ShadowSubset front_[RACK_SIZE + 1][64];
+  ShadowSubset frontw_[RACK_SIZE + 1][64];  // frontier of the subsets that spell a word on their own
+  int nfrontw_[RACK_SIZE + 1];
+  ShadowSubset allsub_[RACK_SIZE + 1][130];
+  int nallsub_[RACK_SIZE + 1];
+  int nfront_[RACK_SIZE + 1];
+  float rest1_[NLET];  // rest of the equity after playing just this one tile (-inf if not on the rack)
   u32 rack_letters_ = 0;
   bool has_blank_ = false;
   bool use_shadow_ = true;
+  bool use_refine_ = true;
+  bool use_wmp_ = true;
+  const bool* near_ = nullptr;  // generate_near: the allowed anchor squares
+  bool span_prune_ = false;
+  float span_lmax_[N];
+  float span_rmax_[N][N];
   bool bingo7_ = true;      // can the rack form a 7-letter word?
   u32 bingo8_ = ALL_LETTERS;  // board letters that complete an 8-letter word
 
  public:
   void set_shadow(bool on) { use_shadow_ = on; }
+  void set_refine(bool on) { use_refine_ = on; }
+  void set_wmp(bool on) { use_wmp_ = on; }
   long anchors_searched = 0, anchors_total = 0;
 
  private:
@@ -1900,13 +2144,31 @@ class MoveGen {
         anchor_ = 7;
         last_anchor_ = -1;
         no_right_ = true;
-        rec(7, lex_->gaddag_root, 0, 1, 0, 7);
+        if (mode_ == GEN_BEST && use_shadow_ && use_wmp_ && !lex_->amap0.empty()) {
+          prepare_shadow();
+          wmp_search_anchor(7);  // the opening: every span through the centre square
+        } else {
+          rec(7, lex_->gaddag_root, 0, 1, 0, 7);
+        }
       } else if (mode_ == GEN_BEST && use_shadow_) {
         run_best_shadow();
       } else {
-        for (int s = 0; s < NSQ; ++s) is_anchor_[s] = !b.sq[s] && b.has_neighbor(s);
+        u32 rows = 0, cols = 0;  // lines holding an anchor
+        if (near_) {
+          for (int s = 0; s < NSQ; ++s) {
+            is_anchor_[s] = near_[s] && !b.sq[s] && b.has_neighbor(s);
+            if (is_anchor_[s]) {
+              rows |= 1u << (s / N);
+              cols |= 1u << (s % N);
+            }
+          }
+        } else {
+          for (int s = 0; s < NSQ; ++s) is_anchor_[s] = !b.sq[s] && b.has_neighbor(s);
+          rows = cols = (1u << N) - 1;
+        }
         for (int d = 0; d < 2; ++d)
           for (int line = 0; line < N; ++line) {
+            if (!(((d == 0 ? rows : cols) >> line) & 1u)) continue;
             bool any = false;
             for (int k = 0; k < N && !any; ++k) any = is_anchor_[d == 0 ? line * N + k : k * N + line];
             if (!any) continue;
@@ -1960,7 +2222,14 @@ class MoveGen {
     bingo7_ = true;
     bingo8_ = ALL_LETTERS;
     if (nr_ == RACK_SIZE) lex_->bingo_info(rk_, bingo7_, bingo8_);
-    for (int k = 0; k <= RACK_SIZE; ++k) best_rest_[k] = -1e30f;
+    for (int k = 0; k <= RACK_SIZE; ++k) {
+      best_rest_[k] = -1e30f;
+      nfront_[k] = 0;
+    }
+    for (int L = 0; L < NLET; ++L) rest1_[L] = -1e30f;
+    auto& all_sub = allsub_;
+    int* nall = nallsub_;
+    for (int k = 0; k <= RACK_SIZE; ++k) nall[k] = 0;
     // Enumerate canonical leaves (for each letter keep a prefix of its instances).
     int dl[NLET], dc[NLET], nd = 0;
     for (int L = 0; L < NLET; ++L)
@@ -1991,6 +2260,23 @@ class MoveGen {
           rest = -STATIC_PARAMS.not_out_mult * (float)lf_[m] - STATIC_PARAMS.not_out_const;
         }
         if (rest > best_rest_[played]) best_rest_[played] = rest;
+        ShadowSubset& ss = all_sub[played][nall[played]++];
+        ss.rest = rest;
+        int q = 0;
+        for (int j = 0; j < nd; ++j)
+          for (int t = keep[j]; t < dc[j]; ++t) ss.sc[q++] = (u8)TILE_SCORE[dl[j]];
+        std::sort(ss.sc, ss.sc + q, [](u8 x, u8 y) { return x > y; });
+        ss.key = 0;
+        ss.blanks = 0;
+        for (int j = 0; j < nd; ++j) {
+          const int np = dc[j] - keep[j];
+          if (dl[j] == BLANK) ss.blanks = (u8)np;
+          else ss.key += (u64)np * lex_->lkey[dl[j]];
+        }
+        ss.ok0 = played < 2 || ss.blanks >= 2 || (ss.blanks ? lex_->spell1.has(ss.key) : lex_->spell0.has(ss.key));
+        if (played == 1)
+          for (int j = 0; j < nd; ++j)
+            if (keep[j] < dc[j]) rest1_[dl[j]] = rest;
       }
       int i = 0;
       while (i < nd) {
@@ -2002,6 +2288,31 @@ class MoveGen {
         ++i;
       }
       if (i == nd) break;
+    }
+    for (int k = 0; k <= RACK_SIZE; ++k) nfrontw_[k] = 0;
+    for (int k = 1; k <= nr_; ++k) {
+      for (int pass = 0; pass < 2; ++pass) {
+        // pass 0: all subsets; pass 1: only those that spell a word by themselves
+        for (int x = 0; x < nall[k]; ++x) {
+          const ShadowSubset& X = all_sub[k][x];
+          if (pass == 1 && !X.ok0) continue;
+          bool dominated = false;
+          for (int y = 0; y < nall[k] && !dominated; ++y) {
+            if (y == x) continue;
+            const ShadowSubset& Y = all_sub[k][y];
+            if (Y.rest < X.rest || (pass == 1 && !Y.ok0)) continue;
+            bool ge = true, gt = Y.rest > X.rest;
+            for (int t = 0; t < k && ge; ++t) {
+              if (Y.sc[t] < X.sc[t]) ge = false;
+              else if (Y.sc[t] > X.sc[t]) gt = true;
+            }
+            dominated = ge && (gt || y < x);  // ties: keep the first copy only
+          }
+          if (dominated) continue;
+          if (pass == 0 && nfront_[k] < 64) front_[k][nfront_[k]++] = X;
+          if (pass == 1 && nfrontw_[k] < 64) frontw_[k][nfrontw_[k]++] = X;
+        }
+      }
     }
   }
 
@@ -2016,8 +2327,83 @@ class MoveGen {
     return best;
   }
 
-  // Upper bound for anchor a of the loaded line (last_anchor_ must be set).
-  float shadow_bound(int a) const {
+  // Quick bound on what the rack tiles of a k-tile span add (tile scores times the
+  // span's effective multipliers `eff`, sorted descending, capped at `capped`, plus
+  // the leave kept), from the Pareto frontier of tile subsets; a == the anchor square.
+  float quick_var(int k, const int* eff, int capped, int a) const {
+    float var = -1e30f;
+    if (k == 1) {
+      // exactly one tile, on the anchor square: only letters that fit there
+      const u32 x = lx_[a];
+      for (int L = 1; L < NLET; ++L)
+        if (rest1_[L] > -1e29f && ((x >> L) & 1u)) var = std::max(var, (float)(TILE_SCORE[L] * eff[0]) + rest1_[L]);
+      if (x && rest1_[BLANK] > -1e29f) var = std::max(var, rest1_[BLANK]);
+      return var;
+    }
+    for (int f = 0; f < nfront_[k]; ++f) {
+      const ShadowSubset& F = front_[k][f];
+      int dot = 0;
+      for (int j = 0; j < k; ++j) dot += F.sc[j] * eff[j];
+      var = std::max(var, (float)std::min(dot, capped) + F.rest);
+    }
+    return var;
+  }
+
+  // Max over the rack subsets of k tiles that can spell a word together with the
+  // tiles played through (multiset key kt), of min(score bound, capped) + rest.  Any
+  // value at or below `floor` may be returned for spans that cannot beat it.
+  float refined_var(int k, const int* eff, int capped, u64 kt, bool through, int a, float floor) const {
+    if (k == 1) {
+      // One tile, on the anchor square, plus the tiles played through.
+      const u32 x = lx_[a];
+      float var = -1e30f;
+      for (int L = 1; L < NLET; ++L)
+        if (rest1_[L] > -1e29f && ((x >> L) & 1u) && lex_->spell0.has(kt + lex_->lkey[L]))
+          var = std::max(var, (float)(TILE_SCORE[L] * eff[0]) + rest1_[L]);
+      if (x && rest1_[BLANK] > -1e29f && lex_->spell1.has(kt)) var = std::max(var, rest1_[BLANK]);
+      return var;
+    }
+    if (!through) {
+      // Exact: the best subset that spells a word by itself (Pareto frontier).
+      float var = -1e30f;
+      for (int f = 0; f < nfrontw_[k]; ++f) {
+        const ShadowSubset& F = frontw_[k][f];
+        int dot = 0;
+        for (int j = 0; j < k; ++j) dot += F.sc[j] * eff[j];
+        var = std::max(var, (float)std::min(dot, capped) + F.rest);
+      }
+      return var;
+    }
+    const int n = nallsub_[k];
+    float val[130];
+    for (int f = 0; f < n; ++f) {
+      const ShadowSubset& F = allsub_[k][f];
+      int dot = 0;
+      for (int j = 0; j < k; ++j) dot += F.sc[j] * eff[j];
+      val[f] = (float)std::min(dot, capped) + F.rest;
+    }
+    while (true) {
+      int bi = -1;
+      float bv = -1e30f;
+      for (int f = 0; f < n; ++f)
+        if (val[f] > bv) {
+          bv = val[f];
+          bi = f;
+        }
+      // At or below the floor (or nothing left): bv still bounds every subset not yet
+      // ruled out, which is all that matters.
+      if (bi < 0 || bv <= floor) return bv;
+      const ShadowSubset& F = allsub_[k][bi];
+      if (F.blanks >= 2 || (F.blanks ? lex_->spell1.has(F.key + kt) : lex_->spell0.has(F.key + kt))) return bv;
+      val[bi] = -1e30f;
+    }
+  }
+
+  // Upper bound for anchor a of the loaded line (last_anchor_ must be set).  With
+  // `refine`, spans whose quick bound exceeds `threshold` are bounded again using
+  // only tile subsets that spell a word with the tiles played through.  With `vtab`
+  // (and no refinement), every span's quick bound is recorded in vtab[lo * N + hi].
+  float shadow_bound(int a, bool refine = false, float threshold = 0.f, float* vtab = nullptr) const {
     float best = -1e30f;
     if (!placeable(a)) return best;
     int plm[N], pwm[N], pxs[N], pcap[N];  // placed squares: left part (from anchor leftwards), then right part
@@ -2027,11 +2413,25 @@ class MoveGen {
     pxs[0] = lxs_[a];
     pcap[0] = square_cap(a);
     int l_through = 0, l_tc = 0, l_tl = 0;  // through-tile face sum, count, last letter
+    u64 l_key = 0;                          // multiset key of the through tiles
+    struct SpanRec {
+      float coarse;
+      int fixed, k, capped;
+      u64 kt;
+      bool through;
+      int eff[RACK_SIZE];
+    };
+    const bool fill = vtab != nullptr;  // record every span's bound (for pruning inside the anchor)
+    refine = refine && !fill;           // a refined span would be missing from vtab
+    constexpr int MAX_SPANS = 96;
+    SpanRec spans[MAX_SPANS];
+    int nspan = 0;
     int L = a;
     while (true) {
       if (L == 0 || lt_[L - 1] == 0) {
         int k = lk;
         int r_through = 0, r_tc = 0, r_tl = 0;
+        u64 r_key = 0;
         int R = a;
         while (true) {
           bool feasible = true;
@@ -2064,17 +2464,30 @@ class MoveGen {
               }
               eff[y + 1] = v;
             }
-            int sorted_sum = 0;
-            for (int j = 0; j < k; ++j) sorted_sum += ts_[j] * eff[j];
-            const int sc = (l_through + r_through) * wmt + cross + (k == RACK_SIZE ? BINGO_BONUS : 0) +
-                           std::min(sorted_sum, capped);
-            const float v = (float)sc + best_rest_[k];
-            if (v > best) best = v;
+            const int fixed = (l_through + r_through) * wmt + cross + (k == RACK_SIZE ? BINGO_BONUS : 0);
+            const float var = quick_var(k, eff, capped, a);
+            const int tc = l_tc + r_tc;
+            const float v = (float)fixed + var;
+            if (refine && var > -1e29f && v > threshold && v > best && (k >= 2 || tc > 0) && nspan < MAX_SPANS) {
+              // Refined later, best first.
+              SpanRec& S = spans[nspan++];
+              S.coarse = v;
+              S.fixed = fixed;
+              S.k = k;
+              S.capped = capped;
+              S.kt = l_key + r_key;
+              S.through = tc > 0;
+              for (int j = 0; j < k; ++j) S.eff[j] = eff[j];
+            } else {
+              if (v > best) best = v;
+              if (fill && v > vtab[L * N + R]) vtab[L * N + R] = v;
+            }
           }
           if (R == N - 1) break;
           const int nx = R + 1;
           if (lt_[nx]) {
             r_through += tile_face(lt_[nx]);
+            r_key += lex_->lkey[lt_[nx] & 31];
             ++r_tc;
             r_tl = lt_[nx] & 31;
             R = nx;
@@ -2093,6 +2506,7 @@ class MoveGen {
       const int nx = L - 1;
       if (lt_[nx]) {
         l_through += tile_face(lt_[nx]);
+        l_key += lex_->lkey[lt_[nx] & 31];
         ++l_tc;
         l_tl = lt_[nx] & 31;
         L = nx;
@@ -2106,6 +2520,18 @@ class MoveGen {
       pcap[lk] = square_cap(nx);
       ++lk;
       L = nx;
+    }
+    // Refine the promising spans best first: stop once no remaining quick bound
+    // can beat what the refined spans already reach.
+    while (nspan > 0) {
+      int bi = 0;
+      for (int i = 1; i < nspan; ++i)
+        if (spans[i].coarse > spans[bi].coarse) bi = i;
+      const SpanRec S = spans[bi];
+      spans[bi] = spans[--nspan];
+      if (S.coarse <= best) break;
+      const float floor = std::max(threshold, best);
+      best = std::max(best, (float)S.fixed + refined_var(S.k, S.eff, S.capped, S.kt, S.through, a, floor - (float)S.fixed));
     }
     return best;
   }
@@ -2125,27 +2551,267 @@ class MoveGen {
         for (int k = 0; k < N; ++k) {
           if (!is_anchor_[d == 0 ? line * N + k : k * N + line]) continue;
           const float bound = shadow_bound(k);
-          if (bound > best_eq_) anchors_[na++] = {bound, (u8)d, (u8)line, (u8)k, (int8_t)last_anchor_};
+          if (bound > best_eq_) anchors_[na++] = {bound, (u8)d, (u8)line, (u8)k, (int8_t)last_anchor_, false};
           last_anchor_ = k;
         }
       }
-    std::sort(anchors_, anchors_ + na, [](const AnchorInfo& x, const AnchorInfo& y) { return x.bound > y.bound; });
+    // Best bound first.  Without word maps, an anchor's quick bound is refined
+    // (word-spelling check on its promising spans) when it reaches the top of the
+    // queue; with word maps the anchor search itself does that work.
+    const bool wmp_on = use_wmp_ && !lex_->amap0.empty();
+    std::make_heap(anchors_, anchors_ + na);
     anchors_total += na;
     int cur_d = -1, cur_line = -1;
-    for (int i = 0; i < na; ++i) {
-      const AnchorInfo& A = anchors_[i];
+    while (na > 0) {
+      AnchorInfo A = anchors_[0];
       if (A.bound <= best_eq_) break;
+      std::pop_heap(anchors_, anchors_ + na);
+      --na;
       if (A.dir != cur_d || A.line != cur_line) {
         load_line(A.dir, A.line);
         cur_d = A.dir;
         cur_line = A.line;
       }
-      anchor_ = A.col;
       last_anchor_ = A.last;
+      if (!A.refined && use_refine_ && !wmp_on) {
+        A.bound = shadow_bound(A.col, true, best_eq_);
+        A.refined = true;
+        if (A.bound > best_eq_) {
+          anchors_[na++] = A;
+          std::push_heap(anchors_, anchors_ + na);
+        }
+        continue;
+      }
+      anchor_ = A.col;
       no_right_ = (A.col == N - 1) || lt_[A.col + 1] == 0;
       ++anchors_searched;
+      if (wmp_on) {
+        wmp_search_anchor(A.col);
+        continue;
+      }
+      if (use_refine_) prepare_span_tables(A.col);
       rec(A.col, lex_->gaddag_root, 0, 1, 0, A.col);
+      span_prune_ = false;
     }
+  }
+
+  // --- Anagram ("word map") generation of the best play through one anchor ------------
+  // Every span (contiguous squares containing the anchor, with its tiles played
+  // through) is bounded; spans are taken best first, and in each span the subsets of
+  // rack tiles are taken in order of their bound.  The words spelled by a subset plus
+  // the tiles played through come straight from the anagram maps; each is checked
+  // against the positions of the through tiles and the cross-checks and scored
+  // exactly.  With two blanks, every letter is tried for one of them.
+  struct WSpan {
+    float bound;
+    int lo, hi, k, fixed, capped, wmt, through_sum;
+    u64 kt;
+    bool through;
+    u8 pos[RACK_SIZE];
+    int eff_sorted[RACK_SIZE];
+  };
+
+  void wmp_search_anchor(int a) {
+    WSpan sp[112];
+    int ns = 0;
+    int placedL[N];
+    int lk = 1;
+    placedL[0] = a;
+    int L = a;
+    u64 l_key = 0;
+    int l_sum = 0, l_tc = 0;
+    while (true) {
+      if (L == 0 || lt_[L - 1] == 0) {
+        int placedR[N];
+        int k = lk, nr = 0;
+        int R = a;
+        u64 r_key = 0;
+        int r_sum = 0, r_tc = 0;
+        while (true) {
+          if ((R == N - 1 || lt_[R + 1] == 0) && ns < 112) {
+            const int tc = l_tc + r_tc;
+            // A lone tile needs a main word here; in the down pass it must not also
+            // form an across word (that play belongs to the across pass).
+            const bool ok = (k >= 2 || tc > 0) && !(k == 1 && dir_ == 1 && lxs_[a] >= 0);
+            if (ok) {
+              WSpan& S = sp[ns];
+              S.lo = L;
+              S.hi = R;
+              S.k = k;
+              int q = 0;
+              for (int i = 0; i < lk; ++i) S.pos[q++] = (u8)placedL[i];
+              for (int i = 0; i < nr; ++i) S.pos[q++] = (u8)placedR[i];
+              int wmt = 1, cross = 0, capped = 0;
+              for (int i = 0; i < k; ++i) {
+                const int p = S.pos[i];
+                wmt *= lwm_[p];
+                if (lxs_[p] >= 0) cross += lxs_[p] * lwm_[p];
+              }
+              for (int i = 0; i < k; ++i) {
+                const int p = S.pos[i];
+                const int e = llm_[p] * wmt + (lxs_[p] >= 0 ? llm_[p] * lwm_[p] : 0);
+                S.eff_sorted[i] = e;
+                capped += square_cap(p) * e;
+              }
+              std::sort(S.eff_sorted, S.eff_sorted + k, [](int x, int y) { return x > y; });
+              S.wmt = wmt;
+              S.through_sum = l_sum + r_sum;
+              S.fixed = (l_sum + r_sum) * wmt + cross + (k == RACK_SIZE ? BINGO_BONUS : 0);
+              S.capped = capped;
+              S.kt = l_key + r_key;
+              S.through = tc > 0;
+              // Quick bound; the subset loop in wmp_search_span does the exact work,
+              // best subset first.
+              S.bound = (float)S.fixed + quick_var(k, S.eff_sorted, capped, a);
+              if (S.bound > best_eq_) ++ns;
+            }
+          }
+          if (R == N - 1) break;
+          const int nx = R + 1;
+          if (lt_[nx]) {
+            r_sum += tile_face(lt_[nx]);
+            r_key += lex_->lkey[lt_[nx] & 31];
+            ++r_tc;
+            R = nx;
+            continue;
+          }
+          if (k + 1 > nr_ || !placeable(nx)) break;
+          placedR[nr++] = nx;
+          ++k;
+          R = nx;
+        }
+      }
+      if (L == 0) break;
+      const int nx = L - 1;
+      if (lt_[nx]) {
+        l_sum += tile_face(lt_[nx]);
+        l_key += lex_->lkey[lt_[nx] & 31];
+        ++l_tc;
+        L = nx;
+        continue;
+      }
+      if (nx == last_anchor_ || lk + 1 > nr_ || !placeable(nx)) break;
+      placedL[lk++] = nx;
+      L = nx;
+    }
+    // Spans best first.
+    std::sort(sp, sp + ns, [](const WSpan& x, const WSpan& y) { return x.bound > y.bound; });
+    for (int i = 0; i < ns; ++i) {
+      if (sp[i].bound <= best_eq_) break;
+      wmp_search_span(sp[i]);
+    }
+  }
+
+  void wmp_search_span(const WSpan& S) {
+    const int k = S.k;
+    const int n = nallsub_[k];
+    float val[130];
+    int idx[130];
+    int nv = 0;
+    for (int f = 0; f < n; ++f) {
+      const ShadowSubset& F = allsub_[k][f];
+      if (!S.through && !F.ok0) continue;  // must spell a word on its own
+      int dot = 0;
+      for (int j = 0; j < k; ++j) dot += F.sc[j] * S.eff_sorted[j];
+      const float v = (float)S.fixed + (float)std::min(dot, S.capped) + F.rest;
+      if (v > best_eq_) {
+        val[nv] = v;
+        idx[nv++] = f;
+      }
+    }
+    while (nv > 0) {
+      int bi = 0;
+      for (int i = 1; i < nv; ++i)
+        if (val[i] > val[bi]) bi = i;
+      if (val[bi] <= best_eq_) return;  // no subset left can beat the best play
+      const ShadowSubset& F = allsub_[k][idx[bi]];
+      val[bi] = val[--nv];
+      idx[bi] = idx[nv];
+      const u32* list;
+      if (F.blanks < 2) {
+        const int cnt = F.blanks ? lex_->amap1.find(F.key + S.kt, list) : lex_->amap0.find(F.key + S.kt, list);
+        for (int e = 0; e < cnt; ++e) wmp_try_word(S, F, list[e], 0);
+      } else {
+        // Two blanks: try every letter x for one of them, the one-blank map gives the
+        // other's letter y; each pair of letters is tried once (y >= x).
+        for (int x = 1; x < NLET; ++x) {
+          const int cnt = lex_->amap1.find(F.key + S.kt + lex_->lkey[x], list);
+          for (int e = 0; e < cnt; ++e)
+            if ((int)(list[e] >> 24) >= x) wmp_try_word(S, F, list[e], x);
+        }
+      }
+    }
+  }
+
+  void wmp_try_word(const WSpan& S, const ShadowSubset& F, u32 entry, int y2) {
+    const u32 id = entry & 0xFFFFFFu;
+    const int y = (int)(entry >> 24);  // letter played by a blank (0: no blank); y2: the second blank
+    const u8* w = lex_->wl_letters.data() + lex_->wl_off[id];
+    const int len = S.hi - S.lo + 1;
+    if ((int)(lex_->wl_off[id + 1] - lex_->wl_off[id]) != len) return;
+    // Through tiles must sit where the word has them.
+    for (int c = S.lo; c <= S.hi; ++c)
+      if (lt_[c] && (lt_[c] & 31) != w[c - S.lo]) return;
+    // Cross-checks, and where the blanks go: each on a placed square holding its letter,
+    // the one with the smallest multiplier.
+    for (int i = 0; i < S.k; ++i) {
+      const int p = S.pos[i];
+      if (!((lx_[p] >> w[p - S.lo]) & 1u)) return;
+    }
+    int blank_at = -1, blank2_at = -1;
+    auto place_blank = [&](int letter, int taken) {
+      int at = -1, best_e = 1 << 30;
+      for (int i = 0; i < S.k; ++i) {
+        const int p = S.pos[i];
+        if (p == taken || w[p - S.lo] != letter) continue;
+        const int e = llm_[p] * S.wmt + (lxs_[p] >= 0 ? llm_[p] * lwm_[p] : 0);
+        if (e < best_e) {
+          best_e = e;
+          at = p;
+        }
+      }
+      return at;
+    };
+    if (y) blank_at = place_blank(y, -1);
+    if (y2) blank2_at = place_blank(y2, blank_at);
+    int lsum = S.through_sum, xsum = 0;
+    for (int i = 0; i < S.k; ++i) {
+      const int p = S.pos[i];
+      const int ls = (p == blank_at || p == blank2_at) ? 0 : TILE_SCORE[w[p - S.lo]] * llm_[p];
+      lsum += ls;
+      if (lxs_[p] >= 0) xsum += (lxs_[p] + ls) * lwm_[p];
+    }
+    const int score = lsum * S.wmt + xsum + (S.k == RACK_SIZE ? BINGO_BONUS : 0);
+    const float eq = (float)score + F.rest;
+    if (eq <= best_eq_) return;
+    best_eq_ = eq;
+    for (int c = S.lo; c <= S.hi; ++c)
+      strip_[c] = lt_[c] ? 0 : (u8)(w[c - S.lo] | ((c == blank_at || c == blank2_at) ? BLANK_BIT : 0));
+    tiles_played_ = S.k;
+    fill(best_, S.lo, S.hi, score, eq);
+    tiles_played_ = 0;
+  }
+
+  // Bounds of every span of anchor a, turned into the two tables rec() consults:
+  // span_lmax_[c]  (still growing leftwards, leftmost square c): best span with left end <= c
+  // span_rmax_[l][c] (growing rightwards from left end l, next square c): best span l..r, r >= c
+  void prepare_span_tables(int a) {
+    float vtab[NSQ];
+    for (int i = 0; i < NSQ; ++i) vtab[i] = -1e30f;
+    shadow_bound(a, false, 0.f, vtab);
+    float run = -1e30f;
+    for (int l = 0; l <= a; ++l) {
+      float row = -1e30f;
+      float suffix = -1e30f;
+      for (int c = N - 1; c >= a; --c) {
+        suffix = std::max(suffix, vtab[l * N + c]);
+        span_rmax_[l][c] = suffix;
+        row = std::max(row, vtab[l * N + c]);
+      }
+      run = std::max(run, row);
+      span_lmax_[l] = run;
+    }
+    span_prune_ = true;
   }
 
   float pass_equity() {
@@ -2155,6 +2821,9 @@ class MoveGen {
   }
 
   void rec(int col, u32 list, int lsum, int wmul, int xsum, int leftmost) {
+    // Inside an anchor: stop when no span this partial play can still grow into
+    // has a bound above the best play found so far.
+    if (span_prune_ && (col <= anchor_ ? span_lmax_[col] : span_rmax_[leftmost][col]) <= best_eq_) return;
     const u8 cur = lt_[col];
     if (cur) {
       const u32 a = lex_->find(list, cur & 31);
@@ -2490,13 +3159,15 @@ namespace tf {
 //  Every candidate sees exactly the same opponent rack and bag order in a given
 //  iteration (common random numbers), so comparisons between candidates are paired
 //  and luck largely cancels.  Candidates that are significantly worse than the leader
-//  (paired z-test) are dropped early, focusing the remaining time on close decisions.
+//  (paired z-test) are dropped early, focusing the remaining time on close decisions;
+//  the closest challenger is never dropped, so the whole time budget goes into the
+//  decision (a move's unused time is not saved for later).
 
 struct SimParams {
   int plies = 2;
   int playout_bag = 7;        // with this many tiles or fewer in the bag, play out to the end
   int max_candidates = 20;
-  int max_iterations = 5000;  // per candidate
+  int max_iterations = 100000;  // per candidate
   double time_limit = 5.0;    // seconds
   int threads = 1;
   bool win_objective = true;      // rank by win probability (else by spread/equity)
@@ -2861,11 +3532,16 @@ class Simulator {
     }
     if (best < 0) return;
     const auto& B = R.cands[best];
+    int survivors = 0, closest = -1;
+    double closest_z = 1e300;
     for (size_t i = 0; i < R.cands.size(); ++i) {
       auto& c = R.cands[i];
       if (!c.active || (int)i == best) continue;
       const int n = std::min(c.n, B.n);
-      if (n < 2) continue;
+      if (n < 2) {
+        ++survivors;
+        continue;
+      }
       double s = 0, s2 = 0;
       for (int k = 0; k < n; ++k) {
         const double ob = sp.win_objective ? B.win[k] + sp.equity_tiebreak * B.eq[k] : B.eq[k];
@@ -2877,8 +3553,18 @@ class Simulator {
       const double m = s / n;
       const double var = std::max(1e-12, (s2 / n - m * m) * n / (n - 1));
       const double se = std::sqrt(var / n);
-      if (m - sp.prune_z * se > 0) c.active = false;
+      if (m - sp.prune_z * se > 0) {
+        c.active = false;
+        if (m / se < closest_z) {
+          closest_z = m / se;
+          closest = (int)i;
+        }
+      } else {
+        ++survivors;
+      }
     }
+    // Keep the closest challenger rather than stop early.
+    if (survivors == 0 && closest >= 0) R.cands[closest].active = true;
   }
 };
 
@@ -2911,7 +3597,7 @@ struct EndgameResult {
   Move best;
   int value = 0;         // spread gained from here to the end, for the side to move
   bool solved = false;   // proven exact
-  int depth = 0;
+  int depth = -1;        // deepest completed iteration (0: greedy play-out estimate only)
   long nodes = 0;
   double seconds = 0;
   std::vector<Move> pv;
@@ -2940,6 +3626,58 @@ class EndgameSolver {
     tt_mask_ = ((u64)1 << bits) - 1;
   }
 
+  // Test hook: walks random lines of play from (b, racks) and checks that the move
+  // source used inside the search (root plays still valid + plays around new tiles)
+  // yields exactly the legal plays found by full generation.  Returns mismatches.
+  int check_move_source(const Board& b0, const Rack& me, const Rack& opp, Rng& rng, int lines) {
+    const Rack r0[2] = {me, opp};
+    build_root_moves(b0, r0);
+    Worker w(lex_);
+    MoveGen full(lex_, nullptr);
+    int bad = 0;
+    auto key = [](const Move& m) {
+      std::string k = std::to_string(m.type) + ":" + std::to_string(m.row) + "," + std::to_string(m.col) + "," +
+                      std::to_string(m.dir) + ":" + std::to_string(m.score) + ":";
+      for (int i = 0; i < m.len; ++i) k += std::to_string(m.tiles[i]) + ".";
+      return k;
+    };
+    for (int line = 0; line < lines; ++line) {
+      Board b = b0;
+      Rack r[2] = {me, opp};
+      SqSet fresh;
+      int side = 0;
+      for (int ply = 0; ply < 8; ++ply) {
+        std::vector<Move> a, c;
+        gen_moves(w, b, r[side], r[side ^ 1], side, fresh, a);
+        EvalCtx ctx;
+        ctx.bag = 0;
+        ctx.opp_face = r[side ^ 1].face();
+        ctx.allow_exchange = false;
+        ctx.use_leaves = false;
+        full.generate_all(b, r[side], ctx, c);
+        std::multiset<std::string> ka, kc;
+        for (const auto& m : a) ka.insert(key(m));
+        for (const auto& m : c) kc.insert(key(m));
+        if (ka != kc) ++bad;
+        // follow a random play
+        std::vector<Move> plays;
+        for (const auto& m : c)
+          if (m.type == MT_PLACE) plays.push_back(m);
+        if (plays.empty()) break;
+        const Move m = plays[rng.below((u32)plays.size())];
+        b.place(*lex_, m);
+        for (int i = 0; i < m.len; ++i)
+          if (m.tiles[i]) fresh.add(m.square(i));
+        r[side].sub_all(m.used());
+        if (!r[side].n) break;
+        side ^= 1;
+      }
+    }
+    root_moves_[0].clear();
+    root_moves_[1].clear();
+    return bad;
+  }
+
   // `me` is the side to move.
   EndgameResult solve(const Board& b, const Rack& me, const Rack& opp, int zeros, const EndgameParams& p) {
     EndgameResult R;
@@ -2948,6 +3686,11 @@ class EndgameSolver {
     stop_.store(false);
     resize_tt(p.tt_bits > 0 ? p.tt_bits : default_bits_);
     salt_ = mix64(++solves_ * 0x9E3779B97F4A7C15ULL);  // entries from earlier solves no longer match
+    gen_ = (u8)solves_;
+    {
+      const Rack rr[2] = {me, opp};
+      build_root_moves(b, rr);
+    }
     const int nthreads = std::max(1, p.threads);
     std::vector<std::unique_ptr<Worker>> workers;
     for (int i = 0; i < nthreads; ++i) {
@@ -2980,7 +3723,7 @@ class EndgameSolver {
     u8 mtype = 255, mrow = 0, mcol = 0, mdir = 0, mlen = 0, mntiles = 0;
     i16 mscore = 0;
     u8 mtiles[N] = {0};
-    u8 pad = 0;
+    u8 gen = 0;  // solve that wrote it (replacement policy only)
   };
   enum { F_EXACT = 1, F_LOWER = 2, F_UPPER = 3 };
   static constexpr u8 DEPTH_EXACT = 255;
@@ -2988,11 +3731,85 @@ class EndgameSolver {
   struct Worker {
     MoveGen gen;
     std::vector<Move> stack[64];
+    std::vector<Move> tmp;
     u32 killer[64][2];
     long nodes = 0;
+    u32 ticks = 0;  // clock checks are spaced by these (nodes and play-out steps)
     int id = 0;
     explicit Worker(const Lexicon* l) : gen(l, nullptr) { std::memset(killer, 0, sizeof killer); }
   };
+
+  // Squares that received a tile since the root (a 225-bit set).
+  struct SqSet {
+    u64 w[4] = {0, 0, 0, 0};
+    void add(int s) { w[s >> 6] |= 1ull << (s & 63); }
+    bool has(int s) const { return (w[s >> 6] >> (s & 63)) & 1u; }
+    bool any() const { return (w[0] | w[1] | w[2] | w[3]) != 0; }
+    bool meets(const SqSet& o) const { return ((w[0] & o.w[0]) | (w[1] & o.w[1]) | (w[2] & o.w[2]) | (w[3] & o.w[3])) != 0; }
+  };
+  // Every play of a side on the root board, generated once.  A root play stays legal
+  // with the same score as long as none of its `sens` squares (its own squares and
+  // the first empty square beyond each word it forms) has received a tile; plays that
+  // touch new tiles are generated afresh around them.
+  struct RootMove {
+    Move m;
+    SqSet sens;
+    u8 need[RACK_SIZE];  // rack codes of the tiles it uses
+    u8 nneed;
+  };
+  std::vector<RootMove> root_moves_[2];
+
+  static void add_sensitive(const Board& b, const Move& m, SqSet& out) {
+    const int step = m.dir == 0 ? 1 : N, pstep = m.dir == 0 ? N : 1;
+    auto beyond = [&](int s, int st, bool forward) {
+      // first empty square past the run of tiles starting next to s
+      int r = s / N, c = s % N;
+      const int dr = st == N ? 1 : 0, dc = st == 1 ? 1 : 0;
+      while (true) {
+        r += forward ? dr : -dr;
+        c += forward ? dc : -dc;
+        if (r < 0 || c < 0 || r >= N || c >= N) return;
+        if (!b.sq[r * N + c]) {
+          out.add(r * N + c);
+          return;
+        }
+      }
+    };
+    beyond(m.square(0), step, false);
+    beyond(m.square(m.len - 1), step, true);
+    for (int i = 0; i < m.len; ++i) {
+      if (!m.tiles[i]) continue;
+      const int sq = m.square(i);
+      out.add(sq);
+      beyond(sq, pstep, false);
+      beyond(sq, pstep, true);
+    }
+  }
+
+  // Does play m (on board b) form a word with a tile placed since the root?
+  static bool touches_new(const Board& b, const Move& m, const SqSet& fresh) {
+    const int pstep = m.dir == 0 ? N : 1;
+    for (int i = 0; i < m.len; ++i) {
+      const int sq = m.square(i);
+      if (!m.tiles[i]) {
+        if (fresh.has(sq)) return true;
+        continue;
+      }
+      const int r = sq / N, c = sq % N;
+      for (int dir = -1; dir <= 1; dir += 2) {
+        int rr = r, cc = c;
+        while (true) {
+          if (pstep == N) rr += dir;
+          else cc += dir;
+          if (rr < 0 || cc < 0 || rr >= N || cc >= N) break;
+          const int t = rr * N + cc;
+          if (!b.sq[t]) break;
+          if (fresh.has(t)) return true;
+        }
+      }
+    }
+    return false;
+  }
 
   const Lexicon* lex_;
   std::vector<TTE> tt_;
@@ -3006,6 +3823,7 @@ class EndgameSolver {
   double deadline_ = 0;
   std::atomic<bool> stop_{false};
   u64 salt_ = 0, solves_ = 0;
+  u8 gen_ = 0;
   int default_bits_ = 20;
 
   static u64 digest(const TTE& e) {
@@ -3026,6 +3844,9 @@ class EndgameSolver {
     TTE old = slot;
     const bool old_ok = old.flag != 0 && (old.check ^ digest(old)) == key;
     if (old_ok && old.depth == DEPTH_EXACT && depth != DEPTH_EXACT) return;  // keep proven results
+    // Play-out estimates at the leaves are plentiful: they never evict a searched
+    // entry (a bound or a best move) written during this solve.
+    if (depth == 0 && old.flag != 0 && old.gen == gen_ && old.depth > 0) return;
     TTE e;
     e.value = (i16)std::max(-32000, std::min(32000, value));
     e.depth = depth;
@@ -3040,6 +3861,7 @@ class EndgameSolver {
       e.mscore = m->score;
       std::memcpy(e.mtiles, m->tiles, N);
     }
+    e.gen = gen_;
     e.check = key ^ digest(e);
     slot = e;
   }
@@ -3103,6 +3925,55 @@ class EndgameSolver {
     std::stable_sort(mv.begin(), mv.end(), [](const Move& a, const Move& b) { return a.equity > b.equity; });
   }
 
+  // Leaf estimate at the depth limit: both sides in turn play their highest-scoring
+  // play (going out first) until the game ends; returns the spread gained by `side`.
+  // Once the search is stopped the value is meaningless (callers check stop_).
+  int greedy_playout(Worker& w, const Board& b0, const Rack* r0, int side0, int passes, int zeros, const SqSet& fresh0,
+                     int ply) {
+    Board b = b0;
+    Rack r[2] = {r0[0], r0[1]};
+    SqSet fresh = fresh0;
+    int side = side0, spread = 0;
+    for (int step = 0; step < 12 && ply + step < 63; ++step) {
+      if (out_of_time(w)) return 0;
+      const Rack& mine = r[side];
+      const Rack& theirs = r[side ^ 1];
+      const int sign = side == side0 ? 1 : -1;
+      std::vector<Move>& mv = w.stack[ply + step];
+      gen_moves(w, b, mine, theirs, side, fresh, mv);
+      const Move* best = nullptr;
+      int best_key = -1000000;
+      for (const Move& m : mv) {
+        if (m.type != MT_PLACE) continue;
+        const int k = m.ntiles == mine.n ? 100000 + m.score : m.score;
+        if (k > best_key) {
+          best_key = k;
+          best = &m;
+        }
+      }
+      if (!best) {  // must pass
+        ++passes;
+        ++zeros;
+        if (passes >= 2 || zeros >= 6) return spread + sign * (theirs.face() - mine.face());
+        side ^= 1;
+        continue;
+      }
+      passes = 0;
+      const Move m = *best;
+      if (m.ntiles == mine.n) return spread + sign * (m.score + 2 * theirs.face());
+      spread += sign * m.score;
+      zeros = m.score == 0 ? zeros + 1 : 0;
+      b.place(*lex_, m);
+      for (int i = 0; i < m.len; ++i)
+        if (m.tiles[i]) fresh.add(m.square(i));
+      r[side].sub_all(m.used());
+      side ^= 1;
+      if (zeros >= 6) break;  // six scoreless turns: the game ends as below
+    }
+    // Game over or not finished: each side is charged its remaining tiles.
+    return spread + (side == side0 ? 1 : -1) * (r[side ^ 1].face() - r[side].face());
+  }
+
   static int leaf_eval(const Rack& mine, const Rack& theirs) {
     // Cheap guess: whoever keeps more face value is worse off.
     return theirs.face() - mine.face();
@@ -3110,26 +3981,92 @@ class EndgameSolver {
 
   bool out_of_time(Worker& w) {
     if (stop_.load(std::memory_order_relaxed)) return true;
-    if ((w.nodes & 255) == 0 && now_s() > deadline_) {
+    if ((++w.ticks & 31) == 0 && now_s() > deadline_) {
       stop_.store(true);
       return true;
     }
     return false;
   }
 
-  void gen_moves(Worker& w, const Board& b, const Rack& mine, const Rack& theirs, std::vector<Move>& mv) {
+  void gen_moves(Worker& w, const Board& b, const Rack& mine, const Rack& theirs, int side, const SqSet& fresh,
+                 std::vector<Move>& mv) {
     mv.clear();
     EvalCtx ctx;
     ctx.bag = 0;
     ctx.opp_face = theirs.face();
     ctx.allow_exchange = false;
     ctx.use_leaves = false;
-    w.gen.generate_all(b, mine, ctx, mv);
+    const std::vector<RootMove>& rl = root_moves_[side];
+    if (rl.empty() && !fresh.any()) {
+      w.gen.generate_all(b, mine, ctx, mv);
+      return;
+    }
+    // 1. Root plays still available: squares untouched and tiles still on the rack.
+    for (const RootMove& rm : rl) {
+      if (rm.sens.meets(fresh)) continue;
+      int8_t left[NLET];
+      std::memcpy(left, mine.c, NLET);
+      bool ok = true;
+      for (int i = 0; i < rm.nneed && ok; ++i) ok = --left[rm.need[i]] >= 0;
+      if (ok) mv.push_back(rm.m);
+    }
+    // 2. Plays that form words with tiles placed since the root.
+    if (fresh.any()) {
+      bool anchors[NSQ];
+      std::memset(anchors, 0, sizeof anchors);
+      for (int sq = 0; sq < NSQ; ++sq) {
+        if (!fresh.has(sq)) continue;
+        // ends of the horizontal and vertical runs of tiles through sq
+        const int r = sq / N, c = sq % N;
+        int c0 = c, c1 = c, r0 = r, r1 = r;
+        while (c0 > 0 && b.sq[r * N + c0 - 1]) --c0;
+        while (c1 < N - 1 && b.sq[r * N + c1 + 1]) ++c1;
+        while (r0 > 0 && b.sq[(r0 - 1) * N + c]) --r0;
+        while (r1 < N - 1 && b.sq[(r1 + 1) * N + c]) ++r1;
+        if (c0 > 0) anchors[r * N + c0 - 1] = true;
+        if (c1 < N - 1) anchors[r * N + c1 + 1] = true;
+        if (r0 > 0) anchors[(r0 - 1) * N + c] = true;
+        if (r1 < N - 1) anchors[(r1 + 1) * N + c] = true;
+      }
+      w.tmp.clear();
+      w.gen.generate_near(b, mine, ctx, anchors, w.tmp);
+      for (const Move& m : w.tmp)
+        if (touches_new(b, m, fresh)) mv.push_back(m);
+    }
+    Move pass;
+    pass.type = MT_PASS;
+    mv.push_back(pass);
+  }
+
+  void build_root_moves(const Board& b, const Rack* r) {
+    MoveGen gen(lex_, nullptr);
+    for (int side = 0; side < 2; ++side) {
+      std::vector<Move> all;
+      EvalCtx ctx;
+      ctx.bag = 0;
+      ctx.opp_face = r[side ^ 1].face();
+      ctx.allow_exchange = false;
+      ctx.use_leaves = false;
+      ctx.add_pass = false;
+      gen.generate_all(b, r[side], ctx, all);
+      root_moves_[side].clear();
+      root_moves_[side].reserve(all.size());
+      for (const Move& m : all) {
+        if (m.type != MT_PLACE) continue;
+        RootMove rm;
+        rm.m = m;
+        add_sensitive(b, m, rm.sens);
+        rm.nneed = 0;
+        for (int i = 0; i < m.len; ++i)
+          if (m.tiles[i]) rm.need[rm.nneed++] = (u8)tile_rack_code(m.tiles[i]);
+        root_moves_[side].push_back(rm);
+      }
+    }
   }
 
   // Value (for the side to move at `b`) of playing m, i.e. m.score - value(child).
-  int child_value(Worker& w, const Board& b, const Rack* r, int side, int passes, int zeros, u64 bh, const Move& m, int depth,
-                  int alpha, int beta, int ply, bool& exact) {
+  int child_value(Worker& w, const Board& b, const Rack* r, int side, int passes, int zeros, u64 bh, const SqSet& fresh,
+                  const Move& m, int depth, int alpha, int beta, int ply, bool& exact) {
     const Rack& mine = r[side];
     const Rack& theirs = r[side ^ 1];
     if (m.type == MT_PLACE && m.ntiles == mine.n) {
@@ -3138,26 +4075,30 @@ class EndgameSolver {
     }
     if (m.type == MT_PASS) {
       bool ex = true;
-      const int v = -negamax(w, b, r, side ^ 1, passes + 1, zeros + 1, bh, depth - 1, -beta, -alpha, ply + 1, ex);
+      const int v = -negamax(w, b, r, side ^ 1, passes + 1, zeros + 1, bh, fresh, depth - 1, -beta, -alpha, ply + 1, ex);
       exact = ex;
       return v;
     }
     Board nb = b;
     nb.place(*lex_, m);
     u64 nbh = bh;
+    SqSet nf = fresh;
     for (int i = 0; i < m.len; ++i)
-      if (m.tiles[i]) nbh ^= zsq_[m.square(i)][tile_code(m.tiles[i])];
+      if (m.tiles[i]) {
+        nbh ^= zsq_[m.square(i)][tile_code(m.tiles[i])];
+        nf.add(m.square(i));
+      }
     Rack nr[2] = {r[0], r[1]};
     nr[side].sub_all(m.used());
     bool ex = true;
-    const int v = m.score - negamax(w, nb, nr, side ^ 1, 0, m.score == 0 ? zeros + 1 : 0, nbh, depth - 1, -beta + m.score,
+    const int v = m.score - negamax(w, nb, nr, side ^ 1, 0, m.score == 0 ? zeros + 1 : 0, nbh, nf, depth - 1, -beta + m.score,
                                     -alpha + m.score, ply + 1, ex);
     exact = ex;
     return v;
   }
 
-  int negamax(Worker& w, const Board& b, const Rack* r, int side, int passes, int zeros, u64 bh, int depth, int alpha, int beta,
-              int ply, bool& exact) {
+  int negamax(Worker& w, const Board& b, const Rack* r, int side, int passes, int zeros, u64 bh, const SqSet& fresh, int depth,
+              int alpha, int beta, int ply, bool& exact) {
     ++w.nodes;
     if (out_of_time(w)) {
       exact = false;
@@ -3183,18 +4124,12 @@ class EndgameSolver {
       }
       have_tt = unpack(e, ttm) && quick_legal(b, mine, ttm);
     }
-    if (depth <= 0 || ply >= 63) {
+    if (depth <= 0 || ply >= 60) {
       exact = false;
-      // With a small rack, see whether the side to move can simply play out now.
-      if (mine.n <= 3 && ply < 63) {
-        std::vector<Move>& mv = w.stack[ply];
-        gen_moves(w, b, mine, theirs, mv);
-        int best_out = -100000;
-        for (const auto& m : mv)
-          if (m.type == MT_PLACE && m.ntiles == mine.n) best_out = std::max(best_out, (int)m.score + 2 * theirs.face());
-        if (best_out > -100000) return best_out;
-      }
-      return leaf_eval(mine, theirs);
+      if (ply >= 60) return leaf_eval(mine, theirs);
+      const int v = greedy_playout(w, b, r, side, passes, zeros, fresh, ply);
+      if (!stop_.load(std::memory_order_relaxed)) store(key, v, 0, F_EXACT, nullptr);
+      return v;
     }
     const int alpha0 = alpha;
     int best = -100000;
@@ -3207,12 +4142,12 @@ class EndgameSolver {
       bool ex = true;
       int v;
       if (searched == 0) {
-        v = child_value(w, b, r, side, passes, zeros, bh, m, depth, alpha, beta, ply, ex);
+        v = child_value(w, b, r, side, passes, zeros, bh, fresh, m, depth, alpha, beta, ply, ex);
       } else {
-        v = child_value(w, b, r, side, passes, zeros, bh, m, depth, alpha, alpha + 1, ply, ex);
+        v = child_value(w, b, r, side, passes, zeros, bh, fresh, m, depth, alpha, alpha + 1, ply, ex);
         if (!stop_.load(std::memory_order_relaxed) && v > alpha && v < beta) {
           ex = true;
-          v = child_value(w, b, r, side, passes, zeros, bh, m, depth, alpha, beta, ply, ex);
+          v = child_value(w, b, r, side, passes, zeros, bh, fresh, m, depth, alpha, beta, ply, ex);
         }
       }
       if (stop_.load(std::memory_order_relaxed)) return;
@@ -3238,7 +4173,7 @@ class EndgameSolver {
     if (have_tt) consider(ttm);
     if (!cut && !stop_.load(std::memory_order_relaxed)) {
       std::vector<Move>& mv = w.stack[ply];
-      gen_moves(w, b, mine, theirs, mv);
+      gen_moves(w, b, mine, theirs, side, fresh, mv);
       order(w, mv, mine.n, theirs.face(), ply);
       const u32 th = have_tt ? ttm.hash() : 0;
       for (size_t i = 0; i < mv.size() && !cut; ++i) {
@@ -3264,8 +4199,9 @@ class EndgameSolver {
                    EndgameResult& R, double t0) {
     Rack r[2] = {me, opp};
     const u64 bh = board_hash(b);
+    const SqSet none;
     std::vector<Move> root;
-    gen_moves(w, b, me, opp, root);
+    gen_moves(w, b, me, opp, 0, none, root);
     order(w, root, me.n, opp.face(), -1);
     if (root.empty()) {
       R.best = Move();
@@ -3274,6 +4210,15 @@ class EndgameSolver {
     std::vector<int> vals(root.size(), 0);
     Move best = root[0];
     int best_val = 0;
+    // Depth 0: both sides play greedily to the end.  A first estimate of the value,
+    // for when not even one ply of search fits in the time limit.
+    if (w.id == 0) {
+      const int v = greedy_playout(w, b, r, 0, 0, zeros, none, 0);
+      if (!stop_.load()) {
+        best_val = v;
+        R.depth = 0;
+      }
+    }
     const int start_depth = 1 + (w.id & 1);
     for (int depth = start_depth; depth <= p.max_depth; ++depth) {
       int alpha = -100000;
@@ -3287,12 +4232,12 @@ class EndgameSolver {
         bool ex = true;
         int v;
         if (i == 0) {
-          v = child_value(w, b, r, 0, 0, zeros, bh, m, depth, alpha, beta, 0, ex);
+          v = child_value(w, b, r, 0, 0, zeros, bh, none, m, depth, alpha, beta, 0, ex);
         } else {
-          v = child_value(w, b, r, 0, 0, zeros, bh, m, depth, alpha, alpha + 1, 0, ex);
+          v = child_value(w, b, r, 0, 0, zeros, bh, none, m, depth, alpha, alpha + 1, 0, ex);
           if (!stop_.load() && v > alpha) {
             ex = true;
-            v = child_value(w, b, r, 0, 0, zeros, bh, m, depth, alpha, beta, 0, ex);
+            v = child_value(w, b, r, 0, 0, zeros, bh, none, m, depth, alpha, beta, 0, ex);
           }
         }
         if (stop_.load()) {
@@ -3384,7 +4329,9 @@ class EndgameSolver {
 //  unseen pool is the opponent's 7 tiles plus the bag tile, so for each candidate we
 //  enumerate which of the unseen tiles is the one we draw, solve the resulting endgame
 //  (opponent to move) and average.  Candidates are ranked by win probability, then by
-//  expected spread.
+//  expected spread: first with both sides playing greedily to the end (cheap, so
+//  every candidate gets a value), then the leaders again with 1, 2, ... plies of
+//  search before the greedy play-out, all of them to the same depth.
 
 struct PegResult {
   struct Row {
@@ -3417,16 +4364,17 @@ class PreEndgameSolver {
       if (m.type == MT_PLACE) cands.push_back(m);
       if ((int)cands.size() >= max_candidates) break;
     }
+    int forced = -1;  // candidate that must be evaluated (review: the move actually played)
     if (must_include && must_include->type == MT_PLACE) {
-      bool found = false;
-      for (const auto& m : cands) found |= m.same_as(*must_include);
-      if (!found) {
+      for (size_t c = 0; c < cands.size() && forced < 0; ++c)
+        if (cands[c].same_as(*must_include)) forced = (int)c;
+      if (forced < 0)
         for (const auto& m : all)
           if (m.same_as(*must_include)) {
+            forced = (int)cands.size();
             cands.push_back(m);
             break;
           }
-      }
     }
     if (cands.empty()) return R;
     // Distinct possible bag tiles.
@@ -3434,81 +4382,140 @@ class PreEndgameSolver {
     for (int L = 0; L < NLET; ++L)
       if (P.unseen.c[L]) tiles.push_back({L, P.unseen.c[L]});
     const int total = P.unseen.n;
+    const int nt = (int)tiles.size();
     struct Job {
-      int cand, tile;
       int value = 0;
+      int depth = -1;  // search depth its value comes from (-1: none yet)
       bool exact = false;
     };
-    std::vector<Job> jobs;
-    for (size_t c = 0; c < cands.size(); ++c)
-      for (size_t t = 0; t < tiles.size(); ++t) jobs.push_back({(int)c, (int)t});
-    // Two passes: a quick shallow pass over everything, then deeper for the best few.
-    auto run_jobs = [&](std::vector<int> which, double per_job, int depth) {
+    std::vector<Job> jobs(cands.size() * nt);  // candidate c, tile t: jobs[c * nt + t]
+    // Everything, setup included, must fit in the time limit: no endgame starts
+    // after the deadline.
+    const double deadline = t0 + time_limit * 0.95;
+    // Solves the draws of candidates `cs` (in that order) to `depth` plies, 0 meaning
+    // both sides just play greedily to the end.  A solve cut off by the deadline
+    // leaves the job as it was.
+    auto run = [&](const std::vector<int>& cs, int depth) {
+      std::vector<int> which;
+      for (int c : cs)
+        for (int t = 0; t < nt; ++t)
+          if (!jobs[c * nt + t].exact) which.push_back(c * nt + t);
       std::atomic<size_t> next{0};
       auto worker = [&]() {
         EndgameSolver eg(lex_, 18);
         while (true) {
           const size_t k = next.fetch_add(1);
           if (k >= which.size()) break;
+          const double left = deadline - now_s();
+          if (left <= 0.001) break;
           Job& J = jobs[which[k]];
-          const Move& m = cands[J.cand];
+          const Move& m = cands[which[k] / nt];
+          const int L = tiles[which[k] % nt].first;
           Board nb = P.board;
           nb.place(*lex_, m);
           Rack mine = P.rack;
           mine.sub_all(m.used());
-          mine.add(tiles[J.tile].first);
+          mine.add(L);
           Rack opp = P.unseen;
-          opp.sub(tiles[J.tile].first);
+          opp.sub(L);
           EndgameParams ep;
-          ep.time_limit = per_job;
+          ep.time_limit = left;
           ep.max_depth = depth;
           ep.tt_bits = 18;
           const EndgameResult er = eg.solve(nb, opp, mine, m.score == 0 ? P.zeros + 1 : 0, ep);
+          if (!er.solved && er.depth < depth) continue;
           J.value = m.score - er.value;
           J.exact = er.solved;
+          J.depth = depth;
         }
       };
-      const int nt = std::max(1, threads);
       std::vector<std::thread> th;
-      for (int i = 0; i < nt; ++i) th.emplace_back(worker);
+      for (int i = 0; i < std::max(1, threads); ++i) th.emplace_back(worker);
       for (auto& x : th) x.join();
     };
-    std::vector<int> every(jobs.size());
-    std::iota(every.begin(), every.end(), 0);
-    const double budget1 = time_limit * 0.4;
-    run_jobs(every, std::max(0.02, budget1 * std::max(1, threads) / (double)jobs.size()), 3);
-    auto tally = [&]() {
-      R.rows.clear();
-      for (size_t c = 0; c < cands.size(); ++c) {
-        PegResult::Row row;
-        row.move = cands[c];
-        for (const auto& J : jobs) {
-          if (J.cand != (int)c) continue;
-          const double w = (double)tiles[J.tile].second / total;
-          const int final_spread = P.spread() + J.value;
-          row.win += w * (final_spread > 0 ? 1.0 : (final_spread == 0 ? 0.5 : 0.0));
-          row.spread += w * J.value;
-          row.exact = row.exact && J.exact;
-        }
-        R.rows.push_back(row);
-      }
-      std::stable_sort(R.rows.begin(), R.rows.end(), [](const PegResult::Row& a, const PegResult::Row& b) {
-        if (std::fabs(a.win - b.win) > 1e-9) return a.win > b.win;
-        return a.spread > b.spread;
-      });
+    auto complete = [&](int c, int depth) {
+      for (int t = 0; t < nt; ++t)
+        if (!jobs[c * nt + t].exact && jobs[c * nt + t].depth < depth) return false;
+      return true;
     };
-    tally();
-    // Deeper pass for the top few candidates.
-    const double remaining = time_limit - (now_s() - t0);
-    if (remaining > 0.05) {
-      std::vector<int> top;
-      const int ntop = std::min<int>(6, (int)R.rows.size());
-      for (int i = 0; i < ntop; ++i)
-        for (size_t j = 0; j < jobs.size(); ++j)
-          if (cands[jobs[j].cand].same_as(R.rows[i].move)) top.push_back((int)j);
-      run_jobs(top, std::max(0.05, remaining * std::max(1, threads) / std::max<size_t>(1, top.size())), 40);
-      tally();
+    auto row_of = [&](int c) {
+      PegResult::Row row;
+      row.move = cands[c];
+      for (int t = 0; t < nt; ++t) {
+        const Job& J = jobs[c * nt + t];
+        const double w = (double)tiles[t].second / total;
+        const int final_spread = P.spread() + J.value;
+        row.win += w * (final_spread > 0 ? 1.0 : (final_spread == 0 ? 0.5 : 0.0));
+        row.spread += w * J.value;
+        row.exact = row.exact && J.exact;
+      }
+      return row;
+    };
+    auto better = [](const PegResult::Row& a, const PegResult::Row& b) {
+      if (std::fabs(a.win - b.win) > 1e-9) return a.win > b.win;
+      return a.spread > b.spread;
+    };
+    // Candidates ranked so far, best first, with their rows.
+    std::vector<int> rank;
+    std::vector<PegResult::Row> rows;
+    // Re-ranks the candidates in `cs` among themselves and moves them to the front,
+    // above everything that was not searched as deep.
+    auto promote = [&](const std::vector<int>& cs) {
+      std::vector<std::pair<PegResult::Row, int>> v;
+      for (int c : cs) v.push_back({row_of(c), c});
+      std::stable_sort(v.begin(), v.end(), [&](const std::pair<PegResult::Row, int>& a, const std::pair<PegResult::Row, int>& b) {
+        return better(a.first, b.first);
+      });
+      std::vector<int> nrank;
+      std::vector<PegResult::Row> nrows;
+      for (const auto& x : v) {
+        nrank.push_back(x.second);
+        nrows.push_back(x.first);
+      }
+      for (size_t i = 0; i < rank.size(); ++i)
+        if (std::find(cs.begin(), cs.end(), rank[i]) == cs.end()) {
+          nrank.push_back(rank[i]);
+          nrows.push_back(rows[i]);
+        }
+      rank.swap(nrank);
+      rows.swap(nrows);
+    };
+    // Pass 1, every candidate and draw: both sides play greedily to the end.
+    {
+      std::vector<int> order;
+      if (forced >= 0) order.push_back(forced);
+      for (int c = 0; c < (int)cands.size(); ++c)
+        if (c != forced) order.push_back(c);
+      run(order, 0);
+      std::vector<int> ok;
+      for (int c : order)
+        if (complete(c, 0)) ok.push_back(c);
+      promote(ok);
     }
+    // Deeper rounds over the leaders, one depth at a time so that the candidates
+    // compared were searched equally deep.  When time runs out during a round, only
+    // the leading candidates whose draws were all searched are re-ranked.
+    const int keep = 6;
+    for (int d = 1; d <= 40 && now_s() < deadline; ++d) {
+      std::vector<int> top(rank.begin(), rank.begin() + std::min<size_t>(keep, rank.size()));
+      const bool forced_extra = forced >= 0 && complete(forced, 0) && std::find(top.begin(), top.end(), forced) == top.end();
+      bool all_exact = true;
+      for (int c : top)
+        for (int t = 0; t < nt; ++t) all_exact = all_exact && jobs[c * nt + t].exact;
+      if (top.size() < 2 || all_exact) break;
+      std::vector<int> order;
+      if (forced_extra) order.push_back(forced);
+      order.insert(order.end(), top.begin(), top.end());
+      run(order, d);
+      size_t p = 0;
+      while (p < top.size() && complete(top[p], d)) ++p;
+      if (p < 2) break;
+      std::vector<int> done(top.begin(), top.begin() + p);
+      if (forced_extra && complete(forced, d)) done.push_back(forced);
+      promote(done);
+      if (p < top.size()) break;
+    }
+    R.rows = rows;
     R.seconds = now_s() - t0;
     if (verbose)
       for (size_t i = 0; i < std::min<size_t>(8, R.rows.size()); ++i)
@@ -3764,6 +4771,7 @@ class Engine {
       : lex_(lex), lt_(lt), wm_(wm), sim_(lex, lt, wm), eg_(lex, 20), peg_(lex, lt), inf_(lex, lt) {}
 
   Decision choose(const Position& P, const EngineConfig& cfg, bool verbose = false) {
+    const double t_start = now_s();
     Decision D;
     MoveGen gen(lex_, lt_);
     const EvalCtx ctx = Simulator::ctx_for(P);
@@ -3805,6 +4813,15 @@ class Engine {
     // 2. Pre-endgame with one tile in the bag.
     if (P.bag_n == 1 && cfg.preendgame) {
       const PegResult pr = peg_.solve(P, cfg.peg_candidates, cfg.peg_time, cfg.threads, verbose);
+      if (pr.rows.empty()) {  // not even one candidate solved in time: static play
+        D.move = gen.generate_best(P.board, P.rack, ctx);
+        D.method = "static (pre-endgame out of time)";
+        DecisionRow row;
+        row.move = D.move;
+        row.static_eq = D.move.equity;
+        D.rows.push_back(row);
+        return D;
+      }
       if (!pr.rows.empty()) {
         D.move = pr.rows[0].move;
         D.method = "pre-endgame";
@@ -3831,10 +4848,14 @@ class Engine {
       if (cands.size() > 1) {
         OppModel opp;
         std::string note;
-        if (cfg.inference) opp = inf_.infer(P, cfg.inf, &note);
+        // Inference and simulation share the time for the move.
+        InferenceParams ip = cfg.inf;
+        ip.time_limit = std::min(ip.time_limit, 0.25 * cfg.sim.time_limit);
+        if (cfg.inference) opp = inf_.infer(P, ip, &note);
         if (!note.empty()) D.report.push_back(note);
         SimParams sp = cfg.sim;
         sp.threads = std::max(sp.threads, cfg.threads);
+        sp.time_limit = std::max(0.02, cfg.sim.time_limit - (now_s() - t_start));
         const SimResult sr = sim_.run(P, cands, sp, opp.empty() ? nullptr : &opp);
         D.move = sr.cands[0].move;
         D.method = "simulation";
@@ -4166,6 +5187,7 @@ struct TrainParams {
   int generations = 4;
   int threads = 1;
   double shrink = 25.0;    // prior weight, in observations
+  bool learn_leaves = true;  // false: keep the leave values, refit only the win model
   std::string out = "trained";
   u64 seed = 0;
 };
@@ -4341,8 +5363,20 @@ inline void train(const Lexicon& lex, LeaveTable& leaves, WinModel& wm, const Tr
     for (int t = 0; t < std::max(1, tp.threads); ++t) th.emplace_back(worker, t);
     for (auto& x : th) x.join();
 
-    // New leave values, smallest leaves first so larger ones can use them as priors.
     const double mean_all = all_cnt > 0 ? all_sum / all_cnt : 0;
+    if (!tp.learn_leaves) {
+      fit_win_model(wins, wm);
+      log << fmt("\r  generation %d: %d games, %ld turns, %.0fs; win model refitted (leaves unchanged)\n", gen_i + 1, tp.games,
+                 turns_total.load(), now_s() - t0);
+      log << fmt("    win model: P(win | +20, 60 unseen) = %.1f%%   P(win | 0, 93 unseen, on turn) = %.1f%%\n",
+                 100 * wm.win(20, 60), 100 * wm.win(0, 93));
+      if (!tp.out.empty()) {
+        wm.save(tp.out + ".win");
+        log << "    saved " << tp.out << ".win\n";
+      }
+      continue;
+    }
+    // New leave values, smallest leaves first so larger ones can use them as priors.
     LeaveTable next_leaves = leaves;
     std::vector<std::vector<size_t>> by_size(7);
     for (size_t i = 0; i < NL; ++i) {
@@ -4752,6 +5786,7 @@ struct App {
   Rng rng{time_seed()};
   bool color = false;
   bool quiet = false;  // protocol mode: no board echo after commands
+  int exit_code = 0;   // non-zero after a failed selftest (for scripts and CI)
   std::unique_ptr<Engine> engine;
 
   App() {
@@ -4774,21 +5809,30 @@ struct App {
     std::string err;
     const double t0 = now_s();
     Lexicon L;
-    if (!L.load_word_list(path, err)) {
+    const std::string low = to_lower(path);
+    const bool kwg = low.size() > 4 && low.compare(low.size() - 4, 4, ".kwg") == 0;
+    if (!(kwg ? L.load_kwg(path, err) : L.load_word_list(path, err))) {
       std::cout << "error: " << err << "\n";
       return false;
     }
     lex = std::move(L);
     engine.reset();
-    std::cout << fmt("lexicon %s: %zu words, %zu graph nodes, built in %.1fs\n", lex.name.c_str(), lex.nwords, lex.nodes.size(),
-                     now_s() - t0);
+    std::cout << fmt("lexicon %s: %zu words, %zu graph nodes, %s in %.1fs\n", lex.name.c_str(), lex.nwords, lex.nodes.size(),
+                     kwg ? "loaded" : "built", now_s() - t0);
     if (auto_data) {
       std::string stem = path;
       const size_t dot = stem.find_last_of('.');
       const size_t slash = stem.find_last_of("/\\");
       if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) stem = stem.substr(0, dot);
-      std::ifstream f1(stem + ".leaves"), f2(stem + ".win");
-      if (f1) load_leaves(stem + ".leaves");
+      // Leave values: our own trained text file first, then KLV2/KLV (wolges, MAGPIE).
+      for (const char* ext : {".leaves", ".klv2", ".klv"}) {
+        std::ifstream f(stem + ext);
+        if (f) {
+          load_leaves(stem + ext);
+          break;
+        }
+      }
+      std::ifstream f2(stem + ".win");
       if (f2) load_win(stem + ".win");
     }
     game.reset(rng);
@@ -4835,7 +5879,8 @@ struct App {
   void print_help() {
     std::cout << R"(Tilefish commands
   Setup
-    lexicon FILE          load a word list (also loads FILE.leaves / FILE.win if present)
+    lexicon FILE          load a word list or a .kwg lexicon (also loads FILE.leaves or
+                          FILE.klv2, and FILE.win, if present)
     leaves FILE           load leave values        saveleaves FILE   save them
                           (text "LEAVE value" lines, or binary .klv/.klv2 as used by wolges/Macondo)
     win FILE              load win model           savewin FILE      save it
@@ -4858,14 +5903,21 @@ struct App {
     peg [SECS]            pre-endgame solver (1 tile in the bag)
     go [SECS] [json]      what the engine would play here, with its analysis
                           (json: one machine-readable line, for GUIs and broadcasts)
+    position cgp CGP      engine protocol: set a position ...
+    go movetime MS        ... and answer "bestmove <move>" (see tools/referee.py)
     auto [N]              let the engine play the next N moves (either side)
     unseen                tiles you cannot see (bag + opponent rack)
     history               moves so far
   Engine development
     autoplay N A B [threads=T] [seed=S]   match between engine configs A and B
     train [games=N] [gens=G] [threads=T] [out=NAME]   self-play training of leaves + win model
-    selftest              correctness checks (move generator vs brute force etc.)
+    selftest [quick]      correctness checks (move generator vs brute force etc.)
+    verifybest [N]        fast best-move search vs full generation on N positions
+    verifyendgame [N]     endgame move source and values vs full generation/minimax
     bench                 speed benchmarks
+    benchgen [G] [R]      best-move generation speed on fixed positions
+    benchsim [SECS]       simulation throughput (one thread)
+    benchendgame [N] [S]  N self-play endgames, S seconds each
     quit
 Player SPECs: static (no search), static+ (static + endgame solvers), sim (fast search),
 champion (full strength).  Options: time=S iters=N plies=N cands=N threads=N win=0|1
@@ -4947,6 +5999,25 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
     for (const auto& line : D.report) std::cout << line << "\n";
     std::cout << "best: " << move_str(P.board, D.move) << (D.move.type == MT_PLACE ? fmt("  (%d)", D.move.score) : "")
               << "   [" << D.method << "]\n";
+  }
+
+  // Engine protocol: answers "bestmove <move>" (see tools/referee.py).
+  void cmd_go_protocol(double secs) {
+    if (!lex.loaded() || game.over) {
+      std::cout << "bestmove pass" << std::endl;
+      return;
+    }
+    Position P = Position::from_game(game);
+    EngineConfig c = cfg;
+    c.threads = threads;
+    c.sim.threads = threads;
+    if (secs > 0) {
+      c.sim.time_limit = secs;
+      c.endgame_time = secs;
+      c.peg_time = secs;
+    }
+    Decision D = eng().choose(P, c, false);
+    std::cout << "bestmove " << move_str(P.board, D.move) << std::endl;
   }
 
   void cmd_sim(double secs) {
@@ -5256,6 +6327,7 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
         else if (p.first == "threads") tp.threads = std::atoi(p.second.c_str());
         else if (p.first == "out") tp.out = p.second;
         else if (p.first == "shrink") tp.shrink = std::atof(p.second.c_str());
+        else if (p.first == "leaves") tp.learn_leaves = std::atoi(p.second.c_str()) != 0;
         else if (p.first == "seed") tp.seed = std::strtoull(p.second.c_str(), nullptr, 10);
         else if (p.first == "fresh") {
           leaves.init_default();
@@ -5347,11 +6419,14 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
         if (pr.rows.empty()) continue;
         best = pr.rows[0].move;
         best_win = pr.rows[0].win;
+        bool found = false;
         for (const auto& r : pr.rows)
           if (r.move.same_as(actual)) {
+            found = true;
             win_loss = std::max(0.0, pr.rows[0].win - r.win);
             eq_loss = std::max(0.0, pr.rows[0].spread - r.spread);
           }
+        if (!found && actual.type == MT_PLACE) continue;  // not evaluated in time: no verdict
       } else {
         Simulator& sim = eng().simulator();
         std::vector<Move> cands = sim.candidates(P, cfg.sim.max_candidates);
@@ -5395,6 +6470,11 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
 
   void cmd_selftest(bool quick);
   void cmd_bench();
+  void cmd_benchgen(int games, int reps, const std::string& mode);
+  void cmd_benchsim(double secs);
+  void cmd_benchendgame(int n, double secs);
+  int cmd_verifybest(int npos, bool quiet = false);
+  int cmd_verifyendgame(int n, bool quiet = false);
 
   // Returns false on quit.
   bool execute(const std::string& raw) {
@@ -5499,14 +6579,27 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
       cmd_endgame(num(0, 0));
     } else if (cmd == "peg") {
       cmd_peg(num(0, 0));
+    } else if (cmd == "position") {
+      // Engine protocol:  position cgp <CGP>
+      if (!need_lex()) return true;
+      std::string err;
+      if (args.empty() || to_lower(args[0]) != "cgp") std::cout << "error: expected position cgp <CGP>\n";
+      else if (!from_cgp(trim(rest.substr(rest.find_first_of(" \t") == std::string::npos ? rest.size() : rest.find_first_of(" \t"))),
+                         lex, game, rng, err))
+        std::cout << "error: " << err << "\n";
+      else show_position();
     } else if (cmd == "go" || cmd == "best" || cmd == "analyze" || cmd == "analyse") {
-      bool json = false;
+      bool json = false, protocol = false;
       double secs = 0;
-      for (const auto& a : args) {
-        if (a == "json") json = true;
-        else secs = std::atof(a.c_str());
+      for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] == "json") json = true;
+        else if (args[i] == "movetime" && i + 1 < args.size()) {
+          secs = std::atof(args[++i].c_str()) / 1000.0;
+          protocol = true;
+        } else secs = std::atof(args[i].c_str());
       }
-      cmd_go(secs, true, json);
+      if (protocol) cmd_go_protocol(secs);
+      else cmd_go(secs, true, json);
     } else if (cmd == "auto") {
       if (!need_lex()) return true;
       const int n = args.empty() ? 1 : std::max(1, std::atoi(args[0].c_str()));
@@ -5541,6 +6634,17 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
       cmd_selftest(!args.empty() && args[0] == "quick");
     } else if (cmd == "bench") {
       cmd_bench();
+    } else if (cmd == "benchendgame") {
+      cmd_benchendgame(args.empty() ? 20 : std::atoi(args[0].c_str()), args.size() > 1 ? std::atof(args[1].c_str()) : 10.0);
+    } else if (cmd == "benchsim") {
+      cmd_benchsim(args.empty() ? 3.0 : std::atof(args[0].c_str()));
+    } else if (cmd == "verifyendgame") {
+      cmd_verifyendgame(args.empty() ? 30 : std::atoi(args[0].c_str()));
+    } else if (cmd == "verifybest") {
+      cmd_verifybest(args.empty() ? 200 : std::atoi(args[0].c_str()));
+    } else if (cmd == "benchgen") {
+      cmd_benchgen(args.empty() ? 30 : std::atoi(args[0].c_str()), args.size() > 1 ? std::atoi(args[1].c_str()) : 3,
+                   args.size() > 2 ? args[2] : "");
     } else {
       std::cout << "unknown command '" << cmd << "' (type help)\n";
     }
@@ -5662,7 +6766,10 @@ inline int brute_endgame(const Lexicon& lex, const Board& b, Rack* r, int side, 
 }
 
 inline void App::cmd_selftest(bool quick) {
-  if (!need_lex()) return;
+  if (!need_lex()) {
+    exit_code = 1;  // nothing was tested
+    return;
+  }
   int failures = 0;
   auto check = [&](bool ok, const std::string& what) {
     std::cout << (ok ? "  ok    " : "  FAIL  ") << what << "\n" << std::flush;
@@ -5673,9 +6780,10 @@ inline void App::cmd_selftest(bool quick) {
   std::vector<std::vector<std::string>> bylen(N + 1);
   size_t nw = 0, bad = 0;
   lex.for_each_word([&](const std::string& w) {
+    if (w.size() > (size_t)N) return;  // KWGs may hold longer, unplayable words
     ++nw;
     if (!lex.is_word((const u8*)w.data(), (int)w.size())) ++bad;
-    if (w.size() <= (size_t)N) bylen[w.size()].push_back(w);
+    bylen[w.size()].push_back(w);
   });
   check(nw == lex.nwords && bad == 0, fmt("lexicon: %zu words enumerated, all accepted", nw));
   {
@@ -5825,7 +6933,223 @@ inline void App::cmd_selftest(bool quick) {
     }
     check(nbad == 0, fmt("notation round trip for %zu moves", mv.size()));
   }
+  // 5. Fast best-move search (bounds + word maps) vs full generation, and the
+  //    endgame solver's move source vs full generation along random lines.
+  {
+    const int np = quick ? 120 : 600;
+    check(cmd_verifybest(np, true) == 0, fmt("fast best-move search == full generation on %d random positions", np));
+    const int ne = quick ? 6 : 20;
+    check(cmd_verifyendgame(ne, true) == 0, fmt("endgame move source == full generation, values == minimax (%d endgames)", ne));
+  }
   std::cout << (failures ? fmt("SELF-TEST FAILED (%d problem(s))\n", failures) : std::string("All self-tests passed.\n"));
+  if (failures) exit_code = 1;
+}
+
+// Endgame checks: (1) the solver's move source equals full move generation along
+// random lines of play; (2) solved values equal plain minimax on small endgames.
+inline int App::cmd_verifyendgame(int n, bool quiet) {
+  if (!need_lex()) return -1;
+  MoveGen gen(&lex, &leaves);
+  Rng r(4711);
+  int src_bad = 0, val_bad = 0, tested = 0, small = 0;
+  while (tested < n) {
+    Game G;
+    G.reset(r);
+    while (!G.over && G.bag.n > 0) {
+      Position P = Position::from_game(G);
+      G.apply(lex, gen.generate_best(P.board, P.rack, Simulator::ctx_for(P)), r);
+    }
+    if (G.over) continue;
+    Position P = Position::from_game(G);
+    EndgameSolver es(&lex, 18);
+    src_bad += es.check_move_source(P.board, P.rack, P.unseen, r, 6);
+    ++tested;
+    // small endgames (few tiles left): exact value vs minimax
+    Game H = G;
+    while (!H.over && (H.rack[0].n > 3 || H.rack[1].n > 3)) {
+      Position Q = Position::from_game(H);
+      H.apply(lex, gen.generate_best(Q.board, Q.rack, Simulator::ctx_for(Q)), r);
+    }
+    if (H.over) continue;
+    Position Q = Position::from_game(H);
+    EndgameParams ep;
+    ep.time_limit = 60;
+    ep.tt_bits = 18;
+    ep.threads = 1 + (small % 2);
+    const EndgameResult er = es.solve(Q.board, Q.rack, Q.unseen, Q.zeros, ep);
+    Rack rr[2] = {Q.rack, Q.unseen};
+    const int bv = brute_endgame(lex, Q.board, rr, 0, 0, Q.zeros);
+    ++small;
+    if (bv != er.value || !er.solved) {
+      ++val_bad;
+      if (!quiet) std::cout << fmt("  value mismatch: %s vs %s: solver %d, minimax %d\n", Q.rack.str().c_str(), Q.unseen.str().c_str(), er.value, bv);
+    }
+  }
+  if (!quiet)
+    std::cout << fmt("verifyendgame: move source mismatches %d (in %d endgames); values: %d of %d small endgames wrong\n", src_bad,
+                     tested, val_bad, small);
+  return src_bad + val_bad;
+}
+
+// Checks that the fast best-move search (bounds, refinement, word maps) finds the
+// same best equity as sorting the full move list, on random positions and racks
+// (with and without blanks, in the midgame and with few tiles in the bag).
+inline int App::cmd_verifybest(int npos, bool quiet) {
+  if (!need_lex()) return -1;
+  MoveGen fast(&lex, &leaves), full(&lex, &leaves);
+  Rng r(123457);
+  int bad = 0, done = 0;
+  while (done < npos) {
+    Game g;
+    g.reset(r);
+    const int moves = (int)r.below(22);
+    for (int k = 0; k < moves && !g.over; ++k) {
+      Position P = Position::from_game(g);
+      g.apply(lex, full.generate_best(P.board, P.rack, Simulator::ctx_for(P)), r);
+    }
+    if (g.over) continue;
+    for (int t = 0; t < 4 && done < npos; ++t, ++done) {
+      // random rack from the unseen tiles; sometimes force one or two blanks
+      Rack pool = g.bag;
+      pool.add_all(g.rack[0]);
+      pool.add_all(g.rack[1]);
+      Rack rack;
+      const int want = t == 3 ? 1 + (int)r.below(7) : RACK_SIZE;
+      while (rack.n < want && pool.n) rack.add(draw_tile(pool, r));
+      // t == 1: at least one blank (two on every other position)
+      const int blanks_wanted = t == 1 ? 1 + (done / 4) % 2 : 0;
+      while (rack.c[BLANK] < blanks_wanted && rack.n > rack.c[BLANK]) {
+        for (int L = 1; L < NLET; ++L)
+          if (rack.c[L]) {
+            rack.sub(L);
+            rack.add(BLANK);
+            break;
+          }
+      }
+      EvalCtx ctx;
+      ctx.bag = t == 2 ? (int)r.below(8) : 40;
+      ctx.opp_face = ctx.bag == 0 ? 10 : 0;
+      ctx.allow_exchange = ctx.bag >= RACK_SIZE;
+      std::vector<Move> all;
+      full.generate_all(g.board, rack, ctx, all);
+      float want_eq = -1e30f;
+      for (const auto& m : all) want_eq = std::max(want_eq, m.equity);
+      const Move b = fast.generate_best(g.board, rack, ctx);
+      const bool legal = b.type != MT_PLACE || score_move(g.board, b) == b.score;
+      if (std::fabs(b.equity - want_eq) > 1e-3 || !legal) {
+        ++bad;
+        if (!quiet && bad <= 10)
+          std::cout << fmt("  mismatch: rack %s bag %d: fast %s (%.2f) vs full best %.2f%s\n", rack.str().c_str(), ctx.bag,
+                           move_str(g.board, b).c_str(), b.equity, want_eq, legal ? "" : " [bad score]");
+      }
+    }
+  }
+  if (!quiet) std::cout << fmt("verifybest: %d positions, %d mismatches\n", npos, bad);
+  return bad;
+}
+
+// Deterministic move-generation benchmark: positions from `games` static self-play
+// games, best-move generation timed over `reps` passes.
+inline void App::cmd_benchgen(int games, int reps, const std::string& mode) {
+  if (!need_lex() || games <= 0 || reps <= 0) return;
+  MoveGen gen(&lex, &leaves);
+  gen.set_refine(mode != "norefine" && mode != "wmponly");
+  gen.set_wmp(mode != "norefine" && mode != "nowmp");
+  // The positions come from games played by the plain generator, so every variant
+  // is timed on exactly the same positions.
+  MoveGen ref(&lex, &leaves);
+  ref.set_refine(false);
+  ref.set_wmp(false);
+  std::vector<std::pair<Board, Rack>> pos;
+  std::vector<int> bags;
+  Rng r(4242);
+  for (int g = 0; g < games; ++g) {
+    Game G;
+    G.reset(r);
+    while (!G.over && G.bag.n > 0) {
+      Position P = Position::from_game(G);
+      pos.push_back({P.board, P.rack});
+      bags.push_back(P.bag_n);
+      G.apply(lex, ref.generate_best(P.board, P.rack, Simulator::ctx_for(P)), r);
+    }
+  }
+  double checksum = 0;
+  const double t0 = now_s();
+  for (int k = 0; k < reps; ++k)
+    for (size_t i = 0; i < pos.size(); ++i) {
+      EvalCtx ctx;
+      ctx.bag = bags[i];
+      ctx.allow_exchange = bags[i] >= RACK_SIZE;
+      checksum += gen.generate_best(pos[i].first, pos[i].second, ctx).equity;
+    }
+  const double t = now_s() - t0;
+  std::cout << fmt("best move: %.1f us/position over %zu positions x %d (checksum %.3f); anchors searched %.1f of %.1f\n",
+                   1e6 * t / (pos.size() * reps), pos.size(), reps, checksum / reps,
+                   (double)gen.anchors_searched / (pos.size() * reps), (double)gen.anchors_total / (pos.size() * reps));
+}
+
+// Endgame solver: n endgames from static self-play (bag empty, both racks full-ish),
+// each solved with a time limit; reports how many were proven and how fast.
+inline void App::cmd_benchendgame(int n, double secs) {
+  if (!need_lex() || n <= 0) return;
+  MoveGen gen(&lex, &leaves);
+  Rng r(31337);
+  int solved = 0, done = 0;
+  double tsum = 0, tmax = 0;
+  long nodes = 0;
+  std::vector<double> times;
+  while (done < n) {
+    Game G;
+    G.reset(r);
+    while (!G.over && G.bag.n > 0) {
+      Position P = Position::from_game(G);
+      G.apply(lex, gen.generate_best(P.board, P.rack, Simulator::ctx_for(P)), r);
+    }
+    if (G.over) continue;
+    Position P = Position::from_game(G);
+    EndgameSolver es(&lex, 22);
+    EndgameParams ep;
+    ep.time_limit = secs;
+    ep.tt_bits = 22;
+    ep.threads = threads;
+    const EndgameResult er = es.solve(P.board, P.rack, P.unseen, P.zeros, ep);
+    ++done;
+    solved += er.solved;
+    tsum += er.seconds;
+    tmax = std::max(tmax, er.seconds);
+    nodes += er.nodes;
+    times.push_back(er.seconds);
+    std::cout << fmt("  %2d. %-8s vs %-8s  %s %+4d  depth %2d  %8ld nodes  %6.2fs\n", done, P.rack.str().c_str(), P.unseen.str().c_str(),
+                     er.solved ? "solved" : "open  ", er.value, er.depth, er.nodes, er.seconds);
+  }
+  std::sort(times.begin(), times.end());
+  std::cout << fmt("endgames: %d/%d solved within %.1fs; mean %.2fs, median %.2fs, max %.2fs, %.0f nodes/s\n", solved, n, secs,
+                   tsum / n, times[n / 2], tmax, nodes / std::max(1e-9, tsum));
+}
+
+// Simulation throughput on a fixed early-midgame position (single thread).
+inline void App::cmd_benchsim(double secs) {
+  if (!need_lex()) return;
+  MoveGen gen(&lex, &leaves);
+  Game G;
+  Rng rr(5);
+  G.reset(rr);
+  for (int k = 0; k < 5; ++k) {
+    Position P = Position::from_game(G);
+    G.apply(lex, gen.generate_best(P.board, P.rack, Simulator::ctx_for(P)), rr);
+  }
+  Position P = Position::from_game(G);
+  SimParams sp;
+  sp.threads = 1;
+  sp.time_limit = secs;
+  sp.max_iterations = 1000000;
+  sp.prune_z = 100;
+  sp.seed = 99;
+  Simulator& sim = eng().simulator();
+  const auto cands = sim.candidates(P, 10);
+  const SimResult R = sim.run(P, cands, sp);
+  std::cout << fmt("simulation (rack %s, bag %d): %.0f plies/s  (%d iterations x %zu candidates in %.1fs)\n", P.rack.str().c_str(), P.bag_n, R.positions / R.seconds, R.iterations,
+                   cands.size(), R.seconds);
 }
 
 inline void App::cmd_bench() {
@@ -5910,7 +7234,8 @@ int main(int argc, char** argv) {
     else if (a == "--color" || a == "--colour") app.color = true;
     else if (a == "--quiet" || a == "-q") quiet = true;
     else if (a == "--help" || a == "-h") {
-      std::cout << "usage: tilefish [--lexicon FILE] [--leaves FILE] [--win FILE] [--threads N] [--color] [--quiet] [COMMAND...]\n"
+      std::cout << "usage: tilefish [--lexicon FILE(.txt|.kwg)] [--leaves FILE] [--win FILE] [--threads N] [--color] [--quiet] "
+                   "[COMMAND...]\n"
                    "Without a command, starts the interactive prompt (type help).  Commands separated by ';'.\n"
                    "--quiet: no banner or prompt, for driving the engine from another program over stdin/stdout.\n";
       return 0;
@@ -5927,9 +7252,11 @@ int main(int argc, char** argv) {
   std::streambuf* saved = nullptr;
   std::ostringstream sink;
   if (quiet) saved = std::cout.rdbuf(sink.rdbuf());  // silence start-up messages
-  std::cout << "Tilefish 1.0 - Scrabble engine (" << app.threads << " threads)\n";
+  std::cout << "Tilefish 2.0 - Scrabble engine (" << app.threads << " threads)\n";
   if (lexpath.empty()) {
-    for (const char* cand : {"ENABLE.txt", "enable1.txt", "CSW24.txt", "CSW21.txt", "NWL2023.txt", "NWL2020.txt", "lexicon.txt"}) {
+    // A tournament lexicon placed in the folder wins over the bundled ENABLE list.
+    for (const char* cand : {"CSW24.kwg", "NWL23.kwg", "CSW24.txt", "NWL2023.txt", "CSW21.kwg", "NWL20.kwg", "CSW21.txt",
+                             "NWL2020.txt", "lexicon.kwg", "lexicon.txt", "ENABLE.txt", "enable1.txt"}) {
       std::ifstream f(cand);
       if (f) {
         lexpath = cand;
@@ -5951,9 +7278,9 @@ int main(int argc, char** argv) {
       std::string item;
       std::istringstream is(c);
       while (std::getline(is, item, ';'))
-        if (!app.execute(item)) return 0;
+        if (!app.execute(item)) return app.exit_code;
     }
-    return 0;
+    return app.exit_code;
   }
   if (!quiet) std::cout << "Type 'help' for commands, 'play' to play a game.\n";
   std::string line;
