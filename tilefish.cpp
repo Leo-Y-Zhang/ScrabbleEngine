@@ -2474,10 +2474,12 @@ class MoveGen {
   float quick_var(int k, const int* eff, int capped, int a) const {
     float var = -1e30f;
     if (k == 1) {
-      // exactly one tile, on the anchor square: only letters that fit there
+      // exactly one tile, on the anchor square: only rack letters that fit there
       const u32 x = lx_[a];
-      for (int L = 1; L < NLET; ++L)
-        if (rest1_[L] > -1e29f && ((x >> L) & 1u)) var = std::max(var, (float)(TILE_SCORE[L] * eff[0]) + rest1_[L]);
+      for (u32 m = x & rack_letters_; m; m &= m - 1) {
+        const int L = lowest_bit64(m);
+        var = std::max(var, (float)(TILE_SCORE[L] * eff[0]) + rest1_[L]);
+      }
       if (x && rest1_[BLANK] > -1e29f) var = std::max(var, rest1_[BLANK]);
       return var;
     }
@@ -2867,10 +2869,8 @@ class MoveGen {
                 S.hi = (u8)R;
                 S.k = (u8)k;
                 S.through = tc > 0;
-                for (int j = 0; j < k; ++j) {
-                  S.pos[j] = ppos[j];
-                  S.eff_sorted[j] = eff[j];
-                }
+                std::memcpy(S.pos, ppos, sizeof S.pos);  // fixed size: entries past k are unused
+                std::memcpy(S.eff_sorted, eff, sizeof S.eff_sorted);
                 S.fixed = fixed;
                 S.capped = capped;
                 S.wmt = wmt;
