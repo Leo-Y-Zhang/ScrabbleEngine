@@ -2808,23 +2808,50 @@ class MoveGen {
   }
 
   // Appends the spans of anchor a of the loaded line (last_anchor_ set) whose quick
-  // bound beats the best play so far.  The walk is shadow_bound's.
+  // bound beats the best play so far.  The walk is shadow_bound's; the word multiplier,
+  // cross-word sums, score cap and sorted effective multipliers are kept up to date as
+  // a span grows (a square without a word multiplier inserts one value; one with a
+  // word multiplier rescales them all).
   void collect_spans(int a) {
     if (!placeable(a)) return;
-    int plm[N], pwm[N], pxs[N], pcap[N];  // placed squares: left part (from the anchor leftwards), then right part
+    // Placed squares in slot order: the anchor, then leftwards, then rightwards.
+    int plm[N], pwm[N], pcc[N], pxw[N], pcap[N];  // pcc/pxw: letter-multiplier and fixed part of a cross word
     u8 ppos[N];
+    auto set_slot = [&](int j, int sq) {
+      plm[j] = llm_[sq];
+      pwm[j] = lwm_[sq];
+      const bool cross = lxs_[sq] >= 0;
+      pcc[j] = cross ? llm_[sq] * lwm_[sq] : 0;
+      pxw[j] = cross ? lxs_[sq] * lwm_[sq] : 0;
+      pcap[j] = square_cap(sq);
+      ppos[j] = (u8)sq;
+    };
+    auto insert_desc = [](int* E, int n, int v) {  // E[0, n) sorted descending
+      int y = n - 1;
+      while (y >= 0 && E[y] < v) {
+        E[y + 1] = E[y];
+        --y;
+      }
+      E[y + 1] = v;
+    };
+    auto rebuild = [&](int* E, int n, int w) {
+      for (int j = 0; j < n; ++j) insert_desc(E, j, plm[j] * w + pcc[j]);
+    };
+    // Left part: slots [0, lk).
     int lk = 1;
-    plm[0] = llm_[a];
-    pwm[0] = lwm_[a];
-    pxs[0] = lxs_[a];
-    pcap[0] = square_cap(a);
-    ppos[0] = (u8)a;
+    set_slot(0, a);
+    int wL = pwm[0], crossL = pxw[0], capAL = pcap[0] * plm[0], capBL = pcap[0] * pcc[0];
+    int EL[RACK_SIZE];
+    EL[0] = plm[0] * wL + pcc[0];
     int l_through = 0, l_tc = 0, l_tl = 0;
     u64 l_key = 0;
     int L = a;
     while (true) {
       if (L == 0 || lt_[L - 1] == 0) {
         int k = lk;
+        int w = wL, cross = crossL, capA = capAL, capB = capBL;
+        int E[RACK_SIZE];
+        std::memcpy(E, EL, sizeof E);
         int r_through = 0, r_tc = 0, r_tl = 0;
         u64 r_key = 0;
         int R = a;
@@ -2840,28 +2867,9 @@ class MoveGen {
               else if (tc == 1) feasible = (bingo8_ >> (l_tc ? l_tl : r_tl)) & 1u;
             }
             if (feasible) {
-              int wmt = 1, cross = 0;
-              for (int j = 0; j < k; ++j) {
-                wmt *= pwm[j];
-                if (pxs[j] >= 0) cross += pxs[j] * pwm[j];
-              }
-              int eff[RACK_SIZE];
-              int capped = 0;
-              for (int j = 0; j < k; ++j) {
-                eff[j] = plm[j] * wmt + (pxs[j] >= 0 ? plm[j] * pwm[j] : 0);
-                capped += pcap[j] * eff[j];
-              }
-              for (int x = 1; x < k; ++x) {  // insertion sort, descending
-                const int v = eff[x];
-                int y = x - 1;
-                while (y >= 0 && eff[y] < v) {
-                  eff[y + 1] = eff[y];
-                  --y;
-                }
-                eff[y + 1] = v;
-              }
-              const int fixed = (l_through + r_through) * wmt + cross + (k == RACK_SIZE ? BINGO_BONUS : 0);
-              const float bound = (float)fixed + quick_var(k, eff, capped, a);
+              const int capped = w * capA + capB;  // sum of cap * effective multiplier
+              const int fixed = (l_through + r_through) * w + cross + (k == RACK_SIZE ? BINGO_BONUS : 0);
+              const float bound = (float)fixed + quick_var(k, E, capped, a);
               if (bound > best_eq_) {
                 spans_.emplace_back();
                 WSpan& S = spans_.back();
@@ -2873,10 +2881,10 @@ class MoveGen {
                 S.k = (u8)k;
                 S.through = tc > 0;
                 std::memcpy(S.pos, ppos, sizeof S.pos);  // fixed size: entries past k are unused
-                std::memcpy(S.eff_sorted, eff, sizeof S.eff_sorted);
+                std::memcpy(S.eff_sorted, E, sizeof S.eff_sorted);
                 S.fixed = fixed;
                 S.capped = capped;
-                S.wmt = wmt;
+                S.wmt = w;
                 S.through_sum = l_through + r_through;
                 S.kt = l_key + r_key;
               }
@@ -2893,11 +2901,16 @@ class MoveGen {
             continue;
           }
           if (k + 1 > nr_ || !placeable(nx)) break;
-          plm[k] = llm_[nx];
-          pwm[k] = lwm_[nx];
-          pxs[k] = lxs_[nx];
-          pcap[k] = square_cap(nx);
-          ppos[k] = (u8)nx;
+          set_slot(k, nx);
+          cross += pxw[k];
+          capA += pcap[k] * plm[k];
+          capB += pcap[k] * pcc[k];
+          if (pwm[k] == 1) {
+            insert_desc(E, k, plm[k] * w + pcc[k]);
+          } else {
+            w *= pwm[k];
+            rebuild(E, k + 1, w);
+          }
           ++k;
           R = nx;
         }
@@ -2913,12 +2926,16 @@ class MoveGen {
         continue;
       }
       if (nx == last_anchor_ || lk + 1 > nr_ || !placeable(nx)) break;
-      // shift right-part slots: left part occupies [0, lk)
-      plm[lk] = llm_[nx];
-      pwm[lk] = lwm_[nx];
-      pxs[lk] = lxs_[nx];
-      pcap[lk] = square_cap(nx);
-      ppos[lk] = (u8)nx;
+      set_slot(lk, nx);  // right-part slots start after the left part
+      crossL += pxw[lk];
+      capAL += pcap[lk] * plm[lk];
+      capBL += pcap[lk] * pcc[lk];
+      if (pwm[lk] == 1) {
+        insert_desc(EL, lk, plm[lk] * wL + pcc[lk]);
+      } else {
+        wL *= pwm[lk];
+        rebuild(EL, lk + 1, wL);
+      }
       ++lk;
       L = nx;
     }
