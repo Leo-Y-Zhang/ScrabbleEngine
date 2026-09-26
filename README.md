@@ -10,7 +10,7 @@ UI. It uses only the C++ standard library.
 **Tilefish 2.0** plays tournament lexicons (CSW24, NWL23) straight from `.kwg` files. It
 finds the best static play twice as fast, simulates twice as fast, and solves endgames
 faster, with every shortcut checked against brute force. It has been measured against
-**MAGPIE**, today's strongest open-source engine, under a neutral referee. At 1 and
+**MAGPIE**, the open-source C engine descended from Macondo, under a neutral referee. At 1 and
 5 seconds a move on one core, Tilefish wins about 60% of games against MAGPIE's full
 search. What that does and does not prove is set out in
 [How strong is it?](#how-strong-is-it).
@@ -219,7 +219,7 @@ why you must retrain for your lexicon), and a blank is worth 25 points.
 
 ### Against MAGPIE
 
-MAGPIE (the C engine behind much of today's computer Scrabble analysis) was built from
+MAGPIE (an open-source C engine that started as a rewrite of Macondo) was built from
 source and played through `tools/magpie_bot.c`. That wrapper calls MAGPIE's own
 PlayChooser, its full-strength move picker: simulation in the midgame, its pre-endgame
 solver when the bag is low, and its endgame solver when the bag is empty.
@@ -233,7 +233,8 @@ refereed the games, with each deal played twice and the seats swapped.
 | Tilefish 1.0 (as uploaded) vs MAGPIE, 1 s a move | 100 | 59.0% ± 9.2 | +26.9 ± 18.0 |
 | Tilefish 2.0 in progress (fast move generation) vs MAGPIE, 1 s a move | 100 | 59.0% ± 9.2 | +21.4 ± 17.5 |
 | Tilefish 2.0 in progress (fast move generation) vs MAGPIE, 5 s a move | 60 | 61.7% ± 11.2 | +21.4 ± 24.9 |
-| Tilefish 2.0 (this version) vs MAGPIE, 1 s a move | 100 | FINAL_WIN | FINAL_SPREAD |
+| Tilefish 2.0 (this version) vs MAGPIE, 1 s a move | 100 | 58.5% ± 8.8 | +16.8 ± 17.9 |
+| **All four Tilefish vs MAGPIE matches pooled** | **360** | **59.3% ± 4.7** | **+21.7 ± 9.5** |
 | Control: Tilefish static vs MAGPIE static (no search at all) | 400 | 49.9% ± 3.2 | +1.9 ± 5.8 |
 | Diagnostic: MAGPIE's search vs MAGPIE static, 1 s a move | 60 | 48.3% ± 11.0 | −11.3 ± 24.1 |
 | Diagnostic: Tilefish 1.0's search vs Tilefish static, 1 s a move | 60 | 60.0% ± 12.8 | +27.9 ± 26.6 |
@@ -244,19 +245,28 @@ What this shows, and what it does not:
 
 * **The comparison is fair.** With search switched off, the two engines are dead even
   (49.9%). Same leaves, same tiles, same rules, and the referee checked every move.
-* **At short time controls Tilefish is clearly ahead.** It wins about 60% at 1 and
-  5 seconds a move. At 5 s it also used only 2.4 s a move against MAGPIE's 4.4 s,
-  because its simulation stops once one candidate is clearly best.
+* **At short time controls Tilefish is ahead.** Each match on its own is borderline,
+  with intervals of ±9–11%. Pooled over all four matches (360 games), Tilefish won
+  59.3% ± 4.7 and averaged +21.7 ± 9.5 points a game. At 5 s it also used only 2.4 s
+  a move against MAGPIE's 4.4 s, because its simulation stops once one candidate is
+  clearly best.
+* **2.0 is not measurably stronger than 1.0 at 1 s a move.** They scored 58.5% and 59.0%,
+  inside each other's noise, and 100 games cannot resolve a few percent. The
+  difference is in how they get there. 1.0 overran its clock (1.10 s a move against
+  MAGPIE's 0.93 s, from the one-tile pre-endgame solver). 2.0 keeps to it (0.92 s) and
+  does twice the simulation work in that time. The gains that speed buys should
+  show at longer time controls and in the endgame, which these matches cannot
+  separate.
 * **The reason is not speed.** MAGPIE's simulator still reports about 25,000 positions a
   second on one thread, roughly 3.5 times Tilefish's 6,800. The difference is how a short search
   is used. With about 40 samples per candidate, MAGPIE ranks moves by noisy win
   percentages and ends up no better than its own static player (48.3%). Tilefish
   blends the static evaluation into the simulation result as a prior, so a short
-  search can only refine the static choice, never throw it away on noise (60.0%).
+  search refines the static choice instead of overriding it on noise (60.0%).
 * **It does not prove Tilefish is the strongest engine at tournament length.**
   Nothing here tested several threads per engine, 30+ seconds a move, or thousands
   of games. Those are the settings where MAGPIE's faster simulation should count
-  most. The ±9–11% intervals also mean the true margin could be much smaller. The
+  most. Even the pooled interval allows a true margin as small as about 55%. The
   next step is to run exactly those matches; the tools for it are in `tools/`.
 
 ### Speed (CSW24, one thread, same machine)

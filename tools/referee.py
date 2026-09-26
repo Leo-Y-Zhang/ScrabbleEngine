@@ -503,6 +503,7 @@ def main():
     ap.add_argument("--movetime", type=int, default=1000, help="milliseconds per move")
     ap.add_argument("--parallel", type=int, default=1)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--first-pair", type=int, default=0, help="start at this pair number (to resume a match)")
     ap.add_argument("--single", action="store_true", help="one game per seed instead of a swapped pair")
     ap.add_argument("--gcg-dir", default="")
     ap.add_argument("--log", default="", help="append per-game JSON lines here")
@@ -516,7 +517,7 @@ def main():
     results = []
     logf = open(args.log, "a") if args.log else None
     with mp.Pool(args.parallel, initializer=worker_init, initargs=(args,)) as pool:
-        for r in pool.imap_unordered(run_pair, range(args.games)):
+        for r in pool.imap_unordered(run_pair, range(args.first_pair, args.first_pair + args.games)):
             results.append(r)
             for g in r:
                 for e in g["errors"]:
