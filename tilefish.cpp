@@ -169,6 +169,17 @@ inline int highest_bit(uint32_t x) {
 #endif
 }
 
+// Index of the lowest set bit (x != 0).
+inline int lowest_bit64(u64 x) {
+#if defined(_MSC_VER)
+  unsigned long idx;
+  _BitScanForward64(&idx, x);
+  return (int)idx;
+#else
+  return __builtin_ctzll(x);
+#endif
+}
+
 inline u64 time_seed() {
   return mix64((u64)std::chrono::high_resolution_clock::now().time_since_epoch().count());
 }
@@ -2053,6 +2064,18 @@ class MoveGen {
   float span_rmax_[N][N];
   bool bingo7_ = true;      // can the rack form a 7-letter word?
   u32 bingo8_ = ALL_LETTERS;  // board letters that complete an 8-letter word
+  // Word-map search: for k tiles played through tiles of multiset key kt, the subsets
+  // (bits = indices into allsub_[k], at most C(7,3) = 35 of them) that spell at least
+  // one word with them.
+  // Memoized for the rack of the current call (stamp).
+  struct WordMask {
+    u64 kt = 0, mask = 0;
+    u32 stamp = 0;
+    u8 k = 0, through = 0;
+  };
+  WordMask wmask_[1024];
+  u32 wstamp_ = 0;
+  int wlive_ = 0;
 
  public:
   void set_shadow(bool on) { use_shadow_ = on; }
@@ -2215,6 +2238,11 @@ class MoveGen {
   }
 
   void prepare_shadow() {
+    if (++wstamp_ == 0) {
+      for (auto& e : wmask_) e.stamp = 0;
+      wstamp_ = 1;
+    }
+    wlive_ = 0;
     int n = 0;
     for (int i = 0; i < nr_; ++i) ts_[n++] = TILE_SCORE[rt_[i]];
     std::sort(ts_, ts_ + n, [](int x, int y) { return x > y; });
@@ -2720,31 +2748,47 @@ class MoveGen {
     }
   }
 
+  u64 word_mask(int k, u64 kt, bool through) {
+    auto compute = [&]() {
+      u64 m = 0;
+      const u32* list;
+      for (int f = 0; f < nallsub_[k]; ++f) {
+        const ShadowSubset& F = allsub_[k][f];
+        if (!through && !F.ok0) continue;  // must spell a word on its own
+        // two blanks: not resolved here (the search tries every letter for one of them)
+        if (F.blanks >= 2 || (F.blanks ? lex_->amap1.find(F.key + kt, list) : lex_->amap0.find(F.key + kt, list)) > 0)
+          m |= 1ull << f;
+      }
+      return m;
+    };
+    u32 h = (u32)((kt ^ (u64)(2 * k + through) * 0x9E3779B97F4A7C15ULL) >> 54);
+    for (int probe = 0; probe < 16; ++probe, h = (h + 1) & 1023) {
+      WordMask& e = wmask_[h];
+      if (e.stamp != wstamp_) {
+        const u64 m = compute();
+        if (wlive_ < 512) {  // keep the table sparse
+          e.kt = kt;
+          e.mask = m;
+          e.stamp = wstamp_;
+          e.k = (u8)k;
+          e.through = through;
+          ++wlive_;
+        }
+        return m;
+      }
+      if (e.kt == kt && e.k == k && e.through == through) return e.mask;
+    }
+    return compute();
+  }
+
   void wmp_search_span(const WSpan& S) {
     const int k = S.k;
-    const int n = nallsub_[k];
-    float val[130];
-    int idx[130];
-    int nv = 0;
-    for (int f = 0; f < n; ++f) {
-      const ShadowSubset& F = allsub_[k][f];
-      if (!S.through && !F.ok0) continue;  // must spell a word on its own
+    // Only subsets that spell a word here, each as soon as its bound beats the best play.
+    for (u64 m = word_mask(k, S.kt, S.through); m; m &= m - 1) {
+      const ShadowSubset& F = allsub_[k][lowest_bit64(m)];
       int dot = 0;
       for (int j = 0; j < k; ++j) dot += F.sc[j] * S.eff_sorted[j];
-      const float v = (float)S.fixed + (float)std::min(dot, S.capped) + F.rest;
-      if (v > best_eq_) {
-        val[nv] = v;
-        idx[nv++] = f;
-      }
-    }
-    while (nv > 0) {
-      int bi = 0;
-      for (int i = 1; i < nv; ++i)
-        if (val[i] > val[bi]) bi = i;
-      if (val[bi] <= best_eq_) return;  // no subset left can beat the best play
-      const ShadowSubset& F = allsub_[k][idx[bi]];
-      val[bi] = val[--nv];
-      idx[bi] = idx[nv];
+      if ((float)S.fixed + (float)std::min(dot, S.capped) + F.rest <= best_eq_) continue;
       const u32* list;
       if (F.blanks < 2) {
         const int cnt = F.blanks ? lex_->amap1.find(F.key + S.kt, list) : lex_->amap0.find(F.key + S.kt, list);
