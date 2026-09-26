@@ -1935,6 +1935,8 @@ class MoveGen {
   void set(const Lexicon* lex, const LeaveTable* leaves) {
     lex_ = lex;
     leaves_ = leaves;
+    rcache_.clear();  // the per-rack tables depend on both
+    wmask_.clear();
   }
   const LeaveTable* leaves() const { return leaves_; }
   const Lexicon* lexicon() const { return lex_; }
@@ -2032,10 +2034,9 @@ class MoveGen {
     bool operator<(const AnchorInfo& o) const { return bound < o.bound; }
   };
   AnchorInfo anchors_[2 * NSQ];
-  int ts_[RACK_SIZE];                 // rack tile scores, descending
-  float best_rest_[RACK_SIZE + 1];    // best (leave + adjustment) part of equity by tiles played
   // Leave and score are coupled: for each number k of tiles played, the Pareto
-  // frontier of (scores of the tiles played, descending; rest of the equity).
+  // frontier of (scores of the tiles played, descending; rest of the equity).  A rack
+  // has at most C(7,3) = 35 distinct subsets of any one size.
   struct ShadowSubset {
     float rest;
     u8 sc[RACK_SIZE];
@@ -2043,10 +2044,11 @@ class MoveGen {
     bool ok0;   // do the tiles played (alone) spell a word?
     u64 key;    // multiset key of the non-blank tiles played
   };
-  ShadowSubset front_[RACK_SIZE + 1][64];
-  ShadowSubset frontw_[RACK_SIZE + 1][64];  // frontier of the subsets that spell a word on their own
+  static constexpr int MAX_SUBSETS = 36;
+  ShadowSubset front_[RACK_SIZE + 1][MAX_SUBSETS];
+  ShadowSubset frontw_[RACK_SIZE + 1][MAX_SUBSETS];  // frontier of the subsets that spell a word on their own
   int nfrontw_[RACK_SIZE + 1];
-  ShadowSubset allsub_[RACK_SIZE + 1][130];
+  ShadowSubset allsub_[RACK_SIZE + 1][MAX_SUBSETS];
   int nallsub_[RACK_SIZE + 1];
   int nfront_[RACK_SIZE + 1];
   float rest1_[NLET];  // rest of the equity after playing just this one tile (-inf if not on the rack)
@@ -2065,17 +2067,35 @@ class MoveGen {
   bool bingo7_ = true;      // can the rack form a 7-letter word?
   u32 bingo8_ = ALL_LETTERS;  // board letters that complete an 8-letter word
   // Word-map search: for k tiles played through tiles of multiset key kt, the subsets
-  // (bits = indices into allsub_[k], at most C(7,3) = 35 of them) that spell at least
-  // one word with them.
-  // Memoized for the rack of the current call (stamp).
+  // (bits = indices into allsub_[k]) that spell at least one word with them.  Memoized
+  // per rack: entries carry the stamp of the rack tables they were computed for.
   struct WordMask {
     u64 kt = 0, mask = 0;
     u32 stamp = 0;
     u8 k = 0, through = 0;
   };
-  WordMask wmask_[1024];
-  u32 wstamp_ = 0;
-  int wlive_ = 0;
+  std::vector<WordMask> wmask_;  // allocated on first use
+  u32 wstamp_ = 0;               // stamp of the current rack's tables
+  // Everything the best-play search derives from the rack (and the context the equity
+  // uses), kept for the last few racks: in a simulation every candidate hands the
+  // opponent the same rack, and candidates with the same leave draw the same tiles.
+  struct RackTables {
+    int8_t cnt[NLET];
+    int bagc = -1, opp_face = 0;
+    bool use_leaves = false;
+    u32 stamp = 0, used = 0;  // stamp 0: empty; used: LRU clock
+    bool exch_known = false;  // best exchange (GEN_BEST), computed when first allowed
+    float exch_eq = -1e30f;
+    Move exch;
+    int nallsub[RACK_SIZE + 1], nfront[RACK_SIZE + 1], nfrontw[RACK_SIZE + 1];
+    ShadowSubset allsub[RACK_SIZE + 1][MAX_SUBSETS], front[RACK_SIZE + 1][MAX_SUBSETS], frontw[RACK_SIZE + 1][MAX_SUBSETS];
+    float rest1[NLET];
+    u32 rack_letters, cap_mask[RACK_SIZE], bingo8;
+    int cap_val[RACK_SIZE], ncap;
+    bool has_blank, bingo7;
+  };
+  std::vector<RackTables> rcache_;  // allocated on first use
+  u32 rclock_ = 0, rstamp_ = 0;
 
  public:
   void set_shadow(bool on) { use_shadow_ = on; }
@@ -2163,7 +2183,8 @@ class MoveGen {
   void run() {
     const Board& b = *B_;
     const bool can_play = nr_ > 0 && lex_ && lex_->loaded();
-    if (ctx_.allow_exchange && ctx_.bag >= RACK_SIZE && nr_ > 0) gen_exchanges();
+    if (mode_ == GEN_BEST && use_shadow_ && can_play) select_rack_tables();  // and the best exchange
+    else if (ctx_.allow_exchange && ctx_.bag >= RACK_SIZE && nr_ > 0) gen_exchanges();
     if (can_play) {
       if (b.empty()) {
         load_line(0, 7);
@@ -2171,7 +2192,6 @@ class MoveGen {
         last_anchor_ = -1;
         no_right_ = true;
         if (mode_ == GEN_BEST && use_shadow_ && use_wmp_ && !lex_->amap0.empty()) {
-          prepare_shadow();
           spans_.clear();
           save_line();
           collect_spans(7);  // the opening: every span through the centre square
@@ -2235,20 +2255,96 @@ class MoveGen {
   // for that many tiles played.  Anchors are then searched best-bound-first and the
   // search stops once no remaining anchor can beat the best play found.
 
+  // Makes the rack tables current: restored if this rack was seen recently, else
+  // computed (prepare_shadow) and kept.  Then applies the best exchange, if allowed.
+  void select_rack_tables() {
+    if (rcache_.empty()) {
+      rcache_.resize(4);
+      wmask_.assign(2048, WordMask());
+    }
+    int8_t cnt[NLET];
+    for (int L = 0; L < NLET; ++L) cnt[L] = (int8_t)rk_[L];
+    const int bagc = std::min(ctx_.bag, 16 + RACK_SIZE);  // with more in the bag, its size does not matter
+    const int oface = ctx_.bag == 0 ? ctx_.opp_face : 0;  // used only when the bag is empty
+    RackTables* T = nullptr;
+    RackTables* victim = &rcache_[0];
+    for (auto& E : rcache_) {
+      if (E.stamp && E.bagc == bagc && E.opp_face == oface && E.use_leaves == ctx_.use_leaves &&
+          std::memcmp(E.cnt, cnt, NLET) == 0) {
+        T = &E;
+        break;
+      }
+      if (E.used < victim->used) victim = &E;
+    }
+    if (T) {
+      std::memcpy(nallsub_, T->nallsub, sizeof nallsub_);
+      std::memcpy(nfront_, T->nfront, sizeof nfront_);
+      std::memcpy(nfrontw_, T->nfrontw, sizeof nfrontw_);
+      for (int k = 1; k <= RACK_SIZE; ++k) {
+        std::memcpy(allsub_[k], T->allsub[k], nallsub_[k] * sizeof(ShadowSubset));
+        std::memcpy(front_[k], T->front[k], nfront_[k] * sizeof(ShadowSubset));
+        std::memcpy(frontw_[k], T->frontw[k], nfrontw_[k] * sizeof(ShadowSubset));
+      }
+      std::memcpy(rest1_, T->rest1, sizeof rest1_);
+      rack_letters_ = T->rack_letters;
+      std::memcpy(cap_mask_, T->cap_mask, sizeof cap_mask_);
+      std::memcpy(cap_val_, T->cap_val, sizeof cap_val_);
+      ncap_ = T->ncap;
+      has_blank_ = T->has_blank;
+      bingo7_ = T->bingo7;
+      bingo8_ = T->bingo8;
+    } else {
+      T = victim;
+      prepare_shadow();
+      if (++rstamp_ == 0) {  // stamps wrapped: forget every memo and table
+        for (auto& e : wmask_) e.stamp = 0;
+        for (auto& E : rcache_) E.stamp = 0;
+        rstamp_ = 1;
+      }
+      std::memcpy(T->cnt, cnt, NLET);
+      T->bagc = bagc;
+      T->opp_face = oface;
+      T->use_leaves = ctx_.use_leaves;
+      T->stamp = rstamp_;
+      T->exch_known = false;
+      std::memcpy(T->nallsub, nallsub_, sizeof nallsub_);
+      std::memcpy(T->nfront, nfront_, sizeof nfront_);
+      std::memcpy(T->nfrontw, nfrontw_, sizeof nfrontw_);
+      for (int k = 1; k <= RACK_SIZE; ++k) {
+        std::memcpy(T->allsub[k], allsub_[k], nallsub_[k] * sizeof(ShadowSubset));
+        std::memcpy(T->front[k], front_[k], nfront_[k] * sizeof(ShadowSubset));
+        std::memcpy(T->frontw[k], frontw_[k], nfrontw_[k] * sizeof(ShadowSubset));
+      }
+      std::memcpy(T->rest1, rest1_, sizeof rest1_);
+      T->rack_letters = rack_letters_;
+      std::memcpy(T->cap_mask, cap_mask_, sizeof cap_mask_);
+      std::memcpy(T->cap_val, cap_val_, sizeof cap_val_);
+      T->ncap = ncap_;
+      T->has_blank = has_blank_;
+      T->bingo7 = bingo7_;
+      T->bingo8 = bingo8_;
+    }
+    T->used = ++rclock_;
+    wstamp_ = T->stamp;
+    if (ctx_.allow_exchange && ctx_.bag >= RACK_SIZE && nr_ > 0) {
+      if (!T->exch_known) {
+        gen_exchanges();  // from best_eq_ = -inf: depends on the rack alone
+        T->exch_known = true;
+        T->exch_eq = best_eq_;
+        T->exch = best_;
+      } else if (T->exch_eq > best_eq_) {
+        best_eq_ = T->exch_eq;
+        best_ = T->exch;
+      }
+    }
+  }
+
   inline bool placeable(int k) const {
     const u32 x = lx_[k];
     return (x & rack_letters_) != 0 || (has_blank_ && x != 0);
   }
 
   void prepare_shadow() {
-    if (++wstamp_ == 0) {
-      for (auto& e : wmask_) e.stamp = 0;
-      wstamp_ = 1;
-    }
-    wlive_ = 0;
-    int n = 0;
-    for (int i = 0; i < nr_; ++i) ts_[n++] = TILE_SCORE[rt_[i]];
-    std::sort(ts_, ts_ + n, [](int x, int y) { return x > y; });
     rack_letters_ = 0;
     for (int L = 1; L < NLET; ++L)
       if (rk_[L]) rack_letters_ |= 1u << L;
@@ -2274,10 +2370,7 @@ class MoveGen {
     bingo7_ = true;
     bingo8_ = ALL_LETTERS;
     if (nr_ == RACK_SIZE) lex_->bingo_info(rk_, bingo7_, bingo8_);
-    for (int k = 0; k <= RACK_SIZE; ++k) {
-      best_rest_[k] = -1e30f;
-      nfront_[k] = 0;
-    }
+    for (int k = 0; k <= RACK_SIZE; ++k) nfront_[k] = 0;
     for (int L = 0; L < NLET; ++L) rest1_[L] = -1e30f;
     auto& all_sub = allsub_;
     int* nall = nallsub_;
@@ -2311,7 +2404,6 @@ class MoveGen {
           leave_val(m);
           rest = -STATIC_PARAMS.not_out_mult * (float)lf_[m] - STATIC_PARAMS.not_out_const;
         }
-        if (rest > best_rest_[played]) best_rest_[played] = rest;
         ShadowSubset& ss = all_sub[played][nall[played]++];
         ss.rest = rest;
         int q = 0;
@@ -2361,8 +2453,8 @@ class MoveGen {
             dominated = ge && (gt || y < x);  // ties: keep the first copy only
           }
           if (dominated) continue;
-          if (pass == 0 && nfront_[k] < 64) front_[k][nfront_[k]++] = X;
-          if (pass == 1 && nfrontw_[k] < 64) frontw_[k][nfrontw_[k]++] = X;
+          if (pass == 0) front_[k][nfront_[k]++] = X;
+          if (pass == 1) frontw_[k][nfrontw_[k]++] = X;
         }
       }
     }
@@ -2587,7 +2679,6 @@ class MoveGen {
 
   void run_best_shadow() {
     const Board& b = *B_;
-    prepare_shadow();
     for (int s = 0; s < NSQ; ++s) is_anchor_[s] = !b.sq[s] && b.has_neighbor(s);
     const bool wmp_on = use_wmp_ && !lex_->amap0.empty();
     if (wmp_on) {
@@ -2866,19 +2957,17 @@ class MoveGen {
       }
       return m;
     };
-    u32 h = (u32)((kt ^ (u64)(2 * k + through) * 0x9E3779B97F4A7C15ULL) >> 54);
-    for (int probe = 0; probe < 16; ++probe, h = (h + 1) & 1023) {
+    const u32 hmask = (u32)wmask_.size() - 1;
+    u32 h = (u32)((kt ^ (u64)(2 * k + through) * 0x9E3779B97F4A7C15ULL) >> 40) & hmask;
+    for (int probe = 0; probe < 16; ++probe, h = (h + 1) & hmask) {
       WordMask& e = wmask_[h];
-      if (e.stamp != wstamp_) {
+      if (e.stamp != wstamp_) {  // free, or another rack's: take it
         const u64 m = compute();
-        if (wlive_ < 512) {  // keep the table sparse
-          e.kt = kt;
-          e.mask = m;
-          e.stamp = wstamp_;
-          e.k = (u8)k;
-          e.through = through;
-          ++wlive_;
-        }
+        e.kt = kt;
+        e.mask = m;
+        e.stamp = wstamp_;
+        e.k = (u8)k;
+        e.through = through;
         return m;
       }
       if (e.kt == kt && e.k == k && e.through == through) return e.mask;
@@ -7326,9 +7415,11 @@ inline void App::cmd_benchsim(double secs, int nthreads, int iters) {
   Simulator& sim = eng().simulator();
   const auto cands = sim.candidates(P, 10);
   const SimResult R = sim.run(P, cands, sp);
-  std::cout << fmt("simulation (rack %s, bag %d, %d thread(s)): %.0f plies/s  (%d iterations x %zu candidates, %ld plies in %.1fs)\n",
+  double checksum = 0;  // with fixed iterations on one thread: identical across builds that play identically
+  for (const auto& c : R.cands) checksum += c.mean_eq() + 100 * c.mean_win();
+  std::cout << fmt("simulation (rack %s, bag %d, %d thread(s)): %.0f plies/s  (%d iterations x %zu candidates, %ld plies in %.1fs; checksum %.4f)\n",
                    P.rack.str().c_str(), P.bag_n, sp.threads, R.positions / R.seconds, R.iterations, cands.size(), R.positions,
-                   R.seconds);
+                   R.seconds, checksum);
 }
 
 inline void App::cmd_bench() {
