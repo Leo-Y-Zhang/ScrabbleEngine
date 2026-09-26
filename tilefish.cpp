@@ -2327,6 +2327,28 @@ class MoveGen {
     return best;
   }
 
+  // Quick bound on what the rack tiles of a k-tile span add (tile scores times the
+  // span's effective multipliers `eff`, sorted descending, capped at `capped`, plus
+  // the leave kept), from the Pareto frontier of tile subsets; a == the anchor square.
+  float quick_var(int k, const int* eff, int capped, int a) const {
+    float var = -1e30f;
+    if (k == 1) {
+      // exactly one tile, on the anchor square: only letters that fit there
+      const u32 x = lx_[a];
+      for (int L = 1; L < NLET; ++L)
+        if (rest1_[L] > -1e29f && ((x >> L) & 1u)) var = std::max(var, (float)(TILE_SCORE[L] * eff[0]) + rest1_[L]);
+      if (x && rest1_[BLANK] > -1e29f) var = std::max(var, rest1_[BLANK]);
+      return var;
+    }
+    for (int f = 0; f < nfront_[k]; ++f) {
+      const ShadowSubset& F = front_[k][f];
+      int dot = 0;
+      for (int j = 0; j < k; ++j) dot += F.sc[j] * eff[j];
+      var = std::max(var, (float)std::min(dot, capped) + F.rest);
+    }
+    return var;
+  }
+
   // Max over the rack subsets of k tiles that can spell a word together with the
   // tiles played through (multiset key kt), of min(score bound, capped) + rest.  Any
   // value at or below `floor` may be returned for spans that cannot beat it.
@@ -2379,7 +2401,8 @@ class MoveGen {
 
   // Upper bound for anchor a of the loaded line (last_anchor_ must be set).  With
   // `refine`, spans whose quick bound exceeds `threshold` are bounded again using
-  // only tile subsets that spell a word with the tiles played through.
+  // only tile subsets that spell a word with the tiles played through.  With `vtab`
+  // (and no refinement), every span's quick bound is recorded in vtab[lo * N + hi].
   float shadow_bound(int a, bool refine = false, float threshold = 0.f, float* vtab = nullptr) const {
     float best = -1e30f;
     if (!placeable(a)) return best;
@@ -2393,12 +2416,13 @@ class MoveGen {
     u64 l_key = 0;                          // multiset key of the through tiles
     struct SpanRec {
       float coarse;
-      int fixed, k, capped, lo, hi;
+      int fixed, k, capped;
       u64 kt;
       bool through;
       int eff[RACK_SIZE];
     };
     const bool fill = vtab != nullptr;  // record every span's bound (for pruning inside the anchor)
+    refine = refine && !fill;           // a refined span would be missing from vtab
     constexpr int MAX_SPANS = 96;
     SpanRec spans[MAX_SPANS];
     int nspan = 0;
@@ -2441,32 +2465,16 @@ class MoveGen {
               eff[y + 1] = v;
             }
             const int fixed = (l_through + r_through) * wmt + cross + (k == RACK_SIZE ? BINGO_BONUS : 0);
-            float var = -1e30f;
-            if (k == 1) {
-              // exactly one tile, on the anchor square: only letters that fit there
-              const u32 x = lx_[a];
-              for (int L = 1; L < NLET; ++L)
-                if (rest1_[L] > -1e29f && ((x >> L) & 1u)) var = std::max(var, (float)(TILE_SCORE[L] * eff[0]) + rest1_[L]);
-              if (x && rest1_[BLANK] > -1e29f) var = std::max(var, rest1_[BLANK]);
-            } else {
-              for (int f = 0; f < nfront_[k]; ++f) {
-                const ShadowSubset& F = front_[k][f];
-                int dot = 0;
-                for (int j = 0; j < k; ++j) dot += F.sc[j] * eff[j];
-                var = std::max(var, (float)std::min(dot, capped) + F.rest);
-              }
-            }
+            const float var = quick_var(k, eff, capped, a);
             const int tc = l_tc + r_tc;
             const float v = (float)fixed + var;
-            if (refine && var > -1e29f && v > threshold && (fill || v > best) && (k >= 2 || tc > 0) && nspan < MAX_SPANS) {
+            if (refine && var > -1e29f && v > threshold && v > best && (k >= 2 || tc > 0) && nspan < MAX_SPANS) {
               // Refined later, best first.
               SpanRec& S = spans[nspan++];
               S.coarse = v;
               S.fixed = fixed;
               S.k = k;
               S.capped = capped;
-              S.lo = L;
-              S.hi = R;
               S.kt = l_key + r_key;
               S.through = tc > 0;
               for (int j = 0; j < k; ++j) S.eff[j] = eff[j];
@@ -2521,11 +2529,9 @@ class MoveGen {
         if (spans[i].coarse > spans[bi].coarse) bi = i;
       const SpanRec S = spans[bi];
       spans[bi] = spans[--nspan];
-      if (!fill && S.coarse <= best) break;
-      const float floor = fill ? threshold : std::max(threshold, best);
-      const float v = (float)S.fixed + refined_var(S.k, S.eff, S.capped, S.kt, S.through, a, floor - (float)S.fixed);
-      best = std::max(best, v);
-      if (fill && v > vtab[S.lo * N + S.hi]) vtab[S.lo * N + S.hi] = v;
+      if (S.coarse <= best) break;
+      const float floor = std::max(threshold, best);
+      best = std::max(best, (float)S.fixed + refined_var(S.k, S.eff, S.capped, S.kt, S.through, a, floor - (float)S.fixed));
     }
     return best;
   }
@@ -2654,23 +2660,9 @@ class MoveGen {
               S.capped = capped;
               S.kt = l_key + r_key;
               S.through = tc > 0;
-              // Quick bound (Pareto frontier of the tile subsets); the subset loop in
-              // wmp_search_span does the exact work, best subset first.
-              float var = -1e30f;
-              if (k == 1) {
-                for (int L2 = 1; L2 < NLET; ++L2)
-                  if (rest1_[L2] > -1e29f && ((lx_[a] >> L2) & 1u))
-                    var = std::max(var, (float)(TILE_SCORE[L2] * S.eff_sorted[0]) + rest1_[L2]);
-                if (lx_[a] && rest1_[BLANK] > -1e29f) var = std::max(var, rest1_[BLANK]);
-              } else {
-                for (int f = 0; f < nfront_[k]; ++f) {
-                  const ShadowSubset& Fr = front_[k][f];
-                  int dot = 0;
-                  for (int j = 0; j < k; ++j) dot += Fr.sc[j] * S.eff_sorted[j];
-                  var = std::max(var, (float)std::min(dot, capped) + Fr.rest);
-                }
-              }
-              S.bound = (float)S.fixed + var;
+              // Quick bound; the subset loop in wmp_search_span does the exact work,
+              // best subset first.
+              S.bound = (float)S.fixed + quick_var(k, S.eff_sorted, capped, a);
               if (S.bound > best_eq_) ++ns;
             }
           }
@@ -2740,10 +2732,12 @@ class MoveGen {
         const int cnt = F.blanks ? lex_->amap1.find(F.key + S.kt, list) : lex_->amap0.find(F.key + S.kt, list);
         for (int e = 0; e < cnt; ++e) wmp_try_word(S, F, list[e], 0);
       } else {
-        // Two blanks: try every letter for one of them, the one-blank map does the other.
+        // Two blanks: try every letter x for one of them, the one-blank map gives the
+        // other's letter y; each pair of letters is tried once (y >= x).
         for (int x = 1; x < NLET; ++x) {
           const int cnt = lex_->amap1.find(F.key + S.kt + lex_->lkey[x], list);
-          for (int e = 0; e < cnt; ++e) wmp_try_word(S, F, list[e], x);
+          for (int e = 0; e < cnt; ++e)
+            if ((int)(list[e] >> 24) >= x) wmp_try_word(S, F, list[e], x);
         }
       }
     }
@@ -2804,7 +2798,7 @@ class MoveGen {
   void prepare_span_tables(int a) {
     float vtab[NSQ];
     for (int i = 0; i < NSQ; ++i) vtab[i] = -1e30f;
-    shadow_bound(a, false, best_eq_, vtab);
+    shadow_bound(a, false, 0.f, vtab);
     float run = -1e30f;
     for (int l = 0; l <= a; ++l) {
       float row = -1e30f;
@@ -3165,13 +3159,15 @@ namespace tf {
 //  Every candidate sees exactly the same opponent rack and bag order in a given
 //  iteration (common random numbers), so comparisons between candidates are paired
 //  and luck largely cancels.  Candidates that are significantly worse than the leader
-//  (paired z-test) are dropped early, focusing the remaining time on close decisions.
+//  (paired z-test) are dropped early, focusing the remaining time on close decisions;
+//  the closest challenger is never dropped, so the whole time budget goes into the
+//  decision (a move's unused time is not saved for later).
 
 struct SimParams {
   int plies = 2;
   int playout_bag = 7;        // with this many tiles or fewer in the bag, play out to the end
   int max_candidates = 20;
-  int max_iterations = 5000;  // per candidate
+  int max_iterations = 100000;  // per candidate
   double time_limit = 5.0;    // seconds
   int threads = 1;
   bool win_objective = true;      // rank by win probability (else by spread/equity)
@@ -3536,11 +3532,16 @@ class Simulator {
     }
     if (best < 0) return;
     const auto& B = R.cands[best];
+    int survivors = 0, closest = -1;
+    double closest_z = 1e300;
     for (size_t i = 0; i < R.cands.size(); ++i) {
       auto& c = R.cands[i];
       if (!c.active || (int)i == best) continue;
       const int n = std::min(c.n, B.n);
-      if (n < 2) continue;
+      if (n < 2) {
+        ++survivors;
+        continue;
+      }
       double s = 0, s2 = 0;
       for (int k = 0; k < n; ++k) {
         const double ob = sp.win_objective ? B.win[k] + sp.equity_tiebreak * B.eq[k] : B.eq[k];
@@ -3552,8 +3553,18 @@ class Simulator {
       const double m = s / n;
       const double var = std::max(1e-12, (s2 / n - m * m) * n / (n - 1));
       const double se = std::sqrt(var / n);
-      if (m - sp.prune_z * se > 0) c.active = false;
+      if (m - sp.prune_z * se > 0) {
+        c.active = false;
+        if (m / se < closest_z) {
+          closest_z = m / se;
+          closest = (int)i;
+        }
+      } else {
+        ++survivors;
+      }
     }
+    // Keep the closest challenger rather than stop early.
+    if (survivors == 0 && closest >= 0) R.cands[closest].active = true;
   }
 };
 
@@ -3586,7 +3597,7 @@ struct EndgameResult {
   Move best;
   int value = 0;         // spread gained from here to the end, for the side to move
   bool solved = false;   // proven exact
-  int depth = 0;
+  int depth = -1;        // deepest completed iteration (0: greedy play-out estimate only)
   long nodes = 0;
   double seconds = 0;
   std::vector<Move> pv;
@@ -3675,6 +3686,7 @@ class EndgameSolver {
     stop_.store(false);
     resize_tt(p.tt_bits > 0 ? p.tt_bits : default_bits_);
     salt_ = mix64(++solves_ * 0x9E3779B97F4A7C15ULL);  // entries from earlier solves no longer match
+    gen_ = (u8)solves_;
     {
       const Rack rr[2] = {me, opp};
       build_root_moves(b, rr);
@@ -3711,7 +3723,7 @@ class EndgameSolver {
     u8 mtype = 255, mrow = 0, mcol = 0, mdir = 0, mlen = 0, mntiles = 0;
     i16 mscore = 0;
     u8 mtiles[N] = {0};
-    u8 pad = 0;
+    u8 gen = 0;  // solve that wrote it (replacement policy only)
   };
   enum { F_EXACT = 1, F_LOWER = 2, F_UPPER = 3 };
   static constexpr u8 DEPTH_EXACT = 255;
@@ -3722,6 +3734,7 @@ class EndgameSolver {
     std::vector<Move> tmp;
     u32 killer[64][2];
     long nodes = 0;
+    u32 ticks = 0;  // clock checks are spaced by these (nodes and play-out steps)
     int id = 0;
     explicit Worker(const Lexicon* l) : gen(l, nullptr) { std::memset(killer, 0, sizeof killer); }
   };
@@ -3810,13 +3823,8 @@ class EndgameSolver {
   double deadline_ = 0;
   std::atomic<bool> stop_{false};
   u64 salt_ = 0, solves_ = 0;
+  u8 gen_ = 0;
   int default_bits_ = 20;
-  bool greedy_leaves_ = true;
-
- public:
-  void set_greedy_leaves(bool on) { greedy_leaves_ = on; }
-
- private:
 
   static u64 digest(const TTE& e) {
     u64 h = mix64(((u64)(u16)e.value << 48) ^ ((u64)e.depth << 40) ^ ((u64)e.flag << 32) ^ ((u64)e.mtype << 24) ^
@@ -3836,6 +3844,9 @@ class EndgameSolver {
     TTE old = slot;
     const bool old_ok = old.flag != 0 && (old.check ^ digest(old)) == key;
     if (old_ok && old.depth == DEPTH_EXACT && depth != DEPTH_EXACT) return;  // keep proven results
+    // Play-out estimates at the leaves are plentiful: they never evict a searched
+    // entry (a bound or a best move) written during this solve.
+    if (depth == 0 && old.flag != 0 && old.gen == gen_ && old.depth > 0) return;
     TTE e;
     e.value = (i16)std::max(-32000, std::min(32000, value));
     e.depth = depth;
@@ -3850,6 +3861,7 @@ class EndgameSolver {
       e.mscore = m->score;
       std::memcpy(e.mtiles, m->tiles, N);
     }
+    e.gen = gen_;
     e.check = key ^ digest(e);
     slot = e;
   }
@@ -3915,12 +3927,15 @@ class EndgameSolver {
 
   // Leaf estimate at the depth limit: both sides in turn play their highest-scoring
   // play (going out first) until the game ends; returns the spread gained by `side`.
-  int greedy_playout(Worker& w, const Board& b0, const Rack* r0, int side0, int passes, const SqSet& fresh0, int ply) {
+  // Once the search is stopped the value is meaningless (callers check stop_).
+  int greedy_playout(Worker& w, const Board& b0, const Rack* r0, int side0, int passes, int zeros, const SqSet& fresh0,
+                     int ply) {
     Board b = b0;
     Rack r[2] = {r0[0], r0[1]};
     SqSet fresh = fresh0;
     int side = side0, spread = 0;
     for (int step = 0; step < 12 && ply + step < 63; ++step) {
+      if (out_of_time(w)) return 0;
       const Rack& mine = r[side];
       const Rack& theirs = r[side ^ 1];
       const int sign = side == side0 ? 1 : -1;
@@ -3937,7 +3952,9 @@ class EndgameSolver {
         }
       }
       if (!best) {  // must pass
-        if (++passes >= 2) return spread + (side == side0 ? 1 : -1) * (theirs.face() - mine.face());
+        ++passes;
+        ++zeros;
+        if (passes >= 2 || zeros >= 6) return spread + sign * (theirs.face() - mine.face());
         side ^= 1;
         continue;
       }
@@ -3945,13 +3962,15 @@ class EndgameSolver {
       const Move m = *best;
       if (m.ntiles == mine.n) return spread + sign * (m.score + 2 * theirs.face());
       spread += sign * m.score;
+      zeros = m.score == 0 ? zeros + 1 : 0;
       b.place(*lex_, m);
       for (int i = 0; i < m.len; ++i)
         if (m.tiles[i]) fresh.add(m.square(i));
       r[side].sub_all(m.used());
       side ^= 1;
+      if (zeros >= 6) break;  // six scoreless turns: the game ends as below
     }
-    // Not finished: each side is charged its remaining tiles.
+    // Game over or not finished: each side is charged its remaining tiles.
     return spread + (side == side0 ? 1 : -1) * (r[side ^ 1].face() - r[side].face());
   }
 
@@ -3962,7 +3981,7 @@ class EndgameSolver {
 
   bool out_of_time(Worker& w) {
     if (stop_.load(std::memory_order_relaxed)) return true;
-    if ((w.nodes & 31) == 0 && now_s() > deadline_) {
+    if ((++w.ticks & 31) == 0 && now_s() > deadline_) {
       stop_.store(true);
       return true;
     }
@@ -4107,9 +4126,9 @@ class EndgameSolver {
     }
     if (depth <= 0 || ply >= 60) {
       exact = false;
-      if (!greedy_leaves_ || ply >= 60) return leaf_eval(mine, theirs);
-      const int v = greedy_playout(w, b, r, side, passes, fresh, ply);
-      store(key, v, 0, F_EXACT, nullptr);
+      if (ply >= 60) return leaf_eval(mine, theirs);
+      const int v = greedy_playout(w, b, r, side, passes, zeros, fresh, ply);
+      if (!stop_.load(std::memory_order_relaxed)) store(key, v, 0, F_EXACT, nullptr);
       return v;
     }
     const int alpha0 = alpha;
@@ -4191,6 +4210,15 @@ class EndgameSolver {
     std::vector<int> vals(root.size(), 0);
     Move best = root[0];
     int best_val = 0;
+    // Depth 0: both sides play greedily to the end.  A first estimate of the value,
+    // for when not even one ply of search fits in the time limit.
+    if (w.id == 0) {
+      const int v = greedy_playout(w, b, r, 0, 0, zeros, none, 0);
+      if (!stop_.load()) {
+        best_val = v;
+        R.depth = 0;
+      }
+    }
     const int start_depth = 1 + (w.id & 1);
     for (int depth = start_depth; depth <= p.max_depth; ++depth) {
       int alpha = -100000;
@@ -4301,7 +4329,9 @@ class EndgameSolver {
 //  unseen pool is the opponent's 7 tiles plus the bag tile, so for each candidate we
 //  enumerate which of the unseen tiles is the one we draw, solve the resulting endgame
 //  (opponent to move) and average.  Candidates are ranked by win probability, then by
-//  expected spread.
+//  expected spread: first with both sides playing greedily to the end (cheap, so
+//  every candidate gets a value), then the leaders again with 1, 2, ... plies of
+//  search before the greedy play-out, all of them to the same depth.
 
 struct PegResult {
   struct Row {
@@ -4334,16 +4364,17 @@ class PreEndgameSolver {
       if (m.type == MT_PLACE) cands.push_back(m);
       if ((int)cands.size() >= max_candidates) break;
     }
+    int forced = -1;  // candidate that must be evaluated (review: the move actually played)
     if (must_include && must_include->type == MT_PLACE) {
-      bool found = false;
-      for (const auto& m : cands) found |= m.same_as(*must_include);
-      if (!found) {
+      for (size_t c = 0; c < cands.size() && forced < 0; ++c)
+        if (cands[c].same_as(*must_include)) forced = (int)c;
+      if (forced < 0)
         for (const auto& m : all)
           if (m.same_as(*must_include)) {
+            forced = (int)cands.size();
             cands.push_back(m);
             break;
           }
-      }
     }
     if (cands.empty()) return R;
     // Distinct possible bag tiles.
@@ -4351,21 +4382,24 @@ class PreEndgameSolver {
     for (int L = 0; L < NLET; ++L)
       if (P.unseen.c[L]) tiles.push_back({L, P.unseen.c[L]});
     const int total = P.unseen.n;
+    const int nt = (int)tiles.size();
     struct Job {
-      int cand, tile;
       int value = 0;
+      int depth = -1;  // search depth its value comes from (-1: none yet)
       bool exact = false;
-      bool done = false;
     };
-    // Everything, setup included, must fit in the time limit: jobs do not start
-    // after the deadline, and a candidate is only ranked once all its scenarios
-    // have been solved at least once.
+    std::vector<Job> jobs(cands.size() * nt);  // candidate c, tile t: jobs[c * nt + t]
+    // Everything, setup included, must fit in the time limit: no endgame starts
+    // after the deadline.
     const double deadline = t0 + time_limit * 0.95;
-    std::vector<Job> jobs;
-    for (size_t c = 0; c < cands.size(); ++c)
-      for (size_t t = 0; t < tiles.size(); ++t) jobs.push_back({(int)c, (int)t});
-    // Two passes: a quick shallow pass over everything, then deeper for the best few.
-    auto run_jobs = [&](std::vector<int> which, double per_job, int depth) {
+    // Solves the draws of candidates `cs` (in that order) to `depth` plies, 0 meaning
+    // both sides just play greedily to the end.  A solve cut off by the deadline
+    // leaves the job as it was.
+    auto run = [&](const std::vector<int>& cs, int depth) {
+      std::vector<int> which;
+      for (int c : cs)
+        for (int t = 0; t < nt; ++t)
+          if (!jobs[c * nt + t].exact) which.push_back(c * nt + t);
       std::atomic<size_t> next{0};
       auto worker = [&]() {
         EndgameSolver eg(lex_, 18);
@@ -4375,70 +4409,113 @@ class PreEndgameSolver {
           const double left = deadline - now_s();
           if (left <= 0.001) break;
           Job& J = jobs[which[k]];
-          const Move& m = cands[J.cand];
+          const Move& m = cands[which[k] / nt];
+          const int L = tiles[which[k] % nt].first;
           Board nb = P.board;
           nb.place(*lex_, m);
           Rack mine = P.rack;
           mine.sub_all(m.used());
-          mine.add(tiles[J.tile].first);
+          mine.add(L);
           Rack opp = P.unseen;
-          opp.sub(tiles[J.tile].first);
+          opp.sub(L);
           EndgameParams ep;
-          ep.time_limit = std::min(per_job, left);
+          ep.time_limit = left;
           ep.max_depth = depth;
           ep.tt_bits = 18;
           const EndgameResult er = eg.solve(nb, opp, mine, m.score == 0 ? P.zeros + 1 : 0, ep);
-          if (now_s() > deadline && J.done) break;  // keep the earlier (complete) value
+          if (!er.solved && er.depth < depth) continue;
           J.value = m.score - er.value;
           J.exact = er.solved;
-          J.done = true;
+          J.depth = depth;
         }
       };
-      const int nt = std::max(1, threads);
       std::vector<std::thread> th;
-      for (int i = 0; i < nt; ++i) th.emplace_back(worker);
+      for (int i = 0; i < std::max(1, threads); ++i) th.emplace_back(worker);
       for (auto& x : th) x.join();
     };
-    std::vector<int> every(jobs.size());
-    std::iota(every.begin(), every.end(), 0);
-    const double budget1 = time_limit * 0.4;
-    run_jobs(every, std::max(0.002, budget1 * std::max(1, threads) / (double)jobs.size()), 3);
-    auto tally = [&]() {
-      R.rows.clear();
-      for (size_t c = 0; c < cands.size(); ++c) {
-        PegResult::Row row;
-        row.move = cands[c];
-        bool complete = true;
-        for (const auto& J : jobs)
-          if (J.cand == (int)c && !J.done) complete = false;
-        if (!complete) continue;  // ran out of time before all its draws were solved
-        for (const auto& J : jobs) {
-          if (J.cand != (int)c) continue;
-          const double w = (double)tiles[J.tile].second / total;
-          const int final_spread = P.spread() + J.value;
-          row.win += w * (final_spread > 0 ? 1.0 : (final_spread == 0 ? 0.5 : 0.0));
-          row.spread += w * J.value;
-          row.exact = row.exact && J.exact;
-        }
-        R.rows.push_back(row);
-      }
-      std::stable_sort(R.rows.begin(), R.rows.end(), [](const PegResult::Row& a, const PegResult::Row& b) {
-        if (std::fabs(a.win - b.win) > 1e-9) return a.win > b.win;
-        return a.spread > b.spread;
-      });
+    auto complete = [&](int c, int depth) {
+      for (int t = 0; t < nt; ++t)
+        if (!jobs[c * nt + t].exact && jobs[c * nt + t].depth < depth) return false;
+      return true;
     };
-    tally();
-    // Deeper pass for the top few candidates.
-    const double remaining = time_limit - (now_s() - t0);
-    if (remaining > 0.05) {
-      std::vector<int> top;
-      const int ntop = std::min<int>(6, (int)R.rows.size());
-      for (int i = 0; i < ntop; ++i)
-        for (size_t j = 0; j < jobs.size(); ++j)
-          if (cands[jobs[j].cand].same_as(R.rows[i].move)) top.push_back((int)j);
-      run_jobs(top, std::max(0.005, remaining * std::max(1, threads) / std::max<size_t>(1, top.size())), 40);
-      tally();
+    auto row_of = [&](int c) {
+      PegResult::Row row;
+      row.move = cands[c];
+      for (int t = 0; t < nt; ++t) {
+        const Job& J = jobs[c * nt + t];
+        const double w = (double)tiles[t].second / total;
+        const int final_spread = P.spread() + J.value;
+        row.win += w * (final_spread > 0 ? 1.0 : (final_spread == 0 ? 0.5 : 0.0));
+        row.spread += w * J.value;
+        row.exact = row.exact && J.exact;
+      }
+      return row;
+    };
+    auto better = [](const PegResult::Row& a, const PegResult::Row& b) {
+      if (std::fabs(a.win - b.win) > 1e-9) return a.win > b.win;
+      return a.spread > b.spread;
+    };
+    // Candidates ranked so far, best first, with their rows.
+    std::vector<int> rank;
+    std::vector<PegResult::Row> rows;
+    // Re-ranks the candidates in `cs` among themselves and moves them to the front,
+    // above everything that was not searched as deep.
+    auto promote = [&](const std::vector<int>& cs) {
+      std::vector<std::pair<PegResult::Row, int>> v;
+      for (int c : cs) v.push_back({row_of(c), c});
+      std::stable_sort(v.begin(), v.end(), [&](const std::pair<PegResult::Row, int>& a, const std::pair<PegResult::Row, int>& b) {
+        return better(a.first, b.first);
+      });
+      std::vector<int> nrank;
+      std::vector<PegResult::Row> nrows;
+      for (const auto& x : v) {
+        nrank.push_back(x.second);
+        nrows.push_back(x.first);
+      }
+      for (size_t i = 0; i < rank.size(); ++i)
+        if (std::find(cs.begin(), cs.end(), rank[i]) == cs.end()) {
+          nrank.push_back(rank[i]);
+          nrows.push_back(rows[i]);
+        }
+      rank.swap(nrank);
+      rows.swap(nrows);
+    };
+    // Pass 1, every candidate and draw: both sides play greedily to the end.
+    {
+      std::vector<int> order;
+      if (forced >= 0) order.push_back(forced);
+      for (int c = 0; c < (int)cands.size(); ++c)
+        if (c != forced) order.push_back(c);
+      run(order, 0);
+      std::vector<int> ok;
+      for (int c : order)
+        if (complete(c, 0)) ok.push_back(c);
+      promote(ok);
     }
+    // Deeper rounds over the leaders, one depth at a time so that the candidates
+    // compared were searched equally deep.  When time runs out during a round, only
+    // the leading candidates whose draws were all searched are re-ranked.
+    const int keep = 6;
+    for (int d = 1; d <= 40 && now_s() < deadline; ++d) {
+      std::vector<int> top(rank.begin(), rank.begin() + std::min<size_t>(keep, rank.size()));
+      const bool forced_extra = forced >= 0 && complete(forced, 0) && std::find(top.begin(), top.end(), forced) == top.end();
+      bool all_exact = true;
+      for (int c : top)
+        for (int t = 0; t < nt; ++t) all_exact = all_exact && jobs[c * nt + t].exact;
+      if (top.size() < 2 || all_exact) break;
+      std::vector<int> order;
+      if (forced_extra) order.push_back(forced);
+      order.insert(order.end(), top.begin(), top.end());
+      run(order, d);
+      size_t p = 0;
+      while (p < top.size() && complete(top[p], d)) ++p;
+      if (p < 2) break;
+      std::vector<int> done(top.begin(), top.begin() + p);
+      if (forced_extra && complete(forced, d)) done.push_back(forced);
+      promote(done);
+      if (p < top.size()) break;
+    }
+    R.rows = rows;
     R.seconds = now_s() - t0;
     if (verbose)
       for (size_t i = 0; i < std::min<size_t>(8, R.rows.size()); ++i)
@@ -4694,6 +4771,7 @@ class Engine {
       : lex_(lex), lt_(lt), wm_(wm), sim_(lex, lt, wm), eg_(lex, 20), peg_(lex, lt), inf_(lex, lt) {}
 
   Decision choose(const Position& P, const EngineConfig& cfg, bool verbose = false) {
+    const double t_start = now_s();
     Decision D;
     MoveGen gen(lex_, lt_);
     const EvalCtx ctx = Simulator::ctx_for(P);
@@ -4770,10 +4848,14 @@ class Engine {
       if (cands.size() > 1) {
         OppModel opp;
         std::string note;
-        if (cfg.inference) opp = inf_.infer(P, cfg.inf, &note);
+        // Inference and simulation share the time for the move.
+        InferenceParams ip = cfg.inf;
+        ip.time_limit = std::min(ip.time_limit, 0.25 * cfg.sim.time_limit);
+        if (cfg.inference) opp = inf_.infer(P, ip, &note);
         if (!note.empty()) D.report.push_back(note);
         SimParams sp = cfg.sim;
         sp.threads = std::max(sp.threads, cfg.threads);
+        sp.time_limit = std::max(0.02, cfg.sim.time_limit - (now_s() - t_start));
         const SimResult sr = sim_.run(P, cands, sp, opp.empty() ? nullptr : &opp);
         D.move = sr.cands[0].move;
         D.method = "simulation";
@@ -6337,11 +6419,14 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
         if (pr.rows.empty()) continue;
         best = pr.rows[0].move;
         best_win = pr.rows[0].win;
+        bool found = false;
         for (const auto& r : pr.rows)
           if (r.move.same_as(actual)) {
+            found = true;
             win_loss = std::max(0.0, pr.rows[0].win - r.win);
             eq_loss = std::max(0.0, pr.rows[0].spread - r.spread);
           }
+        if (!found && actual.type == MT_PLACE) continue;  // not evaluated in time: no verdict
       } else {
         Simulator& sim = eng().simulator();
         std::vector<Move> cands = sim.candidates(P, cfg.sim.max_candidates);
@@ -6681,7 +6766,10 @@ inline int brute_endgame(const Lexicon& lex, const Board& b, Rack* r, int side, 
 }
 
 inline void App::cmd_selftest(bool quick) {
-  if (!need_lex()) return;
+  if (!need_lex()) {
+    exit_code = 1;  // nothing was tested
+    return;
+  }
   int failures = 0;
   auto check = [&](bool ok, const std::string& what) {
     std::cout << (ok ? "  ok    " : "  FAIL  ") << what << "\n" << std::flush;
@@ -6963,7 +7051,7 @@ inline int App::cmd_verifybest(int npos, bool quiet) {
 // Deterministic move-generation benchmark: positions from `games` static self-play
 // games, best-move generation timed over `reps` passes.
 inline void App::cmd_benchgen(int games, int reps, const std::string& mode) {
-  if (!need_lex()) return;
+  if (!need_lex() || games <= 0 || reps <= 0) return;
   MoveGen gen(&lex, &leaves);
   gen.set_refine(mode != "norefine" && mode != "wmponly");
   gen.set_wmp(mode != "norefine" && mode != "nowmp");
@@ -6997,13 +7085,13 @@ inline void App::cmd_benchgen(int games, int reps, const std::string& mode) {
   const double t = now_s() - t0;
   std::cout << fmt("best move: %.1f us/position over %zu positions x %d (checksum %.3f); anchors searched %.1f of %.1f\n",
                    1e6 * t / (pos.size() * reps), pos.size(), reps, checksum / reps,
-                   (double)gen.anchors_searched / (pos.size() * (reps + 1)), (double)gen.anchors_total / (pos.size() * (reps + 1)));
+                   (double)gen.anchors_searched / (pos.size() * reps), (double)gen.anchors_total / (pos.size() * reps));
 }
 
 // Endgame solver: n endgames from static self-play (bag empty, both racks full-ish),
 // each solved with a time limit; reports how many were proven and how fast.
 inline void App::cmd_benchendgame(int n, double secs) {
-  if (!need_lex()) return;
+  if (!need_lex() || n <= 0) return;
   MoveGen gen(&lex, &leaves);
   Rng r(31337);
   int solved = 0, done = 0;
