@@ -3962,7 +3962,7 @@ class EndgameSolver {
 
   bool out_of_time(Worker& w) {
     if (stop_.load(std::memory_order_relaxed)) return true;
-    if ((w.nodes & 255) == 0 && now_s() > deadline_) {
+    if ((w.nodes & 31) == 0 && now_s() > deadline_) {
       stop_.store(true);
       return true;
     }
@@ -4355,7 +4355,12 @@ class PreEndgameSolver {
       int cand, tile;
       int value = 0;
       bool exact = false;
+      bool done = false;
     };
+    // Everything, setup included, must fit in the time limit: jobs do not start
+    // after the deadline, and a candidate is only ranked once all its scenarios
+    // have been solved at least once.
+    const double deadline = t0 + time_limit * 0.95;
     std::vector<Job> jobs;
     for (size_t c = 0; c < cands.size(); ++c)
       for (size_t t = 0; t < tiles.size(); ++t) jobs.push_back({(int)c, (int)t});
@@ -4367,6 +4372,8 @@ class PreEndgameSolver {
         while (true) {
           const size_t k = next.fetch_add(1);
           if (k >= which.size()) break;
+          const double left = deadline - now_s();
+          if (left <= 0.001) break;
           Job& J = jobs[which[k]];
           const Move& m = cands[J.cand];
           Board nb = P.board;
@@ -4377,12 +4384,14 @@ class PreEndgameSolver {
           Rack opp = P.unseen;
           opp.sub(tiles[J.tile].first);
           EndgameParams ep;
-          ep.time_limit = per_job;
+          ep.time_limit = std::min(per_job, left);
           ep.max_depth = depth;
           ep.tt_bits = 18;
           const EndgameResult er = eg.solve(nb, opp, mine, m.score == 0 ? P.zeros + 1 : 0, ep);
+          if (now_s() > deadline && J.done) break;  // keep the earlier (complete) value
           J.value = m.score - er.value;
           J.exact = er.solved;
+          J.done = true;
         }
       };
       const int nt = std::max(1, threads);
@@ -4399,6 +4408,10 @@ class PreEndgameSolver {
       for (size_t c = 0; c < cands.size(); ++c) {
         PegResult::Row row;
         row.move = cands[c];
+        bool complete = true;
+        for (const auto& J : jobs)
+          if (J.cand == (int)c && !J.done) complete = false;
+        if (!complete) continue;  // ran out of time before all its draws were solved
         for (const auto& J : jobs) {
           if (J.cand != (int)c) continue;
           const double w = (double)tiles[J.tile].second / total;
@@ -4722,6 +4735,15 @@ class Engine {
     // 2. Pre-endgame with one tile in the bag.
     if (P.bag_n == 1 && cfg.preendgame) {
       const PegResult pr = peg_.solve(P, cfg.peg_candidates, cfg.peg_time, cfg.threads, verbose);
+      if (pr.rows.empty()) {  // not even one candidate solved in time: static play
+        D.move = gen.generate_best(P.board, P.rack, ctx);
+        D.method = "static (pre-endgame out of time)";
+        DecisionRow row;
+        row.move = D.move;
+        row.static_eq = D.move.equity;
+        D.rows.push_back(row);
+        return D;
+      }
       if (!pr.rows.empty()) {
         D.move = pr.rows[0].move;
         D.method = "pre-endgame";

@@ -14,6 +14,10 @@ Engine protocol (one line each way, like UCI for chess):
     <- bestmove <move>             8D WORD (across), D8 WORD (down), WO(R)D or WO.D for
                                    tiles already on the board, lower case = blank,
                                    exch ABC, pass
+With --prefix, a (deterministic) engine plays both seats until the bag holds
+--prefix-until-bag tiles; A and B then take over from identical positions, which
+measures pre-endgame and endgame play on their own.
+
 Engine specs on the command line:
     proto:<shell command>          speaks the protocol above (tilefish --quiet does)
     legacy:<shell command>         Tilefish 1.0: `cgp ...` then `go <secs> json`
@@ -399,6 +403,7 @@ WORKER = {}
 def worker_init(args):
     WORKER["args"] = args
     WORKER["engines"] = [Engine(args.a, args.a_name, args.a_init), Engine(args.b, args.b_name, args.b_init)]
+    WORKER["prefix"] = Engine(args.prefix, "prefix", args.prefix_init) if args.prefix else None
 
 
 def play_game(pair, a_first):
@@ -410,9 +415,27 @@ def play_game(pair, a_first):
     errors, spent, maxt = [], [0.0, 0.0], [0.0, 0.0]
     bingos = [0, 0]
     turns = 0
+    handoff = None  # scores of A and B when the prefix engine hands over
+    prefix = WORKER["prefix"]
     while not g.over and turns < 150:
-        e = seat[g.turn]
         cgp = g.cgp(show_opp=not g.bag)
+        if prefix is not None and len(g.bag) > args.prefix_until_bag:
+            # Opening and middle game played identically in both games of a pair.
+            try:
+                text = prefix.best(cgp, args.movetime)
+            except Exception as ex:
+                errors.append("prefix crashed: %s" % ex)
+                prefix.proc.kill()
+                prefix.start()
+                text = "pass"
+            score, err = g.apply(text)
+            if err:
+                errors.append("prefix: %s  [%s]" % (err, cgp))
+            turns += 1
+            continue
+        if handoff is None:
+            handoff = (g.scores[seat.index(0)], g.scores[seat.index(1)], len(g.bag))
+        e = seat[g.turn]
         t0 = time.time()
         try:
             text = eng[e].best(cgp, args.movetime)
@@ -439,7 +462,10 @@ def play_game(pair, a_first):
         os.makedirs(args.gcg_dir, exist_ok=True)
         with open(os.path.join(args.gcg_dir, "game%05d%s.gcg" % (pair, "a" if a_first else "b")), "w") as f:
             f.write(g.gcg(names))
-    return dict(pair=pair, a_first=a_first, sa=sa, sb=sb, errors=errors, spent=spent, maxt=maxt,
+    if handoff is None:
+        handoff = (0, 0, len(g.bag)) if prefix is None else (sa, sb, 0)
+    return dict(pair=pair, a_first=a_first, sa=sa, sb=sb, ha=handoff[0], hb=handoff[1], hbag=handoff[2], errors=errors,
+                spent=spent, maxt=maxt,
                 moves=[len([m for m in g.moves if m[2][0] != "end" and seat[m[0]] == k]) for k in (0, 1)],
                 bingos=bingos)
 
@@ -487,6 +513,11 @@ def summarize(results, args, final=False):
          "  time/move %.3fs (max %.2fs) vs %.3fs (max %.2fs)   illegal/crash events: %d"
          % (args.a_name, args.b_name, n, m, args.movetime, args.a_name, 100 * wr, 196 * se(pw), msp,
             1.96 * se(ps), avg_a, avg_b, bi_a, bi_b, ta, mxa, tb, mxb, nerr))
+    if args.prefix:
+        # Spread gained after the handoff (the prefix is identical within a pair).
+        pg = [sum((g["sa"] - g["sb"]) - (g["ha"] - g["hb"]) for g in r) / len(r) for r in results]
+        s += "\n  from %d tiles in the bag: %s gains %+.2f +/- %.2f points a game" % (
+            args.prefix_until_bag, args.a_name, sum(pg) / len(pg), 1.96 * se(pg))
     return s
 
 
@@ -505,6 +536,10 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--first-pair", type=int, default=0, help="start at this pair number (to resume a match)")
     ap.add_argument("--single", action="store_true", help="one game per seed instead of a swapped pair")
+    ap.add_argument("--prefix", default="", help="engine that plays both seats until the bag is small (e.g. a static "
+                    "player), so A and B meet in identical pre-endgame or endgame positions")
+    ap.add_argument("--prefix-init", default="", help="commands sent to the prefix engine at start")
+    ap.add_argument("--prefix-until-bag", type=int, default=7, help="hand over once the bag has this many tiles or fewer")
     ap.add_argument("--gcg-dir", default="")
     ap.add_argument("--log", default="", help="append per-game JSON lines here")
     args = ap.parse_args()
@@ -526,8 +561,9 @@ def main():
                     logf.write(json.dumps(g) + "\n")
                     logf.flush()
             if len(results) % max(1, args.games // 10) == 0 or len(results) == args.games:
-                print("[%d/%d pairs, %.0fs] %s" % (len(results), args.games, time.time() - t0,
-                                                  summarize(results, args).split("\n")[1].strip()), flush=True)
+                lines = summarize(results, args).split("\n")
+                print("[%d/%d pairs, %.0fs] %s%s" % (len(results), args.games, time.time() - t0, lines[1].strip(),
+                                                    ("   |" + lines[3]) if len(lines) > 3 else ""), flush=True)
     print(summarize(results, args, True))
 
 

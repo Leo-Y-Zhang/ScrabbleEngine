@@ -23,7 +23,7 @@ search. What that does and does not prove is set out in
 | `ENABLE.txt` | ENABLE, a free public-domain English word list (~173k words), so the engine runs out of the box. |
 | `ENABLE.leaves` | Leave values Tilefish learned for ENABLE by playing itself (400,000 self-play games). |
 | `ENABLE.win` | Win-probability model learned from the same games. |
-| `CSW24.win` | Win-probability model for CSW24, fitted on 100,000 self-play games (the word list itself is not included). |
+| `CSW24.win`, `NWL23.win` | Win-probability models for CSW24 and NWL23, each fitted on 100,000 self-play games (the word lists themselves are not included). |
 | `build.sh`, `build.bat` | One-line builds for Linux/macOS and Windows. |
 | `tools/referee.py` | Neutral referee for engine-vs-engine matches (its own rules code, paired games, parallel play). |
 | `tools/magpie_bot.c`, `tools/build_magpie_bot.sh` | Lets MAGPIE play through the same protocol, for head-to-head matches. |
@@ -155,7 +155,11 @@ bestmove E5 ANESTRI
 
 `tools/referee.py` uses it to run matches between any two engines that speak it. The
 referee deals the tiles, checks every move against the word list, scores it itself and
-plays each deal twice with the seats swapped. For example, Tilefish against MAGPIE:
+plays each deal twice with the seats swapped. With `--prefix`, a deterministic engine
+(for example Tilefish with `player static`) plays both seats until the bag is down to
+`--prefix-until-bag` tiles. The two engines then take over from identical positions,
+which measures pre-endgame or endgame play on its own. For example, Tilefish against
+MAGPIE:
 
 ```sh
 tools/build_magpie_bot.sh ~/MAGPIE     # once, after building MAGPIE (make magpie BUILD=no_pgo_release)
@@ -241,6 +245,21 @@ refereed the games, with each deal played twice and the seats swapped.
 | Diagnostic: Tilefish 1.0's search vs Tilefish static, 1 s a move | 60 | 60.0% ± 12.8 | +27.9 ± 26.6 |
 
 (± = 95% confidence interval, computed over game pairs.)
+
+**Pre-endgame and endgame on their own.** A static Tilefish played both seats until
+the bag held 7 tiles (or none); then the two engines took over, 1 s a move, and each
+position was played twice with the seats swapped. The table shows what each engine
+gained from that point on:
+
+| Phase, CSW24, 1 s a move | Games | Tilefish's gain per game | Tilefish win rate |
+|---|---|---|---|
+| From 7 tiles in the bag (pre-endgame, then endgame) | 200 | **+12.3 ± 4.6** | 54.5% ± 3.7 |
+| From an empty bag (endgame only) | 200 | +0.3 ± 0.3 | 50.0% |
+
+Both solve almost every endgame exactly, so the endgame is a draw between them. The
+pre-endgame is where Tilefish pulls ahead: its simulations play every line out to the
+end, and its one-tile solver is exhaustive. That is worth about 12 points a game here,
+against MAGPIE's dedicated pre-endgame solver at the same time per move.
 
 What this shows, and what it does not:
 
@@ -334,11 +353,12 @@ The last row is the whole job. The plan, in order of expected payoff:
 1. **Measure at tournament length.** Run `tools/referee.py` against MAGPIE with several
    threads per engine and 20–60 s a move, over hundreds of game pairs. The short-time
    lead above has to survive there before any "strongest" claim.
-2. **Pre-endgame with 2 to 7 tiles in the bag.** Tilefish solves exactly one tile in the
-   bag exhaustively (including the pass option is still to do) and plays simulations out
-   to the end below 8 tiles. MAGPIE has a dedicated solver for this stage. Next: finish
-   each simulated line with the endgame solver once the bag empties, then enumerate
-   exactly which tiles are drawn when two are left.
+2. **Pre-endgame.** Measured against MAGPIE from 7 tiles in the bag, Tilefish already
+   gains 12 points a game at 1 s a move. It solves one tile in the bag exhaustively and
+   plays simulations out to the end below 8 tiles. Missing: passing with one tile in the
+   bag. Valuing a pass needs a nested solve from the opponent's side, because they
+   don't know which tile is in the bag. Assuming they do makes a pass look never better
+   than the best play, so that shortcut was left out.
 3. **Speed = strength for simulation.** 2.0 doubled simulation speed (word maps, word
    spelling bounds), and MAGPIE is still about 3.5 times faster. Next in the profile:
    the bounds computed for every anchor, and generating spans only once per anchor.
@@ -418,7 +438,10 @@ its move lists against full generation (`verifyendgame`). `benchgen`, `benchsim`
   counting rack values.
 * **Engine protocol and match tools**: `position cgp` / `go movetime` / `bestmove`,
   `tools/referee.py`, and `tools/magpie_bot.c` for head-to-head matches.
-* **Time control**: the one-tile pre-endgame solver no longer overruns its time budget.
+* **Time control**: the one-tile pre-endgame solver keeps to its time budget. It has a
+  global deadline, and a candidate is only ranked once every tile it might draw has
+  been solved. Positions with a blank on the rack used to take up to 11 s for a 1 s
+  budget.
 * **Training**: `train leaves=0` refits only the win model; `CSW24.win` ships with it.
 
 ## Command reference
