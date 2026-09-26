@@ -3444,6 +3444,10 @@ class Simulator {
     const int plies = P.bag_n <= sp.playout_bag ? std::max(sp.plies, 40) : sp.plies;
     std::vector<std::unique_ptr<MoveGen>> gens;
     for (int t = 0; t < nthreads; ++t) gens.emplace_back(new MoveGen(lex_, lt_));
+    // Each candidate's board after it is played, set up once for all iterations.
+    std::vector<Board> starts(R.cands.size(), P.board);
+    for (size_t i = 0; i < R.cands.size(); ++i)
+      if (R.cands[i].move.type == MT_PLACE) starts[i].place(*lex_, R.cands[i].move);
     std::atomic<long> positions{0};
     int iters = 0;
     int last_prune_check = 0;
@@ -3479,7 +3483,8 @@ class Simulator {
           for (auto& c : R.cands) {
             if (!c.active) continue;
             float e, w;
-            const int done = simulate(P, deal, c.move, gen, plies, seed ^ (u64)k * 0x9E3779B97F4A7C15ULL, e, w);
+            const int done = simulate(P, starts[&c - R.cands.data()], deal, c.move, gen, plies,
+                                      seed ^ (u64)k * 0x9E3779B97F4A7C15ULL, e, w);
             c.eq[k] = e;
             c.win[k] = w;
             positions.fetch_add(done, std::memory_order_relaxed);
@@ -3546,9 +3551,10 @@ class Simulator {
   }
 
   // Returns the number of plies played (including the candidate).
-  int simulate(const Position& P, const Deal& D, const Move& cand, MoveGen& gen, int plies, u64 salt, float& out_eq,
-               float& out_win) const {
-    Board b = P.board;
+  // `start` is P.board with the candidate already placed on it.
+  int simulate(const Position& P, const Board& start, const Deal& D, const Move& cand, MoveGen& gen, int plies, u64 salt,
+               float& out_eq, float& out_win) const {
+    Board b = start;
     Rack rk[2];
     rk[0] = P.rack;
     for (int i = 0; i < D.opp_n; ++i) rk[1].add(D.opp[i]);
@@ -3561,11 +3567,12 @@ class Simulator {
     bool over = false;
     Rng rng(salt ^ cand.hash());
 
-    auto play = [&](int side, const Move& m) {
+    // place_on_board: false when the board already has the play, or is never read again
+    auto play = [&](int side, const Move& m, bool place_on_board) {
       Rack& r = rk[side];
       const int bag_before = bn - bp;
       if (m.type == MT_PLACE) {
-        b.place(*lex_, m);
+        if (place_on_board) b.place(*lex_, m);
         r.sub_all(m.used());
         last_leave[side] = bag_before > 0 ? lt_->value(r) : 0.f;
         sc[side] += m.score;
@@ -3600,7 +3607,7 @@ class Simulator {
       }
     };
 
-    play(0, cand);
+    play(0, cand, false);
     int side = 1;
     int played = 1;
     for (int ply = 0; ply < plies && !over; ++ply, ++played) {
@@ -3609,7 +3616,7 @@ class Simulator {
       ctx.opp_face = rk[1 - side].face();
       ctx.allow_exchange = ctx.bag >= RACK_SIZE;
       const Move m = gen.generate_best(b, rk[side], ctx);
-      play(side, m);
+      play(side, m, ply + 1 < plies);
       side = 1 - side;
     }
     const int spread = sc[0] - sc[1];
