@@ -1,6 +1,6 @@
 /*
  * =====================================================================================
- *   TILEFISH 2.0  -  a championship-style Scrabble(R) engine in one C++17 file
+ *   TILEFISH 2.1  -  a championship-style Scrabble(R) engine in one C++17 file
  * =====================================================================================
  *
  *  "Stockfish, but for tiles."  Everything lives in this single file: the lexicon
@@ -41,8 +41,10 @@
  *    1. Move generation   GADDAG (Gordon 1994) compiled into a compact node array
  *                         generates every legal play, exchange and pass.  The best
  *                         play alone (the inner loop of simulation) is found
- *                         best-first: upper bounds per anchor and span, then words
- *                         looked up by their letters in anagram maps.  [movegen]
+ *                         best-first: every span of every anchor gets an upper
+ *                         bound, spans are searched best bound first across the
+ *                         board, and the words for each subset of the rack come
+ *                         from anagram maps.   [movegen]
  *    2. Static equity     score + value(tiles kept) + end-of-game adjustments.
  *                         Leave values are *learned by self-play*, because face
  *                         values mis-price tiles (S and ? are worth far more than
@@ -59,8 +61,9 @@
  *                         solutions.  Each side's plays are generated once and
  *                         filtered as tiles land; at the depth limit both sides
  *                         play greedily to the end.   [tablebase-like]
- *    5. Pre-endgame       One tile in the bag: every possible draw is enumerated
- *                         and each resulting endgame is solved.
+ *    5. Pre-endgame       One tile in the bag: every possible draw is enumerated,
+ *                         each resulting endgame is valued by greedy play-outs,
+ *                         and the leading candidates are searched deeper.
  *    6. Inference         The opponent's last play tells us about the tiles they
  *                         kept; the sampler weights their possible racks.
  *    7. Self-play         `train` plays thousands of games against itself and
@@ -3470,7 +3473,7 @@ struct SimParams {
   int plies = 2;
   int playout_bag = 7;        // with this many tiles or fewer in the bag, play out to the end
   int max_candidates = 20;
-  int max_iterations = 100000;  // per candidate
+  int max_iterations = 1000000;  // per candidate (in practice the clock decides)
   double time_limit = 5.0;    // seconds
   int threads = 1;
   bool win_objective = true;      // rank by win probability (else by spread/equity)
@@ -3587,21 +3590,23 @@ class Simulator {
     std::atomic<long> positions{0};
     int iters = 0;
     int last_prune_check = 0;
+    double per_iter = 0;  // seconds per iteration in the last batch
     while (true) {
       int n_active = 0;
       for (auto& c : R.cands) n_active += c.active;
       if (n_active <= 1) break;
       if (iters >= sp.max_iterations) break;
       if (now_s() - t0 >= sp.time_limit && iters > 0) break;
-      // Batch size adapts to the remaining time so the clock is respected.
-      int batch = sp.batch;
+      // Batches (and pruning checks) grow with the iterations done, so their overhead
+      // stays small; the batch also shrinks to the time left, so the clock is respected.
+      int batch;
       if (iters > 0) {
-        const double per_iter = (now_s() - t0) / iters;
         const double left = sp.time_limit - (now_s() - t0);
-        batch = std::max(nthreads, std::min(sp.batch, (int)(left / std::max(1e-6, per_iter)) + 1));
+        batch = std::max(nthreads, std::min(std::max(sp.batch, iters / 16), (int)(left / std::max(1e-7, per_iter)) + 1));
       } else {
         batch = std::max(nthreads, std::min(sp.batch, 2 * nthreads));
       }
+      const double t_batch = now_s();
       const int it0 = iters, it1 = std::min(sp.max_iterations, iters + batch);
       for (auto& c : R.cands)
         if (c.active) {
@@ -3633,10 +3638,11 @@ class Simulator {
         for (int t = 0; t < nthreads; ++t) th.emplace_back(worker, t);
         for (auto& x : th) x.join();
       }
+      per_iter = (now_s() - t_batch) / std::max(1, it1 - it0);
       iters = it1;
       for (auto& c : R.cands)
         if (c.active) c.n = iters;
-      if (iters >= sp.min_iterations && iters - last_prune_check >= sp.batch) {
+      if (iters >= sp.min_iterations && iters - last_prune_check >= std::max(sp.batch, iters / 16)) {
         last_prune_check = iters;
         prune(R, sp);
       }
@@ -5015,7 +5021,7 @@ struct EngineConfig {
       c.inf.time_limit = 0.3;
     } else if (base == "champion") {
       c.sim.time_limit = 12.0;
-      c.sim.max_iterations = 20000;
+      c.sim.max_iterations = 1000000;
       c.sim.max_candidates = 30;
       c.endgame_time = 12.0;
       c.peg_time = 12.0;
@@ -7569,7 +7575,7 @@ int main(int argc, char** argv) {
   std::streambuf* saved = nullptr;
   std::ostringstream sink;
   if (quiet) saved = std::cout.rdbuf(sink.rdbuf());  // silence start-up messages
-  std::cout << "Tilefish 2.0 - Scrabble engine (" << app.threads << " threads)\n";
+  std::cout << "Tilefish 2.1 - Scrabble engine (" << app.threads << " threads)\n";
   if (lexpath.empty()) {
     // A tournament lexicon placed in the folder wins over the bundled ENABLE list.
     for (const char* cand : {"CSW24.kwg", "NWL23.kwg", "CSW24.txt", "NWL2023.txt", "CSW21.kwg", "NWL20.kwg", "CSW21.txt",
