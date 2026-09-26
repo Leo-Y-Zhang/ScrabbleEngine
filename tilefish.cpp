@@ -1,6 +1,6 @@
 /*
  * =====================================================================================
- *   TILEFISH  -  a championship-style Scrabble(R) engine in one C++17 file
+ *   TILEFISH 2.0  -  a championship-style Scrabble(R) engine in one C++17 file
  * =====================================================================================
  *
  *  "Stockfish, but for tiles."  Everything lives in this single file: the lexicon
@@ -30,14 +30,19 @@
  *    (JSON for `go ... json`).
  *
  *  A LEXICON IS REQUIRED.  Any plain word list works (one word per line, extra
- *  columns such as definitions are ignored).  Tournament play uses CSW (Collins,
- *  WESPA / world championship) or NWL (NASPA, North America).  Those lists are
- *  copyrighted, so they are not bundled: load your own copy with --lexicon and run
- *  `train` so the engine learns leave values for that exact dictionary.
+ *  columns such as definitions are ignored), and so does a binary .kwg lexicon as
+ *  used by wolges, MAGPIE and Macondo.  Tournament play uses CSW (Collins, WESPA /
+ *  world championship) or NWL (NASPA, North America).  Those lists are copyrighted,
+ *  so they are not bundled: load your own copy with --lexicon, together with leave
+ *  values for it (FILE.klv2 or FILE.leaves next to it is picked up automatically),
+ *  or run `train` so the engine learns leave values for that exact dictionary.
  *
  *  HOW THE ENGINE THINKS  (chess analogies in brackets)
- *    1. Move generation   GADDAG (Gordon 1994) compiled into a compact node array.
- *                         Generates every legal play, exchange and pass.  [movegen]
+ *    1. Move generation   GADDAG (Gordon 1994) compiled into a compact node array
+ *                         generates every legal play, exchange and pass.  The best
+ *                         play alone (the inner loop of simulation) is found
+ *                         best-first: upper bounds per anchor and span, then words
+ *                         looked up by their letters in anagram maps.  [movegen]
  *    2. Static equity     score + value(tiles kept) + end-of-game adjustments.
  *                         Leave values are *learned by self-play*, because face
  *                         values mis-price tiles (S and ? are worth far more than
@@ -51,7 +56,9 @@
  *                         bags, so luck cancels out.   [search]
  *    4. Endgame           Bag empty = perfect information.  Negamax + alpha-beta,
  *                         iterative deepening, transposition table: exact
- *                         solutions.   [tablebase-like]
+ *                         solutions.  Each side's plays are generated once and
+ *                         filtered as tiles land; at the depth limit both sides
+ *                         play greedily to the end.   [tablebase-like]
  *    5. Pre-endgame       One tile in the bag: every possible draw is enumerated
  *                         and each resulting endgame is solved.
  *    6. Inference         The opponent's last play tells us about the tiles they
@@ -1928,6 +1935,20 @@ class MoveGen {
     out_ = &out;
     run();
   }
+  // Like generate_all, but only plays that cover at least one of the squares in
+  // `anchors` (each play once, from its leftmost such square); no exchanges or pass.
+  void generate_near(const Board& b, const Rack& rack, const EvalCtx& ctx, const bool* anchors, std::vector<Move>& out) {
+    setup(b, rack, ctx);
+    mode_ = GEN_ALL;
+    out_ = &out;
+    near_ = anchors;
+    EvalCtx c = ctx;
+    c.allow_exchange = false;
+    c.add_pass = false;
+    ctx_ = c;
+    run();
+    near_ = nullptr;
+  }
   // Returns the move with the highest static equity.
   Move generate_best(const Board& b, const Rack& rack, const EvalCtx& ctx) {
     setup(b, rack, ctx);
@@ -2023,6 +2044,7 @@ class MoveGen {
   bool use_shadow_ = true;
   bool use_refine_ = true;
   bool use_wmp_ = true;
+  const bool* near_ = nullptr;  // generate_near: the allowed anchor squares
   bool span_prune_ = false;
   float span_lmax_[N];
   float span_rmax_[N][N];
@@ -2131,9 +2153,22 @@ class MoveGen {
       } else if (mode_ == GEN_BEST && use_shadow_) {
         run_best_shadow();
       } else {
-        for (int s = 0; s < NSQ; ++s) is_anchor_[s] = !b.sq[s] && b.has_neighbor(s);
+        u32 rows = 0, cols = 0;  // lines holding an anchor
+        if (near_) {
+          for (int s = 0; s < NSQ; ++s) {
+            is_anchor_[s] = near_[s] && !b.sq[s] && b.has_neighbor(s);
+            if (is_anchor_[s]) {
+              rows |= 1u << (s / N);
+              cols |= 1u << (s % N);
+            }
+          }
+        } else {
+          for (int s = 0; s < NSQ; ++s) is_anchor_[s] = !b.sq[s] && b.has_neighbor(s);
+          rows = cols = (1u << N) - 1;
+        }
         for (int d = 0; d < 2; ++d)
           for (int line = 0; line < N; ++line) {
+            if (!(((d == 0 ? rows : cols) >> line) & 1u)) continue;
             bool any = false;
             for (int k = 0; k < N && !any; ++k) any = is_anchor_[d == 0 ? line * N + k : k * N + line];
             if (!any) continue;
@@ -3580,6 +3615,58 @@ class EndgameSolver {
     tt_mask_ = ((u64)1 << bits) - 1;
   }
 
+  // Test hook: walks random lines of play from (b, racks) and checks that the move
+  // source used inside the search (root plays still valid + plays around new tiles)
+  // yields exactly the legal plays found by full generation.  Returns mismatches.
+  int check_move_source(const Board& b0, const Rack& me, const Rack& opp, Rng& rng, int lines) {
+    const Rack r0[2] = {me, opp};
+    build_root_moves(b0, r0);
+    Worker w(lex_);
+    MoveGen full(lex_, nullptr);
+    int bad = 0;
+    auto key = [](const Move& m) {
+      std::string k = std::to_string(m.type) + ":" + std::to_string(m.row) + "," + std::to_string(m.col) + "," +
+                      std::to_string(m.dir) + ":" + std::to_string(m.score) + ":";
+      for (int i = 0; i < m.len; ++i) k += std::to_string(m.tiles[i]) + ".";
+      return k;
+    };
+    for (int line = 0; line < lines; ++line) {
+      Board b = b0;
+      Rack r[2] = {me, opp};
+      SqSet fresh;
+      int side = 0;
+      for (int ply = 0; ply < 8; ++ply) {
+        std::vector<Move> a, c;
+        gen_moves(w, b, r[side], r[side ^ 1], side, fresh, a);
+        EvalCtx ctx;
+        ctx.bag = 0;
+        ctx.opp_face = r[side ^ 1].face();
+        ctx.allow_exchange = false;
+        ctx.use_leaves = false;
+        full.generate_all(b, r[side], ctx, c);
+        std::multiset<std::string> ka, kc;
+        for (const auto& m : a) ka.insert(key(m));
+        for (const auto& m : c) kc.insert(key(m));
+        if (ka != kc) ++bad;
+        // follow a random play
+        std::vector<Move> plays;
+        for (const auto& m : c)
+          if (m.type == MT_PLACE) plays.push_back(m);
+        if (plays.empty()) break;
+        const Move m = plays[rng.below((u32)plays.size())];
+        b.place(*lex_, m);
+        for (int i = 0; i < m.len; ++i)
+          if (m.tiles[i]) fresh.add(m.square(i));
+        r[side].sub_all(m.used());
+        if (!r[side].n) break;
+        side ^= 1;
+      }
+    }
+    root_moves_[0].clear();
+    root_moves_[1].clear();
+    return bad;
+  }
+
   // `me` is the side to move.
   EndgameResult solve(const Board& b, const Rack& me, const Rack& opp, int zeros, const EndgameParams& p) {
     EndgameResult R;
@@ -3588,6 +3675,10 @@ class EndgameSolver {
     stop_.store(false);
     resize_tt(p.tt_bits > 0 ? p.tt_bits : default_bits_);
     salt_ = mix64(++solves_ * 0x9E3779B97F4A7C15ULL);  // entries from earlier solves no longer match
+    {
+      const Rack rr[2] = {me, opp};
+      build_root_moves(b, rr);
+    }
     const int nthreads = std::max(1, p.threads);
     std::vector<std::unique_ptr<Worker>> workers;
     for (int i = 0; i < nthreads; ++i) {
@@ -3628,11 +3719,84 @@ class EndgameSolver {
   struct Worker {
     MoveGen gen;
     std::vector<Move> stack[64];
+    std::vector<Move> tmp;
     u32 killer[64][2];
     long nodes = 0;
     int id = 0;
     explicit Worker(const Lexicon* l) : gen(l, nullptr) { std::memset(killer, 0, sizeof killer); }
   };
+
+  // Squares that received a tile since the root (a 225-bit set).
+  struct SqSet {
+    u64 w[4] = {0, 0, 0, 0};
+    void add(int s) { w[s >> 6] |= 1ull << (s & 63); }
+    bool has(int s) const { return (w[s >> 6] >> (s & 63)) & 1u; }
+    bool any() const { return (w[0] | w[1] | w[2] | w[3]) != 0; }
+    bool meets(const SqSet& o) const { return ((w[0] & o.w[0]) | (w[1] & o.w[1]) | (w[2] & o.w[2]) | (w[3] & o.w[3])) != 0; }
+  };
+  // Every play of a side on the root board, generated once.  A root play stays legal
+  // with the same score as long as none of its `sens` squares (its own squares and
+  // the first empty square beyond each word it forms) has received a tile; plays that
+  // touch new tiles are generated afresh around them.
+  struct RootMove {
+    Move m;
+    SqSet sens;
+    u8 need[RACK_SIZE];  // rack codes of the tiles it uses
+    u8 nneed;
+  };
+  std::vector<RootMove> root_moves_[2];
+
+  static void add_sensitive(const Board& b, const Move& m, SqSet& out) {
+    const int step = m.dir == 0 ? 1 : N, pstep = m.dir == 0 ? N : 1;
+    auto beyond = [&](int s, int st, bool forward) {
+      // first empty square past the run of tiles starting next to s
+      int r = s / N, c = s % N;
+      const int dr = st == N ? 1 : 0, dc = st == 1 ? 1 : 0;
+      while (true) {
+        r += forward ? dr : -dr;
+        c += forward ? dc : -dc;
+        if (r < 0 || c < 0 || r >= N || c >= N) return;
+        if (!b.sq[r * N + c]) {
+          out.add(r * N + c);
+          return;
+        }
+      }
+    };
+    beyond(m.square(0), step, false);
+    beyond(m.square(m.len - 1), step, true);
+    for (int i = 0; i < m.len; ++i) {
+      if (!m.tiles[i]) continue;
+      const int sq = m.square(i);
+      out.add(sq);
+      beyond(sq, pstep, false);
+      beyond(sq, pstep, true);
+    }
+  }
+
+  // Does play m (on board b) form a word with a tile placed since the root?
+  static bool touches_new(const Board& b, const Move& m, const SqSet& fresh) {
+    const int pstep = m.dir == 0 ? N : 1;
+    for (int i = 0; i < m.len; ++i) {
+      const int sq = m.square(i);
+      if (!m.tiles[i]) {
+        if (fresh.has(sq)) return true;
+        continue;
+      }
+      const int r = sq / N, c = sq % N;
+      for (int dir = -1; dir <= 1; dir += 2) {
+        int rr = r, cc = c;
+        while (true) {
+          if (pstep == N) rr += dir;
+          else cc += dir;
+          if (rr < 0 || cc < 0 || rr >= N || cc >= N) break;
+          const int t = rr * N + cc;
+          if (!b.sq[t]) break;
+          if (fresh.has(t)) return true;
+        }
+      }
+    }
+    return false;
+  }
 
   const Lexicon* lex_;
   std::vector<TTE> tt_;
@@ -3647,6 +3811,12 @@ class EndgameSolver {
   std::atomic<bool> stop_{false};
   u64 salt_ = 0, solves_ = 0;
   int default_bits_ = 20;
+  bool greedy_leaves_ = true;
+
+ public:
+  void set_greedy_leaves(bool on) { greedy_leaves_ = on; }
+
+ private:
 
   static u64 digest(const TTE& e) {
     u64 h = mix64(((u64)(u16)e.value << 48) ^ ((u64)e.depth << 40) ^ ((u64)e.flag << 32) ^ ((u64)e.mtype << 24) ^
@@ -3743,6 +3913,48 @@ class EndgameSolver {
     std::stable_sort(mv.begin(), mv.end(), [](const Move& a, const Move& b) { return a.equity > b.equity; });
   }
 
+  // Leaf estimate at the depth limit: both sides in turn play their highest-scoring
+  // play (going out first) until the game ends; returns the spread gained by `side`.
+  int greedy_playout(Worker& w, const Board& b0, const Rack* r0, int side0, int passes, const SqSet& fresh0, int ply) {
+    Board b = b0;
+    Rack r[2] = {r0[0], r0[1]};
+    SqSet fresh = fresh0;
+    int side = side0, spread = 0;
+    for (int step = 0; step < 12 && ply + step < 63; ++step) {
+      const Rack& mine = r[side];
+      const Rack& theirs = r[side ^ 1];
+      const int sign = side == side0 ? 1 : -1;
+      std::vector<Move>& mv = w.stack[ply + step];
+      gen_moves(w, b, mine, theirs, side, fresh, mv);
+      const Move* best = nullptr;
+      int best_key = -1000000;
+      for (const Move& m : mv) {
+        if (m.type != MT_PLACE) continue;
+        const int k = m.ntiles == mine.n ? 100000 + m.score : m.score;
+        if (k > best_key) {
+          best_key = k;
+          best = &m;
+        }
+      }
+      if (!best) {  // must pass
+        if (++passes >= 2) return spread + (side == side0 ? 1 : -1) * (theirs.face() - mine.face());
+        side ^= 1;
+        continue;
+      }
+      passes = 0;
+      const Move m = *best;
+      if (m.ntiles == mine.n) return spread + sign * (m.score + 2 * theirs.face());
+      spread += sign * m.score;
+      b.place(*lex_, m);
+      for (int i = 0; i < m.len; ++i)
+        if (m.tiles[i]) fresh.add(m.square(i));
+      r[side].sub_all(m.used());
+      side ^= 1;
+    }
+    // Not finished: each side is charged its remaining tiles.
+    return spread + (side == side0 ? 1 : -1) * (r[side ^ 1].face() - r[side].face());
+  }
+
   static int leaf_eval(const Rack& mine, const Rack& theirs) {
     // Cheap guess: whoever keeps more face value is worse off.
     return theirs.face() - mine.face();
@@ -3757,19 +3969,85 @@ class EndgameSolver {
     return false;
   }
 
-  void gen_moves(Worker& w, const Board& b, const Rack& mine, const Rack& theirs, std::vector<Move>& mv) {
+  void gen_moves(Worker& w, const Board& b, const Rack& mine, const Rack& theirs, int side, const SqSet& fresh,
+                 std::vector<Move>& mv) {
     mv.clear();
     EvalCtx ctx;
     ctx.bag = 0;
     ctx.opp_face = theirs.face();
     ctx.allow_exchange = false;
     ctx.use_leaves = false;
-    w.gen.generate_all(b, mine, ctx, mv);
+    const std::vector<RootMove>& rl = root_moves_[side];
+    if (rl.empty() && !fresh.any()) {
+      w.gen.generate_all(b, mine, ctx, mv);
+      return;
+    }
+    // 1. Root plays still available: squares untouched and tiles still on the rack.
+    for (const RootMove& rm : rl) {
+      if (rm.sens.meets(fresh)) continue;
+      int8_t left[NLET];
+      std::memcpy(left, mine.c, NLET);
+      bool ok = true;
+      for (int i = 0; i < rm.nneed && ok; ++i) ok = --left[rm.need[i]] >= 0;
+      if (ok) mv.push_back(rm.m);
+    }
+    // 2. Plays that form words with tiles placed since the root.
+    if (fresh.any()) {
+      bool anchors[NSQ];
+      std::memset(anchors, 0, sizeof anchors);
+      for (int sq = 0; sq < NSQ; ++sq) {
+        if (!fresh.has(sq)) continue;
+        // ends of the horizontal and vertical runs of tiles through sq
+        const int r = sq / N, c = sq % N;
+        int c0 = c, c1 = c, r0 = r, r1 = r;
+        while (c0 > 0 && b.sq[r * N + c0 - 1]) --c0;
+        while (c1 < N - 1 && b.sq[r * N + c1 + 1]) ++c1;
+        while (r0 > 0 && b.sq[(r0 - 1) * N + c]) --r0;
+        while (r1 < N - 1 && b.sq[(r1 + 1) * N + c]) ++r1;
+        if (c0 > 0) anchors[r * N + c0 - 1] = true;
+        if (c1 < N - 1) anchors[r * N + c1 + 1] = true;
+        if (r0 > 0) anchors[(r0 - 1) * N + c] = true;
+        if (r1 < N - 1) anchors[(r1 + 1) * N + c] = true;
+      }
+      w.tmp.clear();
+      w.gen.generate_near(b, mine, ctx, anchors, w.tmp);
+      for (const Move& m : w.tmp)
+        if (touches_new(b, m, fresh)) mv.push_back(m);
+    }
+    Move pass;
+    pass.type = MT_PASS;
+    mv.push_back(pass);
+  }
+
+  void build_root_moves(const Board& b, const Rack* r) {
+    MoveGen gen(lex_, nullptr);
+    for (int side = 0; side < 2; ++side) {
+      std::vector<Move> all;
+      EvalCtx ctx;
+      ctx.bag = 0;
+      ctx.opp_face = r[side ^ 1].face();
+      ctx.allow_exchange = false;
+      ctx.use_leaves = false;
+      ctx.add_pass = false;
+      gen.generate_all(b, r[side], ctx, all);
+      root_moves_[side].clear();
+      root_moves_[side].reserve(all.size());
+      for (const Move& m : all) {
+        if (m.type != MT_PLACE) continue;
+        RootMove rm;
+        rm.m = m;
+        add_sensitive(b, m, rm.sens);
+        rm.nneed = 0;
+        for (int i = 0; i < m.len; ++i)
+          if (m.tiles[i]) rm.need[rm.nneed++] = (u8)tile_rack_code(m.tiles[i]);
+        root_moves_[side].push_back(rm);
+      }
+    }
   }
 
   // Value (for the side to move at `b`) of playing m, i.e. m.score - value(child).
-  int child_value(Worker& w, const Board& b, const Rack* r, int side, int passes, int zeros, u64 bh, const Move& m, int depth,
-                  int alpha, int beta, int ply, bool& exact) {
+  int child_value(Worker& w, const Board& b, const Rack* r, int side, int passes, int zeros, u64 bh, const SqSet& fresh,
+                  const Move& m, int depth, int alpha, int beta, int ply, bool& exact) {
     const Rack& mine = r[side];
     const Rack& theirs = r[side ^ 1];
     if (m.type == MT_PLACE && m.ntiles == mine.n) {
@@ -3778,26 +4056,30 @@ class EndgameSolver {
     }
     if (m.type == MT_PASS) {
       bool ex = true;
-      const int v = -negamax(w, b, r, side ^ 1, passes + 1, zeros + 1, bh, depth - 1, -beta, -alpha, ply + 1, ex);
+      const int v = -negamax(w, b, r, side ^ 1, passes + 1, zeros + 1, bh, fresh, depth - 1, -beta, -alpha, ply + 1, ex);
       exact = ex;
       return v;
     }
     Board nb = b;
     nb.place(*lex_, m);
     u64 nbh = bh;
+    SqSet nf = fresh;
     for (int i = 0; i < m.len; ++i)
-      if (m.tiles[i]) nbh ^= zsq_[m.square(i)][tile_code(m.tiles[i])];
+      if (m.tiles[i]) {
+        nbh ^= zsq_[m.square(i)][tile_code(m.tiles[i])];
+        nf.add(m.square(i));
+      }
     Rack nr[2] = {r[0], r[1]};
     nr[side].sub_all(m.used());
     bool ex = true;
-    const int v = m.score - negamax(w, nb, nr, side ^ 1, 0, m.score == 0 ? zeros + 1 : 0, nbh, depth - 1, -beta + m.score,
+    const int v = m.score - negamax(w, nb, nr, side ^ 1, 0, m.score == 0 ? zeros + 1 : 0, nbh, nf, depth - 1, -beta + m.score,
                                     -alpha + m.score, ply + 1, ex);
     exact = ex;
     return v;
   }
 
-  int negamax(Worker& w, const Board& b, const Rack* r, int side, int passes, int zeros, u64 bh, int depth, int alpha, int beta,
-              int ply, bool& exact) {
+  int negamax(Worker& w, const Board& b, const Rack* r, int side, int passes, int zeros, u64 bh, const SqSet& fresh, int depth,
+              int alpha, int beta, int ply, bool& exact) {
     ++w.nodes;
     if (out_of_time(w)) {
       exact = false;
@@ -3823,18 +4105,12 @@ class EndgameSolver {
       }
       have_tt = unpack(e, ttm) && quick_legal(b, mine, ttm);
     }
-    if (depth <= 0 || ply >= 63) {
+    if (depth <= 0 || ply >= 60) {
       exact = false;
-      // With a small rack, see whether the side to move can simply play out now.
-      if (mine.n <= 3 && ply < 63) {
-        std::vector<Move>& mv = w.stack[ply];
-        gen_moves(w, b, mine, theirs, mv);
-        int best_out = -100000;
-        for (const auto& m : mv)
-          if (m.type == MT_PLACE && m.ntiles == mine.n) best_out = std::max(best_out, (int)m.score + 2 * theirs.face());
-        if (best_out > -100000) return best_out;
-      }
-      return leaf_eval(mine, theirs);
+      if (!greedy_leaves_ || ply >= 60) return leaf_eval(mine, theirs);
+      const int v = greedy_playout(w, b, r, side, passes, fresh, ply);
+      store(key, v, 0, F_EXACT, nullptr);
+      return v;
     }
     const int alpha0 = alpha;
     int best = -100000;
@@ -3847,12 +4123,12 @@ class EndgameSolver {
       bool ex = true;
       int v;
       if (searched == 0) {
-        v = child_value(w, b, r, side, passes, zeros, bh, m, depth, alpha, beta, ply, ex);
+        v = child_value(w, b, r, side, passes, zeros, bh, fresh, m, depth, alpha, beta, ply, ex);
       } else {
-        v = child_value(w, b, r, side, passes, zeros, bh, m, depth, alpha, alpha + 1, ply, ex);
+        v = child_value(w, b, r, side, passes, zeros, bh, fresh, m, depth, alpha, alpha + 1, ply, ex);
         if (!stop_.load(std::memory_order_relaxed) && v > alpha && v < beta) {
           ex = true;
-          v = child_value(w, b, r, side, passes, zeros, bh, m, depth, alpha, beta, ply, ex);
+          v = child_value(w, b, r, side, passes, zeros, bh, fresh, m, depth, alpha, beta, ply, ex);
         }
       }
       if (stop_.load(std::memory_order_relaxed)) return;
@@ -3878,7 +4154,7 @@ class EndgameSolver {
     if (have_tt) consider(ttm);
     if (!cut && !stop_.load(std::memory_order_relaxed)) {
       std::vector<Move>& mv = w.stack[ply];
-      gen_moves(w, b, mine, theirs, mv);
+      gen_moves(w, b, mine, theirs, side, fresh, mv);
       order(w, mv, mine.n, theirs.face(), ply);
       const u32 th = have_tt ? ttm.hash() : 0;
       for (size_t i = 0; i < mv.size() && !cut; ++i) {
@@ -3904,8 +4180,9 @@ class EndgameSolver {
                    EndgameResult& R, double t0) {
     Rack r[2] = {me, opp};
     const u64 bh = board_hash(b);
+    const SqSet none;
     std::vector<Move> root;
-    gen_moves(w, b, me, opp, root);
+    gen_moves(w, b, me, opp, 0, none, root);
     order(w, root, me.n, opp.face(), -1);
     if (root.empty()) {
       R.best = Move();
@@ -3927,12 +4204,12 @@ class EndgameSolver {
         bool ex = true;
         int v;
         if (i == 0) {
-          v = child_value(w, b, r, 0, 0, zeros, bh, m, depth, alpha, beta, 0, ex);
+          v = child_value(w, b, r, 0, 0, zeros, bh, none, m, depth, alpha, beta, 0, ex);
         } else {
-          v = child_value(w, b, r, 0, 0, zeros, bh, m, depth, alpha, alpha + 1, 0, ex);
+          v = child_value(w, b, r, 0, 0, zeros, bh, none, m, depth, alpha, alpha + 1, 0, ex);
           if (!stop_.load() && v > alpha) {
             ex = true;
-            v = child_value(w, b, r, 0, 0, zeros, bh, m, depth, alpha, beta, 0, ex);
+            v = child_value(w, b, r, 0, 0, zeros, bh, none, m, depth, alpha, beta, 0, ex);
           }
         }
         if (stop_.load()) {
@@ -5497,7 +5774,8 @@ struct App {
   void print_help() {
     std::cout << R"(Tilefish commands
   Setup
-    lexicon FILE          load a word list (also loads FILE.leaves / FILE.win if present)
+    lexicon FILE          load a word list or a .kwg lexicon (also loads FILE.leaves or
+                          FILE.klv2, and FILE.win, if present)
     leaves FILE           load leave values        saveleaves FILE   save them
                           (text "LEAVE value" lines, or binary .klv/.klv2 as used by wolges/Macondo)
     win FILE              load win model           savewin FILE      save it
@@ -5520,14 +5798,21 @@ struct App {
     peg [SECS]            pre-endgame solver (1 tile in the bag)
     go [SECS] [json]      what the engine would play here, with its analysis
                           (json: one machine-readable line, for GUIs and broadcasts)
+    position cgp CGP      engine protocol: set a position ...
+    go movetime MS        ... and answer "bestmove <move>" (see tools/referee.py)
     auto [N]              let the engine play the next N moves (either side)
     unseen                tiles you cannot see (bag + opponent rack)
     history               moves so far
   Engine development
     autoplay N A B [threads=T] [seed=S]   match between engine configs A and B
     train [games=N] [gens=G] [threads=T] [out=NAME]   self-play training of leaves + win model
-    selftest              correctness checks (move generator vs brute force etc.)
+    selftest [quick]      correctness checks (move generator vs brute force etc.)
+    verifybest [N]        fast best-move search vs full generation on N positions
+    verifyendgame [N]     endgame move source and values vs full generation/minimax
     bench                 speed benchmarks
+    benchgen [G] [R]      best-move generation speed on fixed positions
+    benchsim [SECS]       simulation throughput (one thread)
+    benchendgame [N] [S]  N self-play endgames, S seconds each
     quit
 Player SPECs: static (no search), static+ (static + endgame solvers), sim (fast search),
 champion (full strength).  Options: time=S iters=N plies=N cands=N threads=N win=0|1
@@ -6079,7 +6364,9 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
   void cmd_bench();
   void cmd_benchgen(int games, int reps, const std::string& mode);
   void cmd_benchsim(double secs);
+  void cmd_benchendgame(int n, double secs);
   int cmd_verifybest(int npos, bool quiet = false);
+  int cmd_verifyendgame(int n, bool quiet = false);
 
   // Returns false on quit.
   bool execute(const std::string& raw) {
@@ -6239,8 +6526,12 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
       cmd_selftest(!args.empty() && args[0] == "quick");
     } else if (cmd == "bench") {
       cmd_bench();
+    } else if (cmd == "benchendgame") {
+      cmd_benchendgame(args.empty() ? 20 : std::atoi(args[0].c_str()), args.size() > 1 ? std::atof(args[1].c_str()) : 10.0);
     } else if (cmd == "benchsim") {
       cmd_benchsim(args.empty() ? 3.0 : std::atof(args[0].c_str()));
+    } else if (cmd == "verifyendgame") {
+      cmd_verifyendgame(args.empty() ? 30 : std::atoi(args[0].c_str()));
     } else if (cmd == "verifybest") {
       cmd_verifybest(args.empty() ? 200 : std::atoi(args[0].c_str()));
     } else if (cmd == "benchgen") {
@@ -6531,7 +6822,61 @@ inline void App::cmd_selftest(bool quick) {
     }
     check(nbad == 0, fmt("notation round trip for %zu moves", mv.size()));
   }
+  // 5. Fast best-move search (bounds + word maps) vs full generation, and the
+  //    endgame solver's move source vs full generation along random lines.
+  {
+    const int np = quick ? 120 : 600;
+    check(cmd_verifybest(np, true) == 0, fmt("fast best-move search == full generation on %d random positions", np));
+    const int ne = quick ? 6 : 20;
+    check(cmd_verifyendgame(ne, true) == 0, fmt("endgame move source == full generation, values == minimax (%d endgames)", ne));
+  }
   std::cout << (failures ? fmt("SELF-TEST FAILED (%d problem(s))\n", failures) : std::string("All self-tests passed.\n"));
+}
+
+// Endgame checks: (1) the solver's move source equals full move generation along
+// random lines of play; (2) solved values equal plain minimax on small endgames.
+inline int App::cmd_verifyendgame(int n, bool quiet) {
+  if (!need_lex()) return -1;
+  MoveGen gen(&lex, &leaves);
+  Rng r(4711);
+  int src_bad = 0, val_bad = 0, tested = 0, small = 0;
+  while (tested < n) {
+    Game G;
+    G.reset(r);
+    while (!G.over && G.bag.n > 0) {
+      Position P = Position::from_game(G);
+      G.apply(lex, gen.generate_best(P.board, P.rack, Simulator::ctx_for(P)), r);
+    }
+    if (G.over) continue;
+    Position P = Position::from_game(G);
+    EndgameSolver es(&lex, 18);
+    src_bad += es.check_move_source(P.board, P.rack, P.unseen, r, 6);
+    ++tested;
+    // small endgames (few tiles left): exact value vs minimax
+    Game H = G;
+    while (!H.over && (H.rack[0].n > 3 || H.rack[1].n > 3)) {
+      Position Q = Position::from_game(H);
+      H.apply(lex, gen.generate_best(Q.board, Q.rack, Simulator::ctx_for(Q)), r);
+    }
+    if (H.over) continue;
+    Position Q = Position::from_game(H);
+    EndgameParams ep;
+    ep.time_limit = 60;
+    ep.tt_bits = 18;
+    ep.threads = 1 + (small % 2);
+    const EndgameResult er = es.solve(Q.board, Q.rack, Q.unseen, Q.zeros, ep);
+    Rack rr[2] = {Q.rack, Q.unseen};
+    const int bv = brute_endgame(lex, Q.board, rr, 0, 0, Q.zeros);
+    ++small;
+    if (bv != er.value || !er.solved) {
+      ++val_bad;
+      if (!quiet) std::cout << fmt("  value mismatch: %s vs %s: solver %d, minimax %d\n", Q.rack.str().c_str(), Q.unseen.str().c_str(), er.value, bv);
+    }
+  }
+  if (!quiet)
+    std::cout << fmt("verifyendgame: move source mismatches %d (in %d endgames); values: %d of %d small endgames wrong\n", src_bad,
+                     tested, val_bad, small);
+  return src_bad + val_bad;
 }
 
 // Checks that the fast best-move search (bounds, refinement, word maps) finds the
@@ -6629,6 +6974,45 @@ inline void App::cmd_benchgen(int games, int reps, const std::string& mode) {
   std::cout << fmt("best move: %.1f us/position over %zu positions x %d (checksum %.3f); anchors searched %.1f of %.1f\n",
                    1e6 * t / (pos.size() * reps), pos.size(), reps, checksum / reps,
                    (double)gen.anchors_searched / (pos.size() * (reps + 1)), (double)gen.anchors_total / (pos.size() * (reps + 1)));
+}
+
+// Endgame solver: n endgames from static self-play (bag empty, both racks full-ish),
+// each solved with a time limit; reports how many were proven and how fast.
+inline void App::cmd_benchendgame(int n, double secs) {
+  if (!need_lex()) return;
+  MoveGen gen(&lex, &leaves);
+  Rng r(31337);
+  int solved = 0, done = 0;
+  double tsum = 0, tmax = 0;
+  long nodes = 0;
+  std::vector<double> times;
+  while (done < n) {
+    Game G;
+    G.reset(r);
+    while (!G.over && G.bag.n > 0) {
+      Position P = Position::from_game(G);
+      G.apply(lex, gen.generate_best(P.board, P.rack, Simulator::ctx_for(P)), r);
+    }
+    if (G.over) continue;
+    Position P = Position::from_game(G);
+    EndgameSolver es(&lex, 22);
+    EndgameParams ep;
+    ep.time_limit = secs;
+    ep.tt_bits = 22;
+    ep.threads = threads;
+    const EndgameResult er = es.solve(P.board, P.rack, P.unseen, P.zeros, ep);
+    ++done;
+    solved += er.solved;
+    tsum += er.seconds;
+    tmax = std::max(tmax, er.seconds);
+    nodes += er.nodes;
+    times.push_back(er.seconds);
+    std::cout << fmt("  %2d. %-8s vs %-8s  %s %+4d  depth %2d  %8ld nodes  %6.2fs\n", done, P.rack.str().c_str(), P.unseen.str().c_str(),
+                     er.solved ? "solved" : "open  ", er.value, er.depth, er.nodes, er.seconds);
+  }
+  std::sort(times.begin(), times.end());
+  std::cout << fmt("endgames: %d/%d solved within %.1fs; mean %.2fs, median %.2fs, max %.2fs, %.0f nodes/s\n", solved, n, secs,
+                   tsum / n, times[n / 2], tmax, nodes / std::max(1e-9, tsum));
 }
 
 // Simulation throughput on a fixed early-midgame position (single thread).
@@ -6738,7 +7122,8 @@ int main(int argc, char** argv) {
     else if (a == "--color" || a == "--colour") app.color = true;
     else if (a == "--quiet" || a == "-q") quiet = true;
     else if (a == "--help" || a == "-h") {
-      std::cout << "usage: tilefish [--lexicon FILE] [--leaves FILE] [--win FILE] [--threads N] [--color] [--quiet] [COMMAND...]\n"
+      std::cout << "usage: tilefish [--lexicon FILE(.txt|.kwg)] [--leaves FILE] [--win FILE] [--threads N] [--color] [--quiet] "
+                   "[COMMAND...]\n"
                    "Without a command, starts the interactive prompt (type help).  Commands separated by ';'.\n"
                    "--quiet: no banner or prompt, for driving the engine from another program over stdin/stdout.\n";
       return 0;
@@ -6755,10 +7140,11 @@ int main(int argc, char** argv) {
   std::streambuf* saved = nullptr;
   std::ostringstream sink;
   if (quiet) saved = std::cout.rdbuf(sink.rdbuf());  // silence start-up messages
-  std::cout << "Tilefish 1.0 - Scrabble engine (" << app.threads << " threads)\n";
+  std::cout << "Tilefish 2.0 - Scrabble engine (" << app.threads << " threads)\n";
   if (lexpath.empty()) {
-    for (const char* cand : {"ENABLE.txt", "enable1.txt", "CSW24.kwg", "CSW24.txt", "NWL23.kwg", "NWL2023.txt", "CSW21.kwg",
-                             "CSW21.txt", "NWL20.kwg", "NWL2020.txt", "lexicon.txt"}) {
+    // A tournament lexicon placed in the folder wins over the bundled ENABLE list.
+    for (const char* cand : {"CSW24.kwg", "NWL23.kwg", "CSW24.txt", "NWL2023.txt", "CSW21.kwg", "NWL20.kwg", "CSW21.txt",
+                             "NWL2020.txt", "lexicon.kwg", "lexicon.txt", "ENABLE.txt", "enable1.txt"}) {
       std::ifstream f(cand);
       if (f) {
         lexpath = cand;
