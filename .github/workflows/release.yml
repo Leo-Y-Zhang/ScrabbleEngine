@@ -1,0 +1,98 @@
+# Builds ready-to-run downloads for Windows, macOS and Linux and publishes them as a
+# GitHub release.  Run it from the Actions tab ("release", then "Run workflow").
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, e.g. v2.1
+        required: true
+        default: v2.1
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x86_64
+          - os: macos-latest
+            name: macos
+          - os: ubuntu-latest
+            name: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    env:
+      PKG: tilefish-${{ inputs.tag }}-${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (Linux, static, any x86-64 processor from about 2009 on)
+        if: runner.os == 'Linux'
+        run: g++ -O3 -march=x86-64-v2 -std=c++17 -pthread -static tilefish.cpp -o tilefish
+      - name: Build (macOS 11 or later, Apple silicon and Intel in one file)
+        if: runner.os == 'macOS'
+        run: clang++ -O3 -std=c++17 -pthread -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 tilefish.cpp -o tilefish
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build (Windows, no runtime libraries needed)
+        if: runner.os == 'Windows'
+        run: cl /nologo /O2 /MT /std:c++17 /EHsc /Fe:tilefish.exe tilefish.cpp
+      - name: Self-test
+        shell: bash
+        run: ./tilefish --threads 2 "selftest quick"
+      - name: Package
+        shell: bash
+        run: |
+          mkdir "$PKG"
+          if [ -f tilefish.exe ]; then
+            cp tilefish.exe get-lexicon.bat get-lexicon.ps1 "$PKG/"
+          else
+            cp tilefish get-lexicon.sh "$PKG/"
+          fi
+          cp ENABLE.txt ENABLE.leaves ENABLE.win CSW24.win NWL23.win README.md LICENSE tools/release/QUICKSTART.txt "$PKG/"
+          if [ "$RUNNER_OS" = Windows ]; then 7z a -tzip "$PKG.zip" "$PKG" > /dev/null; else zip -qr "$PKG.zip" "$PKG"; fi
+      - name: The CSW24 download works, and the engine picks it up
+        shell: bash
+        run: |
+          cd "$PKG"
+          if [ -f get-lexicon.ps1 ]; then
+            powershell -NoProfile -ExecutionPolicy Bypass -File get-lexicon.ps1
+          else
+            sh get-lexicon.sh
+          fi
+          ./tilefish --threads 2 "cgp 15/15/15/15/15/15/15/5CAT7/15/15/15/15/15/15/15 AEINRST/ 5/0 0; gen 3" | tee out.txt
+          grep -q "lexicon CSW24" out.txt
+          grep -q "leave values: .*CSW24.klv2" out.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.PKG }}.zip
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          A championship-strength Scrabble engine. Download the zip for your computer,
+          unzip it and follow QUICKSTART.txt inside:
+
+          1. Get the championship word list once: double-click `get-lexicon.bat` on
+             Windows, or type `sh get-lexicon.sh` on macOS and Linux. This downloads
+             CSW24, the World Scrabble Championship's word list.
+          2. Start `tilefish` and type `play`.
+
+          The Windows build needs no other software. The macOS build runs on Apple
+          silicon and Intel Macs (macOS 11 or later). The Linux build runs on any
+          64-bit x86 Linux. Building from source with `build.sh` gives the fastest
+          program for your own processor.
+          EOF
+          gh release create "${{ inputs.tag }}" dist/*.zip --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "Tilefish ${{ inputs.tag }}" --notes-file notes.md

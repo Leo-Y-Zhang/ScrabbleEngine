@@ -4,12 +4,27 @@ on:
   pull_request:
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Build
+      - name: Build (Linux, g++)
+        if: runner.os == 'Linux'
         run: g++ -O2 -std=c++17 -pthread -Wall -Werror tilefish.cpp -o tilefish
+      - name: Build (macOS, clang++)
+        if: runner.os == 'macOS'
+        run: clang++ -O2 -std=c++17 -pthread -Wall -Werror tilefish.cpp -o tilefish
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build (Windows, Visual Studio)
+        if: runner.os == 'Windows'
+        run: cl /nologo /O2 /std:c++17 /EHsc /Fe:tilefish.exe tilefish.cpp
       - name: Self-test (ENABLE)
+        shell: bash
         run: ./tilefish --threads 2 "selftest quick"
       - name: Referee script parses
+        if: runner.os == 'Linux'
         run: python3 -m py_compile tools/referee.py

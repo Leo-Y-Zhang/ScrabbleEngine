@@ -1,0 +1,27 @@
+Tilefish - a championship-strength Scrabble engine
+==================================================
+
+1. Get the championship word list (once, about 10 MB):
+     Windows:        double-click get-lexicon.bat
+     macOS / Linux:  open a terminal in this folder and type   sh get-lexicon.sh
+   This downloads CSW24 (Collins Scrabble Words 2024, the word list of the World
+   Scrabble Championship) and its leave values. For the North American list, type
+   get-lexicon.bat NWL23   or   sh get-lexicon.sh NWL23.
+
+2. Start Tilefish:
+     Windows:        double-click tilefish.exe
+     macOS / Linux:  ./tilefish   (or double-click it)
+   It uses CSW24 when it finds it here, and ENABLE (a free word list) otherwise.
+   The first lines it prints say which word list it loaded.
+
+3. Type one of these at the  tilefish>  prompt:
+     play                 play a game against it at full strength (about 12 s a move)
+     play sim             a quicker game (up to 2 s a move)
+     review mygame.gcg    go through a game move by move: what you lost where
+     help                 everything else (positions, endgames, analysis, matches)
+
+If macOS says the program cannot be opened, type   xattr -d com.apple.quarantine tilefish
+If Windows SmartScreen warns, choose "More info" and then "Run anyway".
+
+README.md is the full manual. Tilefish is free software under the GNU GPL, version 3
+or later (LICENSE). The word lists downloaded in step 1 belong to their publishers.

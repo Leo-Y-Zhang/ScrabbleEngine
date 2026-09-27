@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /*
  * =====================================================================================
  *   TILEFISH 2.1  -  a championship-style Scrabble(R) engine in one C++17 file
@@ -68,6 +69,13 @@
  *                         kept; the sampler weights their possible racks.
  *    7. Self-play         `train` plays thousands of games against itself and
  *                         re-learns leave values + the win model. [AlphaZero-ish]
+ *
+ *  LICENCE
+ *    Copyright (C) 2026 the Tilefish authors.  Tilefish is free software: you can
+ *    redistribute it and/or modify it under the terms of the GNU General Public
+ *    License as published by the Free Software Foundation, either version 3 of the
+ *    License, or (at your option) any later version.  It is distributed WITHOUT ANY
+ *    WARRANTY; see the LICENSE file for details.
  *
  *  Scrabble is a registered trademark of Hasbro (North America) and Mattel
  *  (elsewhere).  This program is an independent implementation of the published
@@ -7581,14 +7589,23 @@ int main(int argc, char** argv) {
   if (quiet) saved = std::cout.rdbuf(sink.rdbuf());  // silence start-up messages
   std::cout << "Tilefish 2.1 - Scrabble engine (" << app.threads << " threads)\n";
   if (lexpath.empty()) {
-    // A tournament lexicon placed in the folder wins over the bundled ENABLE list.
-    for (const char* cand : {"CSW24.kwg", "NWL23.kwg", "CSW24.txt", "NWL2023.txt", "CSW21.kwg", "NWL20.kwg", "CSW21.txt",
-                             "NWL2020.txt", "lexicon.kwg", "lexicon.txt", "ENABLE.txt", "enable1.txt"}) {
-      std::ifstream f(cand);
-      if (f) {
-        lexpath = cand;
-        break;
+    // A tournament lexicon placed in the folder wins over the bundled ENABLE list.  The
+    // folder is the current one or else the program's own, since a program started by
+    // double-clicking it (in the macOS Finder, say) may start in another folder.
+    std::vector<std::string> dirs{""};
+    const std::string self = argc > 0 ? argv[0] : "";
+    const size_t slash = self.find_last_of("/\\");
+    if (slash != std::string::npos) dirs.push_back(self.substr(0, slash + 1));
+    for (const std::string& dir : dirs) {
+      for (const char* cand : {"CSW24.kwg", "NWL23.kwg", "CSW24.txt", "NWL2023.txt", "CSW21.kwg", "NWL20.kwg", "CSW21.txt",
+                               "NWL2020.txt", "lexicon.kwg", "lexicon.txt", "ENABLE.txt", "enable1.txt"}) {
+        std::ifstream f(dir + cand);
+        if (f) {
+          lexpath = dir + cand;
+          break;
+        }
       }
+      if (!lexpath.empty()) break;
     }
   }
   if (!lexpath.empty()) app.load_lexicon(lexpath, leavespath.empty() && winpath.empty());
