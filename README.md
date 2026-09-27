@@ -20,6 +20,24 @@ seconds a move, Tilefish won 57.1% of 760 CSW24 games against MAGPIE's full sear
 game. What that does and does not prove is set out in
 [How strong is it?](#how-strong-is-it).
 
+## Quick start
+
+1. **Download** the zip for your computer from the
+   [latest release](https://github.com/Leo-Y-Zhang/ScrabbleEngine/releases/latest)
+   (Windows, macOS or Linux) and unzip it.
+2. **Get the championship word list** once: double-click `get-lexicon.bat` on Windows,
+   or type `sh get-lexicon.sh` in a terminal in that folder on macOS and Linux. This
+   downloads CSW24 (Collins Scrabble Words 2024, the World Scrabble Championship's
+   list) and its leave values, about 10 MB.
+3. **Start** `tilefish` (double-click `tilefish.exe` on Windows, `./tilefish` elsewhere)
+   and type `play` to play it at full strength, or `help`.
+
+It prints the word list it loaded when it starts: CSW24 when the files from step 2 are
+next to it, otherwise ENABLE, a free list that comes with it. For North American play,
+`get-lexicon.bat NWL23` or `sh get-lexicon.sh NWL23` fetches NWL23 instead, used with
+`tilefish --lexicon NWL23.kwg`. The ready-made programs run on any recent computer.
+Building from source (below) gives one tuned to your processor, which is somewhat faster.
+
 ## What's in this folder
 
 | File | What it is |
@@ -30,10 +48,14 @@ game. What that does and does not prove is set out in
 | `ENABLE.win` | Win-probability model learned from the same games. |
 | `CSW24.win`, `NWL23.win` | Win-probability models for CSW24 and NWL23, each fitted on 100,000 self-play games (the word lists themselves are not included). |
 | `build.sh`, `build.bat` | One-line builds for Linux/macOS and Windows. |
+| `get-lexicon.sh`, `get-lexicon.bat`, `get-lexicon.ps1` | Download CSW24 (or NWL23) and its leave values, checked against known checksums. |
+| `LICENSE` | The GNU General Public License, version 3. |
 | `tools/referee.py` | Neutral referee for engine-vs-engine matches (its own rules code, paired games, parallel play). |
 | `tools/magpie_bot.c`, `tools/build_magpie_bot.sh` | Lets MAGPIE play through the same protocol, for head-to-head matches. |
 | `tools/macondo_bot/`, `tools/build_macondo_bot.sh` | The same for Macondo with Woogles' BestBot settings. |
-| `.github/workflows/selftest.yml` | Builds and runs the quick self-test on every push. |
+| `.github/workflows/selftest.yml` | Builds with g++, clang and Visual Studio and runs the quick self-test on every push. |
+| `.github/workflows/release.yml` | Builds the ready-made Windows, macOS and Linux downloads and publishes a release. |
+| `tools/release/QUICKSTART.txt` | The short instructions that come with the downloads. |
 | `README.md` | This file. |
 
 ## Build
@@ -56,8 +78,9 @@ cl /O2 /std:c++17 /EHsc tilefish.cpp
 
 or just run `build.sh` / `build.bat`.
 
-Then run `./tilefish` (or `tilefish.exe`) from this folder. It finds `ENABLE.txt` and its
-trained data automatically. Type `help` to list the commands.
+Then run `./tilefish` (or `tilefish.exe`). It finds its word list and trained data in
+the current folder or in its own. Type `help` to list the commands, and run
+`sh get-lexicon.sh` (or `get-lexicon.bat`) once for the championship word list.
 
 ## Play against it
 
@@ -192,13 +215,19 @@ here are GPL-3.0 too. The engine itself contains no code from either.
 
 ENABLE is only a stand-in. Real play uses **CSW** (Collins; WESPA and the World
 Championship, which is what Nigel Richards plays) or **NWL** (NASPA, North America).
-Those lists are copyrighted, so they cannot be bundled. Tilefish reads them either as a
-text file (one word per line) or as a **`.kwg`** file, the binary lexicon used by wolges,
-MAGPIE and Macondo, which loads in well under a second. Leave values next to the
-lexicon (`CSW24.klv2` or `CSW24.leaves`) and a win model (`CSW24.win`) are picked up
-automatically, and a `CSW24.kwg` or `NWL23.kwg` in the folder is preferred over ENABLE.
+Those lists are copyrighted, so they cannot be bundled. `get-lexicon.sh` (or
+`get-lexicon.bat` on Windows) downloads CSW24, or NWL23 when asked, with its leave values
+from the MAGPIE project's public data, pinned to one version and checked against known
+checksums. These are the files every match above was played with.
+
+Tilefish reads a word list either as a text file (one word per line) or as a **`.kwg`**
+file, the binary lexicon used by wolges, MAGPIE and Macondo, which loads in well under a
+second. Leave values next to the lexicon (`CSW24.klv2` or `CSW24.leaves`) and a win
+model (`CSW24.win`) are picked up automatically, and a `CSW24.kwg` or `NWL23.kwg` in the
+folder is preferred over ENABLE.
 
 ```sh
+sh get-lexicon.sh                     # CSW24.kwg and CSW24.klv2 (sh get-lexicon.sh NWL23 for NWL23)
 ./tilefish --lexicon CSW24.kwg        # loads CSW24.klv2 / CSW24.win from the same folder
 tilefish> train games=100000 gens=8   # or learn your own leave values
 tilefish> train games=100000 gens=1 leaves=0   # refit only the win model
@@ -557,6 +586,10 @@ its move lists against full generation (`verifyendgame`). `benchgen`, `benchsim`
   their overhead stays small.
 * **Passing**: the fast search now passes when a pass has the best equity, as the full
   move list does (verifybest found a lone blank kept with 40 tiles in the bag).
+* **Easy to run**: ready-made downloads for Windows, macOS and Linux (built by
+  `.github/workflows/release.yml`), `get-lexicon` scripts that fetch CSW24 or NWL23, and
+  the word list is also looked for next to the program, so double-clicking it works.
+  CI builds with g++, clang and Visual Studio. Tilefish is now GPL-3.0 licensed.
 * **Match tools**: `tools/macondo_bot` plays Macondo with Woogles' BestBot settings
   through the referee. It and `tools/magpie_bot.c` are built against GPL-3.0 engines
   and carry GPL-3.0 notices.
@@ -602,6 +635,15 @@ for example `./tilefish "autoplay 1000 sim static threads=8"`. Engine settings a
 options are `time`, `iters`, `plies`, `cands`, `threads`, `win` (0 = rank by spread),
 `tau` (trust in the static evaluation), `playout`, `eg`, `egtime`, `peg`, `pegtime`,
 `inf`, `leaves=FILE`, `winmodel=FILE`.
+
+## License
+
+Tilefish is free software: you can redistribute it and/or modify it under the terms of
+the GNU General Public License as published by the Free Software Foundation, version 3
+or (at your option) any later version. See `LICENSE`. It is the license Stockfish uses,
+and MAGPIE and Macondo too. The word lists that `get-lexicon` downloads belong to their
+publishers (Collins Scrabble Words: HarperCollins; NWL: NASPA) and are not part of
+Tilefish.
 
 ---
 Scrabble is a trademark of Hasbro, Inc. in the USA and Canada and of Mattel elsewhere.
