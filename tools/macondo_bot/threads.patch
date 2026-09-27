@@ -1,0 +1,27 @@
+diff --git a/ai/bot/elite.go b/ai/bot/elite.go
+index c15d557..88351d4 100644
+--- a/ai/bot/elite.go
++++ b/ai/bot/elite.go
+@@ -119,7 +119,11 @@ func endGameBest(ctx context.Context, p *BotTurnPlayer, endgamePlies int) (*move
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	p.endgamer.SetThreads(runtime.NumCPU())
++	egThreads := runtime.NumCPU()
++	if p.simThreads > 0 {
++		egThreads = p.simThreads
++	}
++	p.endgamer.SetThreads(egThreads)
+ 	// Use auto mode: picks ABDADA for 300+ moves, otherwise LazySMP
+ 	p.endgamer.SetParallelAlgorithm(negamax.ParallelAlgoAuto)
+ 	p.endgamer.SetPreventSlowroll(true)
+@@ -147,6 +151,9 @@ func preendgameBest(ctx context.Context, p *BotTurnPlayer) (*move.Move, error) {
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	if p.simThreads > 0 {
++		p.preendgamer.SetThreads(p.simThreads)
++	}
+ 	// If we're down by a lot, we will probably need to bingo out, so set
+ 	// endgame plies to only a couple
+ 	ourSpread := math.Abs(float64(p.Game.SpreadFor(p.Game.PlayerOnTurn())))

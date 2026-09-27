@@ -10,11 +10,14 @@ UI. It uses only the C++ standard library.
 **Tilefish 2.1** plays tournament lexicons (CSW24, NWL23) straight from `.kwg` files.
 Its simulation is about 3.5 times as fast as 2.0's and 8 times as fast as 1.0's, a
 little faster than MAGPIE's on the same positions, and every shortcut is checked against
-brute force. It has been measured against **MAGPIE**, the open-source C engine descended
-from Macondo, under a neutral referee. At 1 and 5 seconds a move on one core, Tilefish
-won 57.5% of 560 CSW24 games against MAGPIE's full search, and 68.5% of 100 NWL23 games.
-With four threads each at 5 seconds a move it won 51.5% of 200 games, averaging
-+16.7 points a game. What that does and does not prove is set out in
+brute force. Under a neutral referee it has played both of the Woogles team's engines:
+**MAGPIE**, their open-source C engine, and **Macondo** with the settings of BestBot,
+which Woogles calls the best crossword-game engine it knows of. On one core at 1 to 20
+seconds a move, Tilefish won 57.1% of 760 CSW24 games against MAGPIE's full search, and
+68.5% of 100 NWL23 games. Against BestBot's settings at 20 seconds a move it won
+55.0% of 100 games, ahead but not yet by a proven margin. With four threads each at
+5 seconds a move it won 51.5% of 200 games against MAGPIE, averaging +16.7 points a
+game. What that does and does not prove is set out in
 [How strong is it?](#how-strong-is-it).
 
 ## What's in this folder
@@ -29,6 +32,7 @@ With four threads each at 5 seconds a move it won 51.5% of 200 games, averaging
 | `build.sh`, `build.bat` | One-line builds for Linux/macOS and Windows. |
 | `tools/referee.py` | Neutral referee for engine-vs-engine matches (its own rules code, paired games, parallel play). |
 | `tools/magpie_bot.c`, `tools/build_magpie_bot.sh` | Lets MAGPIE play through the same protocol, for head-to-head matches. |
+| `tools/macondo_bot/`, `tools/build_macondo_bot.sh` | The same for Macondo with Woogles' BestBot settings. |
 | `.github/workflows/selftest.yml` | Builds and runs the quick self-test on every push. |
 | `README.md` | This file. |
 
@@ -131,13 +135,13 @@ Start it with `--quiet` and talk to it over stdin/stdout, the way chess GUIs tal
 Stockfish:
 
 ```
-$ ./tilefish --quiet
+$ ./tilefish --quiet --threads 1
 ready
 cgp 15/15/15/15/15/15/15/5CAT7/15/15/15/15/15/15/15 AEINRST/ 5/0 0
 go 5 json
-{"position":"15/15/15/15/15/15/15/5CAT7/15/15/15/15/15/15/15 AEINRST/ 5/0 0 lex enable1;","method":"simulation","exact":false,"seconds":5.00,"best":"E5 ANTSIER",
- "moves":[{"move":"E5 ANTSIER","score":84,"leave":"","static":84.00,"value":84.95,"win":0.7635,"iterations":10544,"pruned":false},
-  {"move":"E5 ANESTRI","score":84,"leave":"","static":84.00,"value":84.80,"win":0.7630,"iterations":10544,"pruned":false}, ...]}
+{"position":"15/15/15/15/15/15/15/5CAT7/15/15/15/15/15/15/15 AEINRST/ 5/0 0 lex ENABLE;","method":"simulation","exact":false,"seconds":5.00,"best":"E5 ANTSIER",
+ "moves":[{"move":"E5 ANTSIER","score":84,"leave":"","static":84.00,"value":85.09,"win":0.7640,"iterations":23613,"pruned":false},
+  {"move":"E5 ANESTRI","score":84,"leave":"","static":84.00,"value":84.96,"win":0.7637,"iterations":23613,"pruned":false}, ...]}
 isready
 readyok
 ```
@@ -169,6 +173,20 @@ python3 tools/referee.py --lexicon CSW24.txt --games 50 --movetime 1000 --parall
     --a "proto:./tilefish --lexicon CSW24.kwg --threads 1 --quiet" --a-name tilefish \
     --b "proto:cd ~/MAGPIE && ./bin/magpie_bot CSW24 1" --b-name magpie
 ```
+
+Macondo, the engine behind Woogles' BestBot, plays through `tools/macondo_bot` with
+BestBot's settings. Its data folder needs `lexica/gaddag/CSW24.kwg` and `CSW24.klv2`
+next to Macondo's own `strategy` and `letterdistributions` folders:
+
+```sh
+tools/build_macondo_bot.sh ~/macondo   # once; needs Go
+python3 tools/referee.py --lexicon CSW24.txt --games 25 --movetime 20000 --parallel 4 \
+    --a "proto:./tilefish --lexicon CSW24.kwg --threads 1 --quiet" --a-name tilefish \
+    --b "proto:~/macondo/bin/macondo_bot ~/macondo-data CSW24 1" --b-name bestbot
+```
+
+The two bots are built against MAGPIE and Macondo, which are GPL-3.0, so their sources
+here are GPL-3.0 too. The engine itself contains no code from either.
 
 ## Use a tournament dictionary (important)
 
@@ -244,7 +262,10 @@ the seats swapped.
 | Tilefish 2.0 before the review fixes vs MAGPIE, 1 s a move | 100 | 58.5% ± 8.8 | +16.8 ± 17.9 |
 | Tilefish 2.0 vs MAGPIE, 1 s a move | 100 | 51.5% ± 8.4 | +11.9 ± 14.6 |
 | Tilefish 2.1 (this version) vs MAGPIE, 1 s a move | 100 | 57.0% ± 8.4 | +21.6 ± 16.4 |
-| **All six one-thread CSW24 matches pooled** | **560** | **57.5% ± 3.7** | **+19.9 ± 7.2** |
+| **All six one-thread CSW24 matches at 1–5 s pooled** | **560** | **57.5% ± 3.7** | **+19.9 ± 7.2** |
+| Tilefish 2.1 vs MAGPIE, 10 s a move | 100 | 58.0% ± 7.6 | +9.5 ± 16.9 |
+| Tilefish 2.1 vs MAGPIE, 20 s a move | 100 | 54.0% ± 8.3 | +20.8 ± 15.7 |
+| **Tilefish 2.1 at 10 and 20 s pooled** | **200** | **56.0% ± 5.6** | **+15.2 ± 11.5** |
 | Tilefish 2.1 vs MAGPIE, **NWL23**, 1 s a move | 100 | **68.5% ± 8.9** | **+27.1 ± 16.0** |
 | Tilefish 2.0 before the time fix vs MAGPIE, 5 s a move, 4 threads each | 50 | 51.0% ± 14.6 | +10.8 ± 28.5 |
 | Tilefish 2.0 vs MAGPIE, 5 s a move, 4 threads each | 50 | 55.0% ± 13.3 | +19.2 ± 21.5 |
@@ -280,10 +301,15 @@ What this shows, and what it does not:
 
 * **The comparison is fair.** With search switched off, the two engines are dead even
   (49.9%). Same leaves, same tiles, same rules, and the referee checked every move.
-* **At short time controls on one core Tilefish is ahead.** Each match on its own is
-  borderline, with intervals of ±8–11%. Pooled over all six CSW24 matches (560
-  games), Tilefish won 57.5% ± 3.7 and averaged +19.9 ± 7.2 points a game. On NWL23,
-  the first match (100 games) gave 68.5% ± 8.9.
+  The referee sends positions, not game histories, so Tilefish never infers the
+  opponent's rack from their last play in these matches (MAGPIE's move picker has no
+  such inference).
+* **On one core Tilefish is ahead, up to 20 s a move.** Each match on its own is
+  borderline, with intervals of ±8–11%. Pooled over the six CSW24 matches at 1–5 s
+  (560 games), Tilefish won 57.5% ± 3.7 and averaged +19.9 ± 7.2 points a game. At
+  10 and 20 s a move it won 56.0% ± 5.6 of 200 games (+15.2 ± 11.5 points), and over
+  all eight one-thread matches 57.1% ± 3.1 of 760 games (+18.7 ± 6.1). On NWL23, the
+  first match (100 games) gave 68.5% ± 8.9.
 * **With four threads each it is close.** At 5 s a move the build before the time fix
   scored 51.0% ± 14.6 over 50 games while thinking only 1.06 s a move against
   MAGPIE's 4.4 s: its simulation stopped as soon as one candidate was statistically
@@ -296,6 +322,15 @@ What this shows, and what it does not:
   game) on the same deals, thinking 4.5 s a move against MAGPIE's 4.4 s. Pooled, the
   four four-thread matches (200 games) give 51.5% ± 6.4 in wins and +16.7 ± 11.5
   points a game: level on wins, ahead on spread.
+* **More thinking time narrows the lead in wins, not in points.** One thread at 20 s
+  a move is as much computing as four threads at 5 s, and it gave the same picture:
+  54.0% ± 8.3 in wins, +20.8 ± 15.7 points a game. All 300 games at that budget
+  together: 52.3% ± 5.1 and +18.1 ± 9.3. It is not the threads: both engines run
+  four threads about four times as fast as one (MAGPIE 4.2 times, Tilefish 3.7 to 4.1
+  times on the same position). Tilefish's wins are larger than its losses (at 20 s it
+  won by 97 points on average and lost by 69), which fits the two objectives: MAGPIE
+  ranks moves by winning chances alone, and Tilefish also counts the margin. In a
+  tournament the margin is the tie-break.
 * **2.0 is not measurably stronger than 1.0 at 1 s a move.** 1.0 scored 59.0%, the 2.0
   builds 59.0%, 58.5% and 51.5%, all inside each other's noise; 100 games cannot
   resolve a few percent. The difference is in how they get there. 1.0 overran its
@@ -319,10 +354,44 @@ What this shows, and what it does not:
   54.1% ± 4.2 over 400 games (+8.1 ± 8.1 points a game), at the edge of significance.
   More simulation should count for more with longer thinking time.
 * **It does not prove Tilefish is the strongest engine at tournament length.**
-  Nothing here tested 30+ seconds a move or thousands of games, and the four-thread
-  matches are only 50 games each. Even the pooled one-thread interval allows a true
-  margin as small as about 54%. The next step is to run exactly those matches; the
-  tools for it are in `tools/`.
+  Nothing here went beyond 20 core-seconds a move, and the lead in wins shrinks as
+  thinking time grows: about 57% at 1–10 s on one core, 54–55% at 20 s against MAGPIE
+  and BestBot's settings, 51.5% with four threads at 5 s. At a minute or more a move,
+  where tournament broadcasts would run, either engine could be ahead. The tools to
+  settle it are in `tools/`; it needs hundreds of games at that length.
+
+### Against Macondo (Woogles' BestBot)
+
+Woogles.io calls its BestBot the best crossword-game engine it knows of. BestBot runs
+Macondo, the Go engine that MAGPIE was rewritten from. It simulates 100 candidate moves
+5 plies deep, and uses a pre-endgame solver with one tile in the bag and an exact
+endgame solver. `tools/macondo_bot` runs Macondo's own bot code with BestBot's settings
+(the bot type and simulation depth of its production entry point), under the same
+referee, word list and leave values as the MAGPIE matches.
+
+| Match (A vs B), CSW24 | Games | A's win rate | A's spread per game |
+|---|---|---|---|
+| Tilefish 2.1 vs Macondo with BestBot's settings, 20 s a move, one thread each | 100 | 55.0% ± 8.0 | +14.8 ± 15.6 |
+| Tilefish 2.1 vs MAGPIE and BestBot's settings together, 20 s a move | 200 | 54.5% ± 5.8 | **+17.8 ± 11.0** |
+
+Tilefish is ahead, but 100 games cannot prove a margin of this size. As against MAGPIE,
+its wins were larger than its losses (82 against 68 points on average). Against both
+engines together at 20 s a move the lead in points is significant and the lead in wins
+is not.
+
+* **Macondo is the slower program.** With 5-ply simulations it evaluates about 6,000
+  positions a second on one core, against Tilefish's 24,000 with 2 plies, so at 20 s
+  a move each of its 100 candidates gets about 200 samples. That is part of what an
+  engine match at equal time and hardware measures.
+* **BestBot's own budget is larger.** In production it divides its clock by the turns
+  it expects to have left, up to three minutes a move, on a cloud function with three
+  to four cores. That was not tested here.
+* **Two changes let it run in parallel matches.** Its endgame hash table was cut from
+  20% to 4% of memory, as for MAGPIE. Its endgame and pre-endgame solvers use the
+  thread count they are given instead of every core of the machine.
+* **A crash is caught.** Macondo's endgame solver can return an empty line when it is
+  stopped very early, and the bot then crashes. The wrapper searches again, so no move
+  is forfeited. At 20 s a move this never happened.
 
 ### Speed (CSW24, one thread, same machine)
 
@@ -379,7 +448,8 @@ What these numbers do and do not show:
 
 Chess championships broadcast Stockfish's evaluation because it is (1) the strongest,
 (2) trusted, (3) easy to plug into anything. For Scrabble, today's reference engines are
-**Macondo** and **Magpie** (behind Woogles' BestBot) and, historically, **Quackle**.
+**Macondo** (behind Woogles' BestBot), its faster successor **MAGPIE** and, historically,
+**Quackle**.
 Here is where Tilefish stands on each requirement:
 
 | Requirement | Tilefish today |
@@ -389,13 +459,15 @@ Here is where Tilefish stands on each requirement:
 | Standard formats | GCG game records (read, write, review), CGP positions, KLV/KLV2 leave files. |
 | Machine interface for broadcasts and GUIs | `--quiet` mode with one-line JSON analyses (win %, spread, every candidate). |
 | Post-game analysis | `review`: every move vs the engine, with win % lost and a win-probability timeline. |
-| Proven playing strength | **Partly.** 57.5% ± 3.7 against MAGPIE at 1–5 s a move on one core (560 CSW24 games), 68.5% ± 8.9 on NWL23 (100 games); 51.5% ± 6.4 with four threads each at 5 s a move (200 games). Not yet measured at tournament length. |
+| Proven playing strength | **Partly.** Against MAGPIE: 57.1% ± 3.1 on one core at 1–20 s a move (760 CSW24 games), 68.5% ± 8.9 on NWL23 (100 games), 51.5% ± 6.4 with four threads each at 5 s a move (200 games). Against Macondo with BestBot's settings: 55.0% ± 8.0 at 20 s a move (100 games). Not yet measured at tournament length. |
 
 The last row is the whole job. The plan, in order of expected payoff:
 
-1. **Measure at tournament length.** Four threads at 5 s a move has been tried (50
-   games per build, above). Next: 20–60 s a move over hundreds of game pairs. The
-   short-time lead above has to survive there before any "strongest" claim.
+1. **Measure at tournament length.** Up to 20 core-seconds a move has been tried
+   (above), and the lead in wins narrows as thinking time grows. Next: a minute or more
+   a move over hundreds of game pairs, against MAGPIE and BestBot's settings. The lead
+   has to survive there before any "strongest" claim. Deeper simulations (BestBot uses
+   5 plies, Tilefish 2) are the first thing to try at that length.
 2. **Pre-endgame.** Measured against MAGPIE from 7 tiles in the bag, Tilefish already
    gains 15 points a game at 1 s a move. With one tile in the bag it values every
    candidate against each possible last tile, and it plays simulations out to the end
@@ -485,6 +557,9 @@ its move lists against full generation (`verifyendgame`). `benchgen`, `benchsim`
   their overhead stays small.
 * **Passing**: the fast search now passes when a pass has the best equity, as the full
   move list does (verifybest found a lone blank kept with 40 tiles in the bag).
+* **Match tools**: `tools/macondo_bot` plays Macondo with Woogles' BestBot settings
+  through the referee. It and `tools/magpie_bot.c` are built against GPL-3.0 engines
+  and carry GPL-3.0 notices.
 * **Benchmarks**: `benchsim [SECS [THREADS [ITERS]]]` runs a fixed number of iterations
   for profiling and prints a checksum of the results. `benchendgame` plays its games
   with the plain generator, so every version is timed on the same endgames.

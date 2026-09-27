@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// (Built against MAGPIE, which is GPL-3.0.  Tilefish itself contains no MAGPIE code.)
+//
 // magpie_bot: exposes MAGPIE's PlayChooser (its full-strength move picker:
 // simulation, pre-endgame and endgame solvers) through the small line protocol
 // used by tools/referee.py, so Tilefish can play MAGPIE under a neutral referee.
