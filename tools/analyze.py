@@ -2,13 +2,16 @@
 """Statistics for match logs written by tools/referee.py --log.
 
     analyze.py LOG [LOG ...] [--alpha 0.05] [--candidates K] [--plan ELO [ELO ...]] [--power 0.8]
+               [--bootstrap N]
 
 Reports engine A's wins, draws and losses, its match score (wins plus half the
 draws), the standard-Elo difference that score implies, and the spread, each with
 a 95% interval.  The unit of sampling is the deal pair: both games of a pair use
 the same tiles, so they are correlated, and the intervals come from the spread of
 the pair averages, not of single games.  (With --single matches each game is its
-own unit.)
+own unit.)  The intervals use the normal approximation to the mean of the pair
+scores; --bootstrap N adds a percentile bootstrap over the pairs (N resamples,
+fixed seed), which does not lean on that approximation in short matches.
 
 --candidates K applies a Bonferroni correction when this match is one of K
 candidates screened against the same baseline, so a lucky screen is not
@@ -22,6 +25,7 @@ variance measured in these logs as the pilot estimate.
 import argparse
 import json
 import math
+import random
 import sys
 from statistics import NormalDist
 
@@ -62,7 +66,7 @@ def load(paths):
     return units, metas
 
 
-def report(units, metas, alpha, candidates, plan, power):
+def report(units, metas, alpha, candidates, plan, power, boot=0):
     games = [g for u in units.values() for g in u]
     if not games:
         return "no games in the logs"
@@ -88,6 +92,14 @@ def report(units, metas, alpha, candidates, plan, power):
         len(games), len(units), w, d, l, w + 0.5 * d, len(games)))
     out.append("A's score %.2f%%, %.1f%% interval %.2f%% to %.2f%%" % (100 * s, level, 100 * lo, 100 * hi))
     out.append("standard Elo %+.0f, %.1f%% interval %+.0f to %+.0f" % (elo(s), level, elo(lo), elo(hi)))
+    if boot:
+        rng = random.Random(1)
+        k = len(pair_scores)
+        means = sorted(sum(rng.choice(pair_scores) for _ in range(k)) / k for _ in range(boot))
+        q = alpha / (2 * candidates)
+        blo, bhi = means[int(q * (boot - 1))], means[int(math.ceil((1 - q) * (boot - 1)))]
+        out.append("bootstrap over pairs (%d resamples): score %.2f%% to %.2f%%, Elo %+.0f to %+.0f" % (
+            boot, 100 * blo, 100 * bhi, elo(blo), elo(bhi)))
     out.append("spread %+.1f points a game, %.1f%% interval %+.1f to %+.1f" % (
         sp, level, sp - z * sp_se, sp + z * sp_se))
     if se > 0:
@@ -118,9 +130,10 @@ def main():
     ap.add_argument("--candidates", type=int, default=1)
     ap.add_argument("--plan", type=float, nargs="*", default=[])
     ap.add_argument("--power", type=float, default=0.8)
+    ap.add_argument("--bootstrap", type=int, default=0, metavar="N")
     a = ap.parse_args()
     units, metas = load(a.logs)
-    print(report(units, metas, a.alpha, a.candidates, a.plan, a.power))
+    print(report(units, metas, a.alpha, a.candidates, a.plan, a.power, a.bootstrap))
 
 
 if __name__ == "__main__":

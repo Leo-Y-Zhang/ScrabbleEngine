@@ -225,6 +225,7 @@ the standard-Elo difference and the spread, each with a 95% interval over deal p
 ```sh
 python3 tools/referee.py ... --b-info ~/MAGPIE/bin/magpie_bot.provenance --log match.jsonl
 python3 tools/analyze.py match.jsonl                  # the result, with intervals
+python3 tools/analyze.py match.jsonl --bootstrap 10000  # plus a bootstrap over deal pairs
 python3 tools/analyze.py pilot.jsonl --plan 20 30     # deal pairs needed to show +20 or +30 Elo
 python3 tools/analyze.py screen.jsonl --candidates 4  # corrected when 4 versions were screened
 ```
