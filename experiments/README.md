@@ -149,3 +149,8 @@ Protocol: CSW24, one thread each on the same 4-vCPU runner, 5 s a move, 200 deal
 change. It is reported with 95% intervals and Bonferroni over the three opponents
 (98.3%). Tilefish's leave values are the CSW24 `.klv2` from `get-lexicon`, MAGPIE uses
 its own data, and Macondo uses its own strategy files with the same `.klv2`.
+
+**Added before any 20 s game (same day):** the same measurement at **20 s a move**
+against MAGPIE (`full`) and Macondo with BestBot's settings (`simming 5`): 200 deal
+pairs each, one thread, CSW24, fresh seed 3002. These are the conditions of the
+published 55.0% against BestBot's settings, now with recorded versions.
