@@ -56,6 +56,14 @@ It prints the word list it loaded when it starts: CSW24 when the files from step
 next to it, otherwise ENABLE, a free list that comes with it. For North American play,
 `get-lexicon.bat NWL23` or `sh get-lexicon.sh NWL23` fetches NWL23 instead, used with
 `tilefish --lexicon NWL23.kwg`. The ready-made programs run on any recent computer.
+
+**Windows and unsigned programs.** The downloads are not code-signed yet. SmartScreen's
+warning has a "Run anyway" button (under "More info"). **Smart App Control** (Windows 11,
+on some new installations) may block the program outright, with no override; whether it
+does is decided file by file. On one such laptop the v2.2 program ran and v2.2.1, built
+from the same source, was blocked. If that happens, use the browser version above, which
+needs no download. Signing the releases would fix this, and free signing for open-source
+projects is available (for example through SignPath).
 Building from source (below) gives one tuned to your processor, which is somewhat faster.
 
 ## What's in this folder

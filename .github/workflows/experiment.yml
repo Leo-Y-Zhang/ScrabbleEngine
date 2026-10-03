@@ -3,6 +3,11 @@ name: experiment
 # of deal pairs under tools/referee.py; the summary job pools the raw logs with
 # tools/analyze.py.  Start it from the Actions tab or with
 #   gh workflow run experiment.yml -f a_spec=champion:plies=3 -f b_ref=v2.1 ...
+# Engine B can also be a current opponent, built at a pinned commit by this workflow:
+#   -f b_ref=magpie@375ad953e20d -f b_spec=full       MAGPIE's PlayChooser (sim, peg, endgame)
+#   -f b_ref=macondo@14c080b57608 -f b_spec="simming 5"   Macondo with BestBot's settings
+#   -f b_ref=macondo@14c080b57608 -f b_spec="infer 5"     ... with its rack inference
+# (CSW24 or NWL23; each opponent uses the data its own project ships, see tools/).
 # Development screens use seeds 1000-8999; keep 9000 and up for confirmation matches.
 on:
   workflow_dispatch:
@@ -10,7 +15,7 @@ on:
       name: { description: "label for this experiment", default: "screen" }
       a_ref: { description: "git ref that builds engine A (the candidate)", default: "main" }
       a_spec: { description: "engine A setting", default: "champion" }
-      b_ref: { description: "git ref that builds engine B (the frozen baseline)", default: "v2.1" }
+      b_ref: { description: "engine B: a git ref of Tilefish (default the frozen v2.1), or magpie@COMMIT or macondo@COMMIT", default: "v2.1" }
       b_spec: { description: "engine B setting", default: "champion" }
       movetime: { description: "milliseconds a move", default: "5000" }
       threads: { description: "threads per engine", default: "1" }
@@ -53,15 +58,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Build both engines
-        run: |
-          for side in a b; do
-            if [ $side = a ]; then ref=$A_REF; spec=$A_SPEC; else ref=$B_REF; spec=$B_SPEC; fi
-            git show "$ref:tilefish.cpp" > "tf_$side.cpp"
-            g++ -O3 -march=native -std=c++17 -pthread "tf_$side.cpp" -o "tf_$side"
-            { echo "commit: $(git rev-parse "$ref^{commit}") ($ref)"; echo "setting: $spec"; echo "toolchain: $(g++ --version | head -n 1), -O3 -march=native"; echo "cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"; } > "$side.info"
-            cat "$side.info"
-          done
       - name: Word list
         run: |
           if [ "$LEX" = ENABLE ]; then
@@ -72,12 +68,57 @@ jobs:
             ./tf_tools --lexicon "$LEX.kwg" "savewords $LEX.txt"  # the referee checks moves against it
             echo "LEXFILE=$LEX.kwg" >> "$GITHUB_ENV"; echo "WORDS=$LEX.txt" >> "$GITHUB_ENV"
           fi
+      - name: Build Tilefish engines
+        run: |
+          cpu="cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"
+          for side in a b; do
+            if [ $side = a ]; then ref=$A_REF; spec=$A_SPEC; else ref=$B_REF; spec=$B_SPEC; fi
+            case "$ref" in magpie@*|macondo@*) continue ;; esac
+            git show "$ref:tilefish.cpp" > "tf_$side.cpp"
+            g++ -O3 -march=native -std=c++17 -pthread "tf_$side.cpp" -o "tf_$side"
+            { echo "engine: Tilefish"; echo "commit: $(git rev-parse "$ref^{commit}") ($ref)"; echo "setting: $spec"; echo "toolchain: $(g++ --version | head -n 1), -O3 -march=native"; echo "$cpu"; } > "$side.info"
+            cat "$side.info"
+            S=$(echo $side | tr a-z A-Z)
+            echo "${S}_CMD=proto:./tf_$side --lexicon $LEXFILE --threads $THREADS --quiet" >> "$GITHUB_ENV"
+            echo "${S}_INIT=player $spec" >> "$GITHUB_ENV"
+          done
+      - name: Build MAGPIE
+        if: startsWith(inputs.b_ref, 'magpie@')
+        run: |
+          M="$HOME/MAGPIE"
+          git clone -q https://github.com/jvc56/MAGPIE.git "$M" && git -C "$M" checkout -q "${B_REF#magpie@}"
+          (cd "$M" && ./download_data.sh > /dev/null)
+          (cd "$M" && make magpie BUILD=no_pgo_release -j4 > build.log 2>&1) || (tail -40 "$M/build.log"; exit 1)
+          # Its data has no word map for the tournament lists; make one as MAGPIE's convert_lexica.sh does.
+          (cd "$M" && bin/magpie convert dawg2text "$LEX" > /dev/null && bin/magpie convert text2wordmap "$LEX" -threads 4 > /dev/null)
+          sh tools/build_magpie_bot.sh "$M"
+          { cat "$M/bin/magpie_bot.provenance"; echo "mode: ${B_SPEC}"; echo "data: $(grep -m1 '^DATA_VERSION=' "$M/download_data.sh") (download_data.sh), word map made with convert text2wordmap"; echo "cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"; } > b.info
+          cat b.info
+          echo "B_CMD=proto:cd $M && ./bin/magpie_bot $LEX $THREADS ./data $B_SPEC" >> "$GITHUB_ENV"
+          echo "B_INIT=" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        if: startsWith(inputs.b_ref, 'macondo@')
+        with:
+          go-version: '1.26.1'
+      - name: Build Macondo
+        if: startsWith(inputs.b_ref, 'macondo@')
+        run: |
+          M="$HOME/macondo"
+          git clone -q https://github.com/domino14/macondo.git "$M" && git -C "$M" checkout -q "${B_REF#macondo@}"
+          sh tools/build_macondo_bot.sh "$M"
+          D="$HOME/macondo-data"
+          mkdir -p "$D/lexica/gaddag" && cp -r "$M/data/strategy" "$M/data/letterdistributions" "$D/"
+          cp "$LEX.kwg" "$LEX.klv2" "$D/lexica/gaddag/"
+          { cat "$M/bin/macondo_bot.provenance"; echo "bot and plies: ${B_SPEC}"; echo "data: Macondo's strategy and letterdistributions; $LEX.kwg/.klv2 from get-lexicon"; echo "cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"; } > b.info
+          cat b.info
+          echo "B_CMD=proto:$M/bin/macondo_bot $D $LEX $THREADS $B_SPEC" >> "$GITHUB_ENV"
+          echo "B_INIT=" >> "$GITHUB_ENV"
       - name: Play
         run: |
           python3 tools/referee.py --lexicon "$WORDS" --games "$PAIRS" --first-pair $((SHARD * PAIRS)) --seed "$SEED" \
-            --movetime "$MOVETIME" --parallel $(( $(nproc) / THREADS > 0 ? $(nproc) / THREADS : 1 )) \
-            --a "proto:./tf_a --lexicon $LEXFILE --threads $THREADS --quiet" --a-init "player $A_SPEC" --a-name A --a-info a.info \
-            --b "proto:./tf_b --lexicon $LEXFILE --threads $THREADS --quiet" --b-init "player $B_SPEC" --b-name B --b-info b.info \
+            --movetime "$MOVETIME" --parallel $(( $(nproc) / THREADS > 0 ? $(nproc) / THREADS : 1 )) --startup-timeout 900 \
+            --a "$A_CMD" --a-init "$A_INIT" --a-name A --a-info a.info \
+            --b "$B_CMD" --b-init "$B_INIT" --b-name B --b-info b.info \
             --log "shard-$SHARD.jsonl"
       - uses: actions/upload-artifact@v4
         with:
