@@ -104,3 +104,30 @@ which goes forward only as a lead. **Confirmation of the selected candidate:** f
 seed 2001, 300 deal pairs at 5 s and 100 pairs at 20 s, both against v2.1. It is
 promoted to the default only if the 5 s confirmation's 95% interval lies above 50%
 and the 20 s result's point estimate is not below 50%.
+
+**Results** (run 3 October 2026 on `main` at `5555811`, the same search as 2.2; engine B is
+`v2.1`; CSW24, 5 s a move, one thread each, 200 deal pairs, seed 1003; intervals are
+99.2%, Bonferroni over the six candidates):
+
+| Candidate | A: W–D–L | Score | Elo (99.2%) | Spread a game (99.2%) |
+|---|---|---|---|---|
+| `tau=2` | 190–2–208 | 47.75% | −16 (−46 to +14) | −4.6 (−12.1 to +2.9) |
+| `tau=8` | 202–5–193 | 51.12% | +8 (−22 to +38) | +0.5 (−6.8 to +7.8) |
+| `tau=16` | 203–1–196 | 50.88% | +6 (−21 to +33) | −1.0 (−7.9 to +5.9) |
+| `cands=15` | 193–0–207 | 48.25% | −12 (−41 to +16) | +2.1 (−5.1 to +9.4) |
+| `z=1.8` | 200–1–199 | 50.12% | +1 (−29 to +30) | +1.0 (−6.4 to +8.4) |
+| `z=3.2` | 205–2–193 | 51.50% | +10 (−14 to +35) | +1.3 (−5.0 to +7.7) |
+
+Each engine used about 4.5 s of the 5 s a move, with no illegal moves, crashes or slow
+moves. Raw logs: `csw-*-vs-v2.1-5s.jsonl`.
+
+**Decision: nothing promoted; the defaults stay.** No interval excludes 50%. The
+registered rule sends forward the best candidate scoring *above* 51.5%. The best,
+`z=3.2`, scored exactly 51.50%, so under the rule as written none goes to confirmation.
+The rule is not relaxed after the fact. The pattern fits small or zero effects:
+stronger trust in the static prior (`tau=2`) and fewer candidates (`cands=15`) lean
+negative, while weaker trust (`tau=8`, `16`) and later pruning (`z=3.2`) lean positive by
+less than 10 Elo. Detecting 10 Elo needs roughly 3,700 deal pairs at this variance, so the
+screens rule out large effects (beyond about ±35 Elo) and nothing more. If they are
+revisited, the natural single candidate is `tau=8,z=3.2`, registered as a new
+hypothesis and run on fresh seeds.

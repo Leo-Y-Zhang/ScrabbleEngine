@@ -623,6 +623,25 @@ against full generation (`verifybest`), the endgame solver against plain minimax
 its move lists against full generation (`verifyendgame`). `benchgen`, `benchsim` and
 `benchendgame` measure speed on fixed positions.
 
+## What changed in 2.2
+
+* **The browser version** ([leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)),
+  with Play, Practice, Two-player and Analyse modes, game clocks with the NASPA overtime
+  rule, take-backs, saving and resuming, game review, and GCG import and export.
+  Screenshots before and after: `docs/ui/`.
+* **`ui` commands** for graphical front-ends (JSON): new game, moves, the engine's move,
+  hints, exact take-back (the draws repeat), replay of a saved game, review of any move
+  from its player's point of view, GCG import and export, positions in and out.
+* **`savewords FILE`** exports any lexicon, a `.kwg` included, as a plain word list. The
+  strength tests can now run on CSW24 and NWL23.
+* **Measurement:** `tools/analyze.py` (intervals over deal pairs, bootstrap, multiple
+  comparisons, match-length planning), build provenance in every match log, and
+  `.github/workflows/experiment.yml`, which runs paired matches on GitHub's runners.
+* **No change to the search.** Nine candidates were screened against 2.1: 3 and 4 plies on
+  ENABLE, and the prior weight, candidate count and pruning threshold on CSW24. None
+  passed, so 2.2 plays as 2.1 did. Every result, with its raw games, is in
+  [`experiments/`](experiments/README.md).
+
 ## What changed in 2.1
 
 * **Simulation 3.5 times as fast** (about 7,300 to about 26,000 positions a second on
