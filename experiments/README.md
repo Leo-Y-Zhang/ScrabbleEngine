@@ -154,3 +154,22 @@ its own data, and Macondo uses its own strategy files with the same `.klv2`.
 against MAGPIE (`full`) and Macondo with BestBot's settings (`simming 5`): 200 deal
 pairs each, one thread, CSW24, fresh seed 3002. These are the conditions of the
 published 55.0% against BestBot's settings, now with recorded versions.
+
+**Results at 5 s a move** (CSW24, one thread each, 200 deal pairs, seed 3001; Tilefish
+2.2 is engine A; intervals are 98.3%, Bonferroni over the three opponents):
+
+| Opponent (pinned build) | A: W–D–L | Score | Elo (98.3%) | Spread a game (98.3%) |
+|---|---|---|---|---|
+| MAGPIE `375ad953e20d`, `full` | 223–0–177 | 55.75% | +40 (+4 to +78) | +15.5 (+4.3 to +26.7) |
+| Macondo `14c080b57608`, `simming 5` (BestBot's settings) | 239–2–159 | 60.00% | +70 (+31 to +112) | +42.3 (+30.2 to +54.5) |
+| Macondo `14c080b57608`, `infer 5` | 251–1–148 | 62.88% | +92 (+53 to +132) | +48.9 (+37.1 to +60.7) |
+
+There were no illegal moves, crashes or forfeits. The engines used about 4.5 s a move on
+average; Macondo's longest move took 7.5 s of a 5 s budget. Raw logs:
+`base-v2.2-vs-*-5s.jsonl`, each opening with the builds' provenance.
+
+**What this shows.** At 5 s a move on one core, Tilefish 2.2 is ahead of all three pinned
+opponents, and every interval excludes zero. **What it does not show:** anything about
+longer thinking. Macondo simulates 5 plies deep, so in 5 s it gets few samples per
+candidate, and in production BestBot thinks for up to three minutes on three or four
+cores. The 20 s matches below are the closer test.
