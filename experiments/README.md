@@ -252,4 +252,25 @@ search (= 2.2) against Macondo `14c080b57608` `simming 5`:
 | `profile-5s` | 5 s | 40 (2 × 20) | 3101 | where computation goes at 5 s |
 | `profile-60s` | 60 s | 16 (4 × 4) | 3102 | pilot: where computation goes at 60 s |
 
+**Added before any of its games (4 October 2026): an inference-mode pilot.** The referee
+can now send an engine the game so far as the mover knows it (`--b-history`: a GCG with
+the mover's own racks and only the tiles the opponent played; placeholder tiles from the
+mover's unseen pool for the opponent's exchanges and passes). The Macondo wrapper rebuilds
+the game from it with Macondo's own `gcgio` and `NewFromHistory`, as Macondo's bot worker
+(`bot/bot.go`) does, checks the board, scores and rack against the CGP, and falls back to
+the CGP if they differ. In a local test (2 pairs, 1.5 s) all 50 of Macondo's moves used
+the history and inference found up to 57,120 possible racks. Tilefish gets no history
+here, so it plays exactly as in the runs above; only Macondo's configuration changes.
+
+| Run | Budget | Pairs | Seed | Macondo |
+|---|---|---|---|---|
+| `infer-20s` | 20 s | 40 (2 × 20) | 3002 (pairs 0–39, the same deals as `audit-20s`) | `infer 5` with history |
+| `infer-60s` | 60 s | 16 (4 × 4) | 3102 (the same deals as `profile-60s`) | `infer 5` with history |
+
+This is a pilot for choosing Macondo's configuration for the final comparison, not a
+test: 40 pairs measure a score to about ±9 percentage points. Rule, fixed now: the final
+comparison uses `infer 5` with history if, at 20 s, Tilefish's score against it is lower
+than against `simming 5` on the same 40 deal pairs (the stronger opponent is the one to
+measure against), and `simming 5` otherwise.
+
 The audit itself (positions, decisions, reanalysis) is described with its results.

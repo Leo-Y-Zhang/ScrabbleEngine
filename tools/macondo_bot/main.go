@@ -15,6 +15,12 @@
 //	go movetime <ms>       answer "bestmove <move>"  (8D WORD, D8 WORD, exch ABC, pass),
 //	                       after an "info <JSON>" line: set-up and search time, Macondo's
 //	                       own summary of the search, and whether inference ran
+//	history <GCG>          optional, before "position": the game so far as the mover
+//	                       knows it (GCG lines joined by " | "; the mover's own racks, only
+//	                       the tiles the opponent played).  The game is then rebuilt from
+//	                       it, as Macondo's own bot worker does, so inference has the
+//	                       opponent's last play to work from.  Checked against the CGP;
+//	                       if it does not match, the CGP is used.
 //	isready                answer "readyok"
 //	quit
 //
@@ -40,6 +46,7 @@ import (
 	"github.com/domino14/macondo/cgp"
 	"github.com/domino14/macondo/config"
 	"github.com/domino14/macondo/game"
+	"github.com/domino14/macondo/gcgio"
 	pb "github.com/domino14/macondo/gen/api/proto/macondo"
 	"github.com/domino14/macondo/move"
 )
@@ -88,7 +95,7 @@ func main() {
 		out.WriteString(s + "\n")
 		out.Flush()
 	}
-	pos := ""
+	pos, hist := "", ""
 	for in.Scan() {
 		line := strings.TrimSpace(in.Text())
 		switch {
@@ -96,6 +103,8 @@ func main() {
 			return
 		case line == "isready":
 			say("readyok")
+		case strings.HasPrefix(line, "history "):
+			hist = strings.TrimSpace(line[len("history "):])
 		case strings.HasPrefix(line, "position cgp "):
 			pos = strings.TrimSpace(line[len("position cgp "):])
 		case strings.HasPrefix(line, "go"):
@@ -106,7 +115,8 @@ func main() {
 				}
 			}
 			info := map[string]interface{}{}
-			mv := best(cfg, pos, lex, ms, threads, botType, plies, info)
+			mv := best(cfg, pos, hist, lex, ms, threads, botType, plies, info)
+			hist = ""
 			if b, err := json.Marshal(info); err == nil {
 				say("info " + string(b))
 			}
@@ -115,12 +125,12 @@ func main() {
 	}
 }
 
-func best(cfg *config.Config, pos, lex string, ms float64, threads int, botType pb.BotRequest_BotCode, plies int,
+func best(cfg *config.Config, pos, hist, lex string, ms float64, threads int, botType pb.BotRequest_BotCode, plies int,
 	info map[string]interface{}) string {
 	start := time.Now()
 	// The deadline covers everything from receiving "go", setup included.
 	left := time.Duration(ms*0.97)*time.Millisecond - time.Since(start)
-	if m := search(cfg, pos, lex, ms, threads, botType, plies, left, info); m != nil {
+	if m := search(cfg, pos, hist, lex, ms, threads, botType, plies, left, info); m != nil {
 		return notation(m)
 	}
 	info["retry"] = true
@@ -132,7 +142,7 @@ func best(cfg *config.Config, pos, lex string, ms float64, threads int, botType 
 	if retry < time.Second {
 		retry = time.Second
 	}
-	if m := search(cfg, pos, lex, ms, threads, botType, plies, retry, info); m != nil {
+	if m := search(cfg, pos, hist, lex, ms, threads, botType, plies, retry, info); m != nil {
 		return notation(m)
 	}
 	info["fallback"] = "static"
@@ -154,7 +164,7 @@ func best(cfg *config.Config, pos, lex string, ms float64, threads int, botType 
 
 // search runs the bot on the position with the given budget.  It returns nil
 // when the bot fails or panics.
-func search(cfg *config.Config, pos, lex string, ms float64, threads int, botType pb.BotRequest_BotCode, plies int,
+func search(cfg *config.Config, pos, hist, lex string, ms float64, threads int, botType pb.BotRequest_BotCode, plies int,
 	budget time.Duration, info map[string]interface{}) (m *move.Move) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -175,7 +185,17 @@ func search(cfg *config.Config, pos, lex string, ms float64, threads int, botTyp
 		infer = 1
 	}
 	conf := &aibot.BotConfig{Config: *cfg, MinSimPlies: plies, SimThreads: threads, InferenceTimeSecs: infer}
-	tp, err := aibot.NewBotTurnPlayerFromGame(g.Game, conf, botType)
+	gm := g.Game
+	info["game"] = "cgp"
+	if hist != "" {
+		if hg, why := fromHistory(cfg, hist, lex, g.Game); hg != nil {
+			gm = hg
+			info["game"] = "history"
+		} else {
+			info["game"] = "cgp (history not used: " + why + ")"
+		}
+	}
+	tp, err := aibot.NewBotTurnPlayerFromGame(gm, conf, botType)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "macondo_bot: bot:", err)
 		return nil
@@ -218,4 +238,44 @@ func notation(m *move.Move) string {
 	default:
 		return "pass"
 	}
+}
+
+// fromHistory rebuilds the game from the mover's GCG, the way Macondo's bot worker
+// (bot/bot.go) rebuilds a game from its history, and checks that it arrives at the
+// position of the CGP: same board, scores and rack for the player on turn.
+func fromHistory(cfg *config.Config, hist, lex string, ref *game.Game) (g *game.Game, why string) {
+	defer func() {
+		if r := recover(); r != nil {
+			g, why = nil, fmt.Sprint("panic: ", r)
+		}
+	}()
+	h, err := gcgio.ParseGCGFromReader(cfg, strings.NewReader(strings.ReplaceAll(hist, " | ", "\n")))
+	if err != nil {
+		return nil, "parse: " + err.Error()
+	}
+	if h.Lexicon == "" {
+		h.Lexicon = lex
+	}
+	layout, ld, variant := game.HistoryToVariant(h)
+	rules, err := game.NewBasicGameRules(cfg, h.Lexicon, layout, ld, game.CrossScoreAndSet, variant)
+	if err != nil {
+		return nil, "rules: " + err.Error()
+	}
+	ng, err := game.NewFromHistory(h, rules, 0)
+	if err != nil {
+		return nil, "history: " + err.Error()
+	}
+	if err := ng.PlayToTurn(len(h.Events)); err != nil {
+		return nil, "replay: " + err.Error()
+	}
+	me, rme := ng.PlayerOnTurn(), ref.PlayerOnTurn()
+	switch {
+	case ng.Board().ToFEN(ng.Alphabet()) != ref.Board().ToFEN(ref.Alphabet()):
+		return nil, "board differs"
+	case ng.PointsFor(me) != ref.PointsFor(rme) || ng.PointsFor(1-me) != ref.PointsFor(1-rme):
+		return nil, "scores differ"
+	case ng.RackFor(me).String() != ref.RackFor(rme).String():
+		return nil, "rack differs"
+	}
+	return ng, ""
 }
