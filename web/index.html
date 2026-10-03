@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tilefish</title>
+<meta name="description" content="Play Scrabble against Tilefish, a championship-strength engine, in your browser. Collins, NWL or ENABLE. Free and open source.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Fraunces:opsz,wght@9..144,500;9..144,650&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='5' fill='%23ecd096' stroke='%23b8955a' stroke-width='2'/%3E%3Ctext x='15' y='23' font-family='Arial' font-weight='800' font-size='18' text-anchor='middle' fill='%232a2116'%3ET%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <h1 class="wordmark">Tilefish</h1>
+    <div class="mini" id="mini" hidden></div>
+    <nav class="top-actions">
+      <button class="link" id="btn-new" hidden>New game</button>
+      <a class="link" href="https://github.com/Leo-Y-Zhang/ScrabbleEngine">Source</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <section class="table" aria-label="Board">
+      <div class="board-wrap">
+        <div class="board" id="board" role="grid" aria-label="Scrabble board"></div>
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      </div>
+      <div class="rack-row">
+        <div class="rack" id="rack" aria-label="Your rack"></div>
+      </div>
+      <div class="controls" id="controls">
+        <button class="ctl" id="btn-shuffle" title="Shuffle your rack (Space)">Shuffle</button>
+        <button class="ctl" id="btn-recall" title="Take your tiles back (Esc)">Recall</button>
+        <button class="ctl" id="btn-exchange" title="Swap tiles with the bag">Exchange</button>
+        <button class="ctl" id="btn-pass" title="Pass your turn">Pass</button>
+        <button class="ctl" id="btn-hint" title="What would Tilefish play?">Hint</button>
+        <button class="ctl primary" id="btn-play" title="Play your word (Enter)" disabled>Play</button>
+      </div>
+      <div class="status" id="status" aria-live="polite"></div>
+    </section>
+
+    <aside class="side">
+      <div class="scores">
+        <div class="player you" id="score-you"><span class="who">You</span><span class="pts" id="pts-you">0</span></div>
+        <div class="player bot" id="score-bot"><span class="who">Tilefish</span><span class="pts" id="pts-bot">0</span></div>
+      </div>
+      <div class="chance" id="chance" hidden>
+        <div class="chance-bar"><div class="chance-fill" id="chance-fill"></div></div>
+        <div class="chance-label" id="chance-label"></div>
+      </div>
+      <div class="hints" id="hints" hidden></div>
+      <div class="panel">
+        <div class="panel-head"><span>Moves</span><span class="bag" id="bag"></span></div>
+        <ol class="log" id="log"></ol>
+      </div>
+      <details class="panel unseen-panel">
+        <summary class="panel-head"><span>Unseen tiles</span><span id="unseen-count"></span></summary>
+        <div class="unseen" id="unseen"></div>
+      </details>
+      <p class="keys">Click a square and type, or drag tiles. Click twice to go down. <kbd>Enter</kbd> plays, <kbd>Esc</kbd> recalls, <kbd>Space</kbd> shuffles. Lower case or <kbd>?</kbd> tiles are blanks.</p>
+    </aside>
+  </main>
+
+  <footer class="foot">
+    Tilefish is free software (GPL-3.0). Collins Scrabble Words &copy; HarperCollins and NWL &copy; NASPA are loaded from the
+    <a href="https://github.com/jvc56/MAGPIE-DATA">MAGPIE project's public data</a>; ENABLE is public domain.
+    Scrabble is a trademark of Hasbro in the USA and Canada and of Mattel elsewhere.
+  </footer>
+</div>
+
+<div class="sheet" id="start">
+  <div class="card">
+    <h2 class="card-title">Tilefish</h2>
+    <p class="card-sub">A championship-strength Scrabble engine. It plays the same lists and rules as tournament players.</p>
+    <div class="field">
+      <div class="label">Word list</div>
+      <div class="seg" data-name="lexicon">
+        <button data-v="CSW24" class="on">Collins 2024</button>
+        <button data-v="NWL23">NWL 2023</button>
+        <button data-v="ENABLE">ENABLE</button>
+      </div>
+      <div class="hint-text" id="lex-note"></div>
+    </div>
+    <div class="field">
+      <div class="label">Strength</div>
+      <div class="seg" data-name="level">
+        <button data-v="casual">Casual</button>
+        <button data-v="strong" class="on">Strong</button>
+        <button data-v="champion">Champion</button>
+      </div>
+      <div class="hint-text" id="level-note"></div>
+    </div>
+    <div class="field">
+      <div class="label">First move</div>
+      <div class="seg" data-name="first">
+        <button data-v="first" class="on">You</button>
+        <button data-v="second">Tilefish</button>
+        <button data-v="random">Random</button>
+      </div>
+    </div>
+    <button class="start" id="btn-start">Start game</button>
+    <div class="loading" id="loading" hidden>
+      <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
+      <div class="loading-text" id="loading-text"></div>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="blank-picker" hidden>
+  <div class="card small">
+    <div class="label">Blank tile: which letter?</div>
+    <div class="letters" id="blank-letters"></div>
+  </div>
+</div>
+
+<div class="sheet" id="end" hidden>
+  <div class="card">
+    <h2 class="card-title" id="end-title"></h2>
+    <p class="final" id="end-score"></p>
+    <p class="card-sub" id="end-detail"></p>
+    <button class="start" id="btn-again">Play again</button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

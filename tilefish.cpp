@@ -4753,9 +4753,12 @@ class PreEndgameSolver {
           J.depth = depth;
         }
       };
-      std::vector<std::thread> th;
-      for (int i = 0; i < std::max(1, threads); ++i) th.emplace_back(worker);
-      for (auto& x : th) x.join();
+      if (threads <= 1) worker();
+      else {
+        std::vector<std::thread> th;
+        for (int i = 0; i < threads; ++i) th.emplace_back(worker);
+        for (auto& x : th) x.join();
+      }
     };
     auto complete = [&](int c, int depth) {
       for (int t = 0; t < nt; ++t)
@@ -6229,6 +6232,7 @@ struct App {
                           (json: one machine-readable line, for GUIs and broadcasts)
     position cgp CGP      engine protocol: set a position ...
     go movetime MS        ... and answer "bestmove <move>" (see tools/referee.py)
+    ui new|move|bot|hint|state   a game for a graphical front-end, answered in JSON (web/)
     auto [N]              let the engine play the next N moves (either side)
     unseen                tiles you cannot see (bag + opponent rack)
     history               moves so far
@@ -6438,6 +6442,104 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
     if (!validate_move(lex, game.board, m, err, &words)) return false;
     m.score = (i16)score_move(game.board, m);
     return true;
+  }
+
+  // ---- ui: a game against the engine driven by a graphical front-end (web/) ----
+  // Every answer is one line of JSON.  The state is the human's view of the game: the
+  // engine's rack appears only once the game is over.
+  int ui_human = 0;
+  double ui_win = -1;  // the human's winning chance after the engine's last move
+
+  std::string ui_state() {
+    const int h = ui_human;
+    std::ostringstream o;
+    o << "{\"board\":[";
+    for (int r = 0; r < N; ++r) {
+      std::string row;
+      for (int c = 0; c < N; ++c) row += game.board.at(r, c) ? tile_char(game.board.at(r, c)) : '.';
+      o << (r ? "," : "") << json_str(row);
+    }
+    o << "],\"rack\":" << json_str(game.rack[h].str()) << ",\"you\":" << game.score[h] << ",\"bot\":" << game.score[1 - h]
+      << ",\"bag\":" << game.bag.n << ",\"yourTurn\":" << (!game.over && game.turn == h ? "true" : "false")
+      << ",\"over\":" << (game.over ? "true" : "false")
+      << ",\"unseen\":" << json_str(unseen_from(game.board, game.rack[h]).str()) << ",\"lexicon\":" << json_str(lex.name);
+    if (game.over)
+      o << ",\"botRack\":" << json_str(game.rack[1 - h].str()) << ",\"endYou\":" << game.end_bonus[h]
+        << ",\"endBot\":" << game.end_bonus[1 - h];
+    if (ui_win >= 0) o << ",\"win\":" << json_num(ui_win, 4);
+    o << ",\"history\":[";
+    Board b;
+    for (size_t i = 0; i < game.events.size(); ++i) {
+      const auto& e = game.events[i];
+      const bool mine = e.player == h;
+      // The opponent's exchanged tiles are hidden, as at the board.
+      const std::string text = e.move.type == MT_EXCHANGE && !mine ? fmt("exch %d", e.move.used().n) : move_str(b, e.move);
+      o << (i ? "," : "") << "{\"who\":" << (mine ? "\"you\"" : "\"bot\"") << ",\"move\":" << json_str(text)
+        << ",\"score\":" << (e.move.type == MT_PLACE ? e.move.score : 0) << ",\"total\":" << e.score_after
+        << ",\"type\":" << json_str(e.move.type == MT_PLACE ? "play" : e.move.type == MT_EXCHANGE ? "exchange" : "pass") << "}";
+      if (e.move.type == MT_PLACE) b.place(lex, e.move);
+    }
+    o << "]}";
+    return o.str();
+  }
+
+  //   ui new [first|second] [SEED]   new game (the human moves first or second)
+  //   ui state                       the position as the human sees it
+  //   ui check MOVE                  is MOVE legal for the human, and what it scores
+  //   ui move MOVE                   the human plays MOVE
+  //   ui bot [SPEC]                  the engine plays its move (SPEC as for `player`)
+  //   ui hint [SECS]                 the engine's analysis of the human's position
+  void cmd_ui(const std::vector<std::string>& args, const std::string& rest) {
+    const std::string sub = args.empty() ? "state" : to_lower(args[0]);
+    auto fail = [](const std::string& e) { std::cout << "{\"ok\":false,\"error\":" << json_str(e) << "}" << std::endl; };
+    if (!lex.loaded()) return fail("no word list loaded");
+    if (sub == "new") {
+      bool first = (rng.next() & 1) != 0;
+      for (size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "first") first = true;
+        else if (args[i] == "second") first = false;
+        else rng.seed_with(std::strtoull(args[i].c_str(), nullptr, 10));
+      }
+      game.reset(rng);
+      ui_human = first ? 0 : 1;
+      ui_win = -1;
+    } else if (sub == "move" || sub == "check") {
+      if (game.over) return fail("the game is over");
+      if (game.turn != ui_human) return fail("it is not your turn");
+      Move m;
+      std::string err;
+      if (!human_move_ok(trim(rest.substr(args[0].size())), m, err)) return fail(err);
+      if (sub == "check") {
+        std::cout << "{\"ok\":true,\"score\":" << (m.type == MT_PLACE ? m.score : 0) << "}" << std::endl;
+        return;
+      }
+      game.apply(lex, m, rng);
+    } else if (sub == "bot") {
+      if (game.over) return fail("the game is over");
+      if (game.turn == ui_human) return fail("it is your turn");
+      EngineConfig ec = cfg;
+      std::string err;
+      if (args.size() > 1 && !EngineConfig::parse(args[1], ec, err)) return fail(err);
+      ec.threads = ec.sim.threads = threads;
+      const Position P = Position::from_game(game);
+      const Decision D = eng().choose(P, ec, false);
+      for (const auto& r : D.rows)
+        if (r.move.same_as(D.move) && std::isfinite(r.win)) ui_win = 1.0 - r.win;
+      game.apply(lex, D.move, rng);
+    } else if (sub == "hint") {
+      if (game.over || game.turn != ui_human) return fail("a hint needs your turn");
+      const double secs = args.size() > 1 ? std::max(0.1, std::atof(args[1].c_str())) : 2.0;
+      EngineConfig c = cfg;
+      c.threads = c.sim.threads = threads;
+      c.sim.time_limit = c.endgame_time = c.peg_time = secs;
+      const Position P = Position::from_game(game);
+      const Decision D = eng().choose(P, c, false);
+      std::cout << "{\"ok\":true,\"hint\":" << decision_json(P, D) << "}" << std::endl;
+      return;
+    } else if (sub != "state") {
+      return fail("unknown ui command: " + sub);
+    }
+    std::cout << "{\"ok\":true,\"state\":" << ui_state() << "}" << std::endl;
   }
 
   // Makes the tiles in `want` the rack of the player to move (analysis helper).
@@ -6948,6 +7050,8 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
                          move_str(b, e.move).c_str(), e.score_after);
         if (e.move.type == MT_PLACE) b.place(lex, e.move);
       }
+    } else if (cmd == "ui") {
+      cmd_ui(args, rest);
     } else if (cmd == "play") {
       cmd_play(args);
     } else if (cmd == "autoplay" || cmd == "match") {
@@ -7553,6 +7657,27 @@ inline void App::cmd_bench() {
 // §21  main
 // =====================================================================================
 
+#ifdef __EMSCRIPTEN__
+// Browser build (web/build.sh): the page's worker calls tf_run with ';'-separated
+// commands and receives everything they printed.  One thread, no prompt.
+extern "C" const char* tf_run(const char* commands) {
+  static tf::App* app = nullptr;
+  static std::string out;
+  std::ostringstream sink;
+  std::streambuf* saved = std::cout.rdbuf(sink.rdbuf());
+  if (!app) {
+    app = new tf::App();
+    app->threads = app->cfg.threads = 1;
+    app->quiet = true;
+  }
+  std::istringstream is(commands);
+  std::string item;
+  while (std::getline(is, item, ';')) app->execute(item);
+  std::cout.rdbuf(saved);
+  out = sink.str();
+  return out.c_str();
+}
+#else
 int main(int argc, char** argv) {
   using namespace tf;
   App app;
@@ -7636,3 +7761,4 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
+#endif

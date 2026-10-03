@@ -22,6 +22,15 @@ game. What that does and does not prove is set out in
 
 ## Quick start
 
+**In your browser:** open **[leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**.
+Nothing to install. Choose a word list (Collins 2024, NWL 2023 or ENABLE) and a strength,
+then click a square and type your word, or drag tiles onto the board. Enter plays it.
+Hint shows Tilefish's top moves with their winning chances, and the side panel tracks the
+unseen tiles. The browser version thinks on one core; the download below uses every core
+and has the analysis tools (game review, positions, endgames).
+
+**On your computer:**
+
 1. **Download** the zip for your computer from the
    [latest release](https://github.com/Leo-Y-Zhang/ScrabbleEngine/releases/latest)
    (Windows, macOS or Linux) and unzip it.
@@ -50,6 +59,7 @@ Building from source (below) gives one tuned to your processor, which is somewha
 | `build.sh`, `build.bat` | One-line builds for Linux/macOS and Windows. |
 | `get-lexicon.sh`, `get-lexicon.bat`, `get-lexicon.ps1` | Download CSW24 (or NWL23) and its leave values, checked against known checksums. |
 | `LICENSE` | The GNU General Public License, version 3. |
+| `web/` | The browser version: the page, the worker that runs the engine (compiled to WebAssembly), `build.sh` and a test that plays whole games through it. |
 | `tools/referee.py` | Neutral referee for engine-vs-engine matches (its own rules code, paired games, parallel play). |
 | `tools/analyze.py` | Statistics for the referee's raw logs: wins, draws, losses, Elo and spread with intervals over deal pairs, and match lengths. |
 | `tools/magpie_bot.c`, `tools/build_magpie_bot.sh` | Lets MAGPIE play through the same protocol, for head-to-head matches. |
@@ -82,6 +92,12 @@ or just run `build.sh` / `build.bat`.
 Then run `./tilefish` (or `tilefish.exe`). It finds its word list and trained data in
 the current folder or in its own. Type `help` to list the commands, and run
 `sh get-lexicon.sh` (or `get-lexicon.bat`) once for the championship word list.
+
+**Browser version**: `sh web/build.sh` (needs [Emscripten](https://emscripten.org)) builds
+`web/dist`; `python3 -m http.server -d web/dist` serves it at http://localhost:8000.
+`node web/smoke.js` plays whole games through the build. The page drives the engine with
+the `ui` commands (`ui new`, `ui move 8D WORD`, `ui bot`, `ui hint`, `ui state`), which
+answer in JSON, so any other front-end can use them too.
 
 ## Play against it
 
