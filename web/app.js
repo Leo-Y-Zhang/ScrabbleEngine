@@ -1100,26 +1100,43 @@ function startDrag(e, from) {
   document.addEventListener("pointermove", moveDrag);
   document.addEventListener("pointerup", endDrag, { once: true });
 }
+// Where a dragged tile lands: the square under it, or the nearest free square next to it
+// when that one is taken (so a drop a little off target still works).
+function dropTarget(sq) {
+  if (sq < 0) return -1;
+  if (!occupied(sq)) return sq;
+  const r = Math.floor(sq / N), c = sq % N;
+  for (const [dr, dc] of [[0, 1], [1, 0], [0, -1], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const rr = r + dr, cc = c + dc;
+    if (rr >= 0 && rr < N && cc >= 0 && cc < N && !occupied(rr * N + cc)) return rr * N + cc;
+  }
+  return -1;
+}
 function moveDrag(e) {
   if (!drag) return;
   if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6) return;
   if (!drag.moved) {
     drag.moved = true;
     const src = drag.from.slot != null ? rackEl.querySelector('[data-slot="' + drag.from.slot + '"]') : squares[drag.from.sq].firstChild;
-    const box = src.getBoundingClientRect();
+    drag.size = src.getBoundingClientRect().width;
+    // On a touch screen the tile rides above the finger, so the finger does not hide it.
+    drag.lift = e.pointerType === "touch" ? drag.size * 0.9 : 0;
     drag.ghost = src.cloneNode(true);
     drag.ghost.classList.add("ghost");
     drag.ghost.classList.remove("sel", "pending");
-    drag.ghost.style.width = box.width + "px";
-    drag.ghost.style.height = box.height + "px";
     document.body.appendChild(drag.ghost);
     src.style.visibility = "hidden";
   }
-  drag.ghost.style.left = e.clientX + "px";
-  drag.ghost.style.top = e.clientY + "px";
+  const x = e.clientX, y = e.clientY - drag.lift;
+  const sq = squareAt(x, y);
+  // Over the board the tile takes the size of a square, so you see exactly where it goes.
+  const size = sq >= 0 ? squares[0].getBoundingClientRect().width : drag.size;
+  drag.ghost.style.width = drag.ghost.style.height = size + "px";
+  drag.ghost.style.left = x + "px";
+  drag.ghost.style.top = y + "px";
   squares.forEach((d) => d.classList.remove("drop"));
-  const sq = squareAt(e.clientX, e.clientY);
-  if (sq >= 0 && !occupied(sq)) squares[sq].classList.add("drop");
+  drag.target = dropTarget(sq);
+  if (drag.target >= 0) squares[drag.target].classList.add("drop");
 }
 async function endDrag(e) {
   document.removeEventListener("pointermove", moveDrag);
@@ -1129,7 +1146,7 @@ async function endDrag(e) {
   squares.forEach((q) => q.classList.remove("drop"));
   if (d.ghost) d.ghost.remove();
   if (!d.moved) return tap(d.from);
-  const sq = squareAt(e.clientX, e.clientY), slotTo = rackSlotAt(e.clientX, e.clientY);
+  const sq = d.target != null ? d.target : -1, slotTo = rackSlotAt(e.clientX, e.clientY);
   if (d.from.slot != null) {
     if (sq >= 0 && !occupied(sq)) await place(d.from.slot, sq);
     else if (slotTo >= -1) reorder(d.from.slot, slotTo);
@@ -1159,6 +1176,7 @@ async function tap(from) {
     else if (cursor && !occupied(cursor.sq) && humanTurn() && !busy) { if (await place(i, cursor.sq)) { advanceCursor(); checkPending(); } }
     else selected = selected === i ? -1 : i;
     render();
+    if (selected >= 0 && humanTurn()) setStatus("Now click a square for " + (rack[i].ch === "?" ? "the blank" : rack[i].ch) + ".");
     return;
   }
   unplace(from.sq);
