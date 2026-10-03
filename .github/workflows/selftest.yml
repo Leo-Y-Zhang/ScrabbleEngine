@@ -80,6 +80,8 @@ jobs:
           $code = $LASTEXITCODE
           $out
           if ($code -eq 0 -or $out -notmatch "Get-FileHash" -or $out -notmatch "CommandNotFoundException") { throw "v2.2's failure was not reproduced (exit $code)" }
+          "reproduced: v2.2's script stopped at Get-FileHash (exit $code), as on the owner's laptop"
+          $global:LASTEXITCODE = 0  # the failure was the expected outcome of this step
       - name: "The fix on its own: today's get-lexicon.bat runs v2.2's script (which needs Get-FileHash) to completion"
         run: |
           Copy-Item get-lexicon.bat v22/get-lexicon.bat -Force
