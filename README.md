@@ -7,7 +7,7 @@ Monte-Carlo simulation, endgame and pre-endgame solvers, opponent-rack inference
 self-play training, engine-vs-engine matches, game-record import/export and a terminal
 UI. It uses only the C++ standard library.
 
-**Tilefish 2.1** plays tournament lexicons (CSW24, NWL23) straight from `.kwg` files.
+**Tilefish 2.2** plays tournament lexicons (CSW24, NWL23) straight from `.kwg` files.
 Its simulation is about 3.5 times as fast as 2.0's and 8 times as fast as 1.0's, a
 little faster than MAGPIE's on the same positions, and every shortcut is checked against
 brute force. Under a neutral referee it has played both of the Woogles team's engines:
@@ -23,11 +23,22 @@ game. What that does and does not prove is set out in
 ## Quick start
 
 **In your browser:** open **[leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**.
-Nothing to install. Choose a word list (Collins 2024, NWL 2023 or ENABLE) and a strength,
-then click a square and type your word, or drag tiles onto the board. Enter plays it.
-Hint shows Tilefish's top moves with their winning chances, and the side panel tracks the
-unseen tiles. The browser version thinks on one core; the download below uses every core
-and has the analysis tools (game review, positions, endgames).
+Nothing to install. Choose a mode, a word list (Collins 2024, NWL 2023 or ENABLE) and a clock:
+
+- **Play** against Tilefish (Casual, Strong or Champion) with no help.
+- **Practice** with hints (Tilefish's best moves, with what each keeps and an estimated winning
+  chance), take-backs and a pause button. The game is marked as assisted if you use them.
+- **Two players** at one screen, with the rack hidden between turns.
+- **Analyse** a pasted position (CGP) or a game record (`.gcg`, or a Tilefish game file).
+
+Click a square and type, drag tiles, or tap a tile and then a square; Enter plays. Clocks are
+total time per player: 5, 10, 15 or 25 minutes or your own figure, with the NASPA overtime
+penalty (rules of 1 December 2016) or loss on time. After a game, review it move by move:
+Tilefish judges each move with only what its player could see, shows the alternatives, and
+lets you try a position again with the same tiles to come. Games save themselves in the
+browser and resume after a reload, and they export as GCG or as a Tilefish file. The
+browser version thinks on one core; the download below uses every core and has the full
+command-line analysis. Which word lists are used, and on what terms: [LEXICONS.md](LEXICONS.md).
 
 **On your computer:**
 

@@ -4,103 +4,184 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tilefish</title>
-<meta name="description" content="Play Scrabble against Tilefish, a championship-strength engine, in your browser. Collins, NWL or ENABLE. Free and open source.">
+<meta name="description" content="Play, practise and analyse Scrabble against Tilefish, a strong open-source engine, in your browser. Collins, NWL or ENABLE.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Fraunces:opsz,wght@9..144,500;9..144,650&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='5' fill='%23ecd096' stroke='%23b8955a' stroke-width='2'/%3E%3Ctext x='15' y='23' font-family='Arial' font-weight='800' font-size='18' text-anchor='middle' fill='%232a2116'%3ET%3C/text%3E%3C/svg%3E">
+<script>try{var t=localStorage.getItem("tilefish.theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;}catch(e){}</script>
 </head>
 <body>
 <div class="app" id="app">
   <header class="top">
     <h1 class="wordmark">Tilefish</h1>
     <div class="mini" id="mini" hidden></div>
-    <nav class="top-actions">
-      <button class="link" id="btn-new" hidden>New game</button>
-      <a class="link" href="https://github.com/Leo-Y-Zhang/ScrabbleEngine">Source</a>
+    <nav class="top-actions" aria-label="Main">
+      <button class="link" id="btn-new">New game</button>
+      <button class="link" id="btn-games">Games</button>
+      <button class="link" id="btn-focus" aria-pressed="false">Focus</button>
+      <button class="link" id="btn-help" aria-label="Help and shortcuts">Help</button>
     </nav>
   </header>
 
+  <div class="banner" id="banner" role="alert" hidden><span id="banner-text"></span> <button class="link strong" id="banner-retry">Retry</button></div>
+
   <main class="layout">
     <section class="table" aria-label="Board">
-      <div class="board-wrap">
-        <div class="board" id="board" role="grid" aria-label="Scrabble board"></div>
-        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      <div class="board-frame">
+        <div class="coords-top" aria-hidden="true" id="coords-top"></div>
+        <div class="coords-left" aria-hidden="true" id="coords-left"></div>
+        <div class="board-wrap">
+          <div class="board" id="board" role="grid" aria-label="Scrabble board"></div>
+          <div class="toast" id="toast" role="status" aria-live="polite"></div>
+          <div class="review-badge" id="review-badge" hidden></div>
+        </div>
       </div>
-      <div class="rack-row">
-        <div class="rack" id="rack" aria-label="Your rack"></div>
-      </div>
+      <div class="rack" id="rack" aria-label="Your rack"></div>
+      <div class="status" id="status" aria-live="polite"></div>
       <div class="controls" id="controls">
         <button class="ctl" id="btn-shuffle" title="Shuffle your rack (Space)">Shuffle</button>
-        <button class="ctl" id="btn-recall" title="Take your tiles back (Esc)">Recall</button>
         <button class="ctl" id="btn-exchange" title="Swap tiles with the bag">Exchange</button>
         <button class="ctl" id="btn-pass" title="Pass your turn">Pass</button>
-        <button class="ctl" id="btn-hint" title="What would Tilefish play?">Hint</button>
+        <span class="ctl-gap"></span>
+        <button class="ctl" id="btn-recall" title="Take this turn's tiles back to the rack (Esc)">Recall</button>
+        <button class="ctl" id="btn-hint" title="Tilefish's best moves for your rack">Hint</button>
         <button class="ctl primary" id="btn-play" title="Play your word (Enter)" disabled>Play</button>
       </div>
-      <div class="status" id="status" aria-live="polite"></div>
+      <div class="secondary" id="secondary">
+        <button class="link" id="btn-takeback">Take back</button>
+        <button class="link" id="btn-pause">Pause</button>
+        <button class="link" id="btn-resign">Resign</button>
+      </div>
+      <div class="review-nav" id="review-nav" hidden>
+        <button class="ctl" id="rv-first" aria-label="Start of the game">&laquo;</button>
+        <button class="ctl" id="rv-prev" aria-label="Previous move">&lsaquo;</button>
+        <span class="rv-pos" id="rv-pos"></span>
+        <button class="ctl" id="rv-next" aria-label="Next move">&rsaquo;</button>
+        <button class="ctl" id="rv-last" aria-label="End of the game">&raquo;</button>
+      </div>
     </section>
 
-    <aside class="side">
+    <aside class="side" id="side">
       <div class="scores">
-        <div class="player you" id="score-you"><span class="who">You</span><span class="pts" id="pts-you">0</span></div>
-        <div class="player bot" id="score-bot"><span class="who">Tilefish</span><span class="pts" id="pts-bot">0</span></div>
+        <div class="player p0" id="card-0"><span class="who" id="name-0">You</span><span class="pts" id="pts-0">0</span><span class="clock" id="clock-0" hidden></span></div>
+        <div class="player p1" id="card-1"><span class="who" id="name-1">Tilefish</span><span class="pts" id="pts-1">0</span><span class="clock" id="clock-1" hidden></span></div>
       </div>
+      <div class="config" id="config"></div>
       <div class="chance" id="chance" hidden>
         <div class="chance-bar"><div class="chance-fill" id="chance-fill"></div></div>
         <div class="chance-label" id="chance-label"></div>
       </div>
-      <div class="hints" id="hints" hidden></div>
+      <div class="panel hints" id="hints" hidden></div>
+      <div class="panel review" id="review" hidden></div>
       <div class="panel">
-        <div class="panel-head"><span>Moves</span><span class="bag" id="bag"></span></div>
+        <div class="panel-head"><span>Moves</span><span class="dim" id="bag"></span></div>
         <ol class="log" id="log"></ol>
       </div>
       <details class="panel unseen-panel">
-        <summary class="panel-head"><span>Unseen tiles</span><span id="unseen-count"></span></summary>
+        <summary class="panel-head"><span>Unseen tiles</span><span class="dim" id="unseen-count"></span></summary>
         <div class="unseen" id="unseen"></div>
       </details>
-      <p class="keys">Click a square and type, or drag tiles. Click twice to go down. <kbd>Enter</kbd> plays, <kbd>Esc</kbd> recalls, <kbd>Space</kbd> shuffles. Lower case or <kbd>?</kbd> tiles are blanks.</p>
+      <div class="exports" id="exports"></div>
     </aside>
   </main>
 
   <footer class="foot">
-    Tilefish is free software (GPL-3.0). Collins Scrabble Words &copy; HarperCollins and NWL &copy; NASPA are loaded from the
-    <a href="https://github.com/jvc56/MAGPIE-DATA">MAGPIE project's public data</a>; ENABLE is public domain.
+    Tilefish is free software (GPL-3.0), <a href="https://github.com/Leo-Y-Zhang/ScrabbleEngine">source on GitHub</a>.
+    Collins Scrabble Words &copy; HarperCollins and NWL &copy; NASPA are not hosted here: your browser downloads them from the
+    <a href="https://github.com/jvc56/MAGPIE-DATA">MAGPIE project's public data</a>
+    (<a href="https://github.com/Leo-Y-Zhang/ScrabbleEngine/blob/main/LEXICONS.md">what that means</a>). ENABLE is public domain.
     Scrabble is a trademark of Hasbro in the USA and Canada and of Mattel elsewhere.
   </footer>
 </div>
 
-<div class="sheet" id="start">
+<div class="sheet" id="start" role="dialog" aria-modal="true" aria-labelledby="start-title">
   <div class="card">
-    <h2 class="card-title">Tilefish</h2>
-    <p class="card-sub">A championship-strength Scrabble engine. It plays the same lists and rules as tournament players.</p>
+    <h2 class="card-title" id="start-title">Tilefish</h2>
+    <p class="card-sub">Play, practise and analyse Scrabble against a strong engine.</p>
+    <div class="resume" id="resume" hidden>
+      <div><b>Unfinished game</b> <span class="dim" id="resume-text"></span></div>
+      <button class="ctl primary" id="btn-resume">Resume</button>
+    </div>
     <div class="field">
-      <div class="label">Word list</div>
-      <div class="seg" data-name="lexicon">
-        <button data-v="CSW24" class="on">Collins 2024</button>
+      <div class="label" id="lbl-mode">Mode</div>
+      <div class="seg" data-name="mode" role="radiogroup" aria-labelledby="lbl-mode">
+        <button data-v="play">Play</button>
+        <button data-v="practice">Practice</button>
+        <button data-v="duo">Two players</button>
+        <button data-v="analysis">Analyse</button>
+      </div>
+      <div class="hint-text" id="mode-note"></div>
+    </div>
+    <div class="field" data-for="play practice">
+      <div class="label" id="lbl-level">Tilefish's strength</div>
+      <div class="seg" data-name="level" role="radiogroup" aria-labelledby="lbl-level">
+        <button data-v="casual">Casual</button>
+        <button data-v="strong">Strong</button>
+        <button data-v="champion">Champion</button>
+      </div>
+      <div class="hint-text" id="level-note"></div>
+    </div>
+    <div class="field" data-for="play practice duo analysis">
+      <div class="label" id="lbl-lex">Word list</div>
+      <div class="seg" data-name="lexicon" role="radiogroup" aria-labelledby="lbl-lex">
+        <button data-v="CSW24">Collins 2024</button>
         <button data-v="NWL23">NWL 2023</button>
         <button data-v="ENABLE">ENABLE</button>
       </div>
       <div class="hint-text" id="lex-note"></div>
     </div>
-    <div class="field">
-      <div class="label">Strength</div>
-      <div class="seg" data-name="level">
-        <button data-v="casual">Casual</button>
-        <button data-v="strong" class="on">Strong</button>
-        <button data-v="champion">Champion</button>
+    <div class="field" data-for="play practice duo">
+      <div class="label" id="lbl-clock">Game clock (total time for each player)</div>
+      <div class="seg" data-name="clock" role="radiogroup" aria-labelledby="lbl-clock">
+        <button data-v="0">Untimed</button>
+        <button data-v="5">5</button>
+        <button data-v="10">10</button>
+        <button data-v="15">15</button>
+        <button data-v="25">25</button>
+        <button data-v="custom">Custom</button>
       </div>
-      <div class="hint-text" id="level-note"></div>
+      <div class="custom-row" id="custom-row" hidden><label>Minutes <input type="number" id="custom-min" min="1" max="120" value="20"></label></div>
     </div>
-    <div class="field">
-      <div class="label">First move</div>
-      <div class="seg" data-name="first">
-        <button data-v="first" class="on">You</button>
-        <button data-v="second">Tilefish</button>
-        <button data-v="random">Random</button>
+    <details class="advanced">
+      <summary>Advanced</summary>
+      <div class="field" data-for="play practice">
+        <div class="label" id="lbl-first">First move</div>
+        <div class="seg" data-name="first" role="radiogroup" aria-labelledby="lbl-first">
+          <button data-v="first">You</button>
+          <button data-v="second">Tilefish</button>
+          <button data-v="alternate">Alternate</button>
+        </div>
       </div>
+      <div class="field" data-for="play practice duo">
+        <div class="label" id="lbl-ot">When a clock runs out</div>
+        <div class="seg" data-name="overtime" role="radiogroup" aria-labelledby="lbl-ot">
+          <button data-v="naspa">Overtime penalty</button>
+          <button data-v="flag">Lose on time</button>
+        </div>
+        <div class="hint-text" id="ot-note"></div>
+      </div>
+      <div class="field" data-for="play practice">
+        <div class="label"><label for="think">Tilefish's thinking limit per move (seconds, blank = the strength's own)</label></div>
+        <input type="number" id="think" min="0.5" max="60" step="0.5" placeholder="automatic">
+      </div>
+      <div class="field">
+        <div class="label" id="lbl-theme">Theme</div>
+        <div class="seg" data-name="theme" role="radiogroup" aria-labelledby="lbl-theme">
+          <button data-v="system">System</button>
+          <button data-v="light">Light</button>
+          <button data-v="dark">Dark</button>
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="sound"> Sounds for low time</label>
+    </details>
+    <div class="analysis-in" data-for="analysis">
+      <label class="label" for="cgp-in">Position (CGP), or open a game record</label>
+      <textarea id="cgp-in" rows="3" spellcheck="false" placeholder="15/15/15/15/15/15/15/5CAT7/15/15/15/15/15/15/15 AEINRST/ 5/0 0"></textarea>
+      <div class="row"><label class="ctl file">Open .gcg or Tilefish file<input type="file" id="file-in" accept=".gcg,.json,.txt"></label></div>
     </div>
+    <p class="summary" id="summary"></p>
     <button class="start" id="btn-start">Start game</button>
     <div class="loading" id="loading" hidden>
       <div class="loading-bar"><div class="loading-fill" id="loading-fill"></div></div>
@@ -109,19 +190,54 @@
   </div>
 </div>
 
-<div class="sheet" id="blank-picker" hidden>
+<div class="sheet" id="blank-picker" role="dialog" aria-modal="true" aria-label="Choose the blank's letter" hidden>
   <div class="card small">
-    <div class="label">Blank tile: which letter?</div>
+    <div class="label">Blank tile: which letter? (type it, or Esc)</div>
     <div class="letters" id="blank-letters"></div>
   </div>
 </div>
 
-<div class="sheet" id="end" hidden>
+<div class="sheet" id="handover" role="dialog" aria-modal="true" aria-labelledby="handover-title" hidden>
+  <div class="card small center">
+    <h2 class="card-title" id="handover-title"></h2>
+    <p class="card-sub" id="handover-sub"></p>
+    <button class="start" id="btn-handover">Show my rack</button>
+  </div>
+</div>
+
+<div class="sheet" id="end" role="dialog" aria-modal="true" aria-labelledby="end-title" hidden>
   <div class="card">
     <h2 class="card-title" id="end-title"></h2>
     <p class="final" id="end-score"></p>
     <p class="card-sub" id="end-detail"></p>
-    <button class="start" id="btn-again">Play again</button>
+    <div class="end-actions">
+      <button class="start" id="btn-review">Review the game</button>
+      <button class="ctl" id="btn-rematch">Rematch</button>
+      <button class="ctl" id="btn-end-new">New game</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="games" role="dialog" aria-modal="true" aria-labelledby="games-title" hidden>
+  <div class="card wide">
+    <div class="card-head"><h2 class="card-title" id="games-title">Games</h2><button class="link" id="btn-games-close">Close</button></div>
+    <p class="card-sub">Finished games are kept in this browser (the last 30).</p>
+    <ol class="games-list" id="games-list"></ol>
+  </div>
+</div>
+
+<div class="sheet" id="help" role="dialog" aria-modal="true" aria-labelledby="help-title" hidden>
+  <div class="card wide">
+    <div class="card-head"><h2 class="card-title" id="help-title">How to play here</h2><button class="link" id="btn-help-close">Close</button></div>
+    <ul class="help-list">
+      <li><b>Place tiles:</b> click a square and type (click it again to go down), drag tiles from the rack, or tap a tile and then a square. Typing a letter you do not hold uses your blank.</li>
+      <li><kbd>Enter</kbd> plays, <kbd>Esc</kbd> brings this turn's tiles back, <kbd>Backspace</kbd> removes the last one, <kbd>Space</kbd> shuffles, arrow keys move the cursor.</li>
+      <li><b>Words are checked automatically</b> as you place tiles: a word that is not in the list cannot be played, so there are no challenges here. That differs from tournament play, where an invalid word can be played and challenged off.</li>
+      <li><b>Clocks</b> are total time per player. With <i>Overtime penalty</i>, as in the NASPA rules of 1 December 2016, each started minute past zero costs 10 points, and more than 10 minutes of overtime loses the game (100 points off; the opponent is raised to a one-point win if needed). With <i>Lose on time</i>, the game ends when a clock reaches zero. Tilefish's thinking runs on its own clock.</li>
+      <li><b>Practice</b> allows hints, take-backs and pausing; the game is marked as assisted if you use them. <b>Play</b> has none, and its clock keeps running if you switch tabs.</li>
+      <li><b>Hints and reviews</b> come from Tilefish's search. Winning chances are estimates (simulation) unless marked solved; moves within about one percent are effectively equal. Reviews judge each move with only what its player could see.</li>
+      <li><b>Notation:</b> <i>8D WORD</i> is across from row 8, column D; <i>D8 WORD</i> is down. Letters in brackets were already on the board; lower case is a blank.</li>
+    </ul>
   </div>
 </div>
 

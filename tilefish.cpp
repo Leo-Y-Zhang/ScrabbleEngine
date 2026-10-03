@@ -6511,6 +6511,7 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
       const std::string text = e.move.type == MT_EXCHANGE && !mine ? fmt("exch %d", e.move.used().n) : move_str(b, e.move);
       o << (i ? "," : "") << "{\"who\":" << (mine ? "\"you\"" : "\"bot\"") << ",\"move\":" << json_str(text)
         << ",\"score\":" << (e.move.type == MT_PLACE ? e.move.score : 0) << ",\"total\":" << e.score_after
+        << ",\"tiles\":" << (e.move.type == MT_PLACE ? (int)e.move.ntiles : 0)
         << ",\"type\":" << json_str(e.move.type == MT_PLACE ? "play" : e.move.type == MT_EXCHANGE ? "exchange" : "pass") << "}";
       if (e.move.type == MT_PLACE) b.place(lex, e.move);
     }
