@@ -173,3 +173,24 @@ opponents, and every interval excludes zero. **What it does not show:** anything
 longer thinking. Macondo simulates 5 plies deep, so in 5 s it gets few samples per
 candidate, and in production BestBot thinks for up to three minutes on three or four
 cores. The 20 s matches below are the closer test.
+
+**Results at 20 s a move** (CSW24, one thread each, 200 deal pairs, seed 3002; 98.3%
+intervals as above):
+
+| Opponent (pinned build) | A: W–D–L | Score | Elo (98.3%) | Spread a game (98.3%) |
+|---|---|---|---|---|
+| MAGPIE `375ad953e20d`, `full` | 237–3–160 | 59.62% | +68 (+29 to +108) | +20.9 (+9.8 to +32.0) |
+| Macondo `14c080b57608`, `simming 5` (BestBot's settings) | 198–3–199 | 49.88% | −1 (−39 to +38) | +15.4 (+3.8 to +27.0) |
+
+The engines used about 17–18 s of the 20 s a move, with no illegal moves, crashes or
+forfeits. Raw logs: `base-v2.2-vs-*-20s.jsonl`.
+
+**What the four matches show together.** Against current MAGPIE, Tilefish 2.2 is ahead at
+both 5 s and 20 s a move on one core, and its lead does not shrink with time (55.75% →
+59.62%). Against current Macondo with BestBot's settings, it is clearly ahead at 5 s
+(60.00%) but **level on wins at 20 s** (49.88%, interval −39 to +38 Elo), while still
+winning more points a game. **The earlier 55.0% against BestBot's settings at 20 s does
+not reproduce against today's pinned Macondo.** No claim that Tilefish is the strongest
+engine follows from this. At tournament-length budgets, with four cores (BestBot's
+production setting), the comparison is open, and the deciding match would be the
+60–180 s, four-core profile planned above.
