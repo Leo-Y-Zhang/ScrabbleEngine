@@ -1,5 +1,5 @@
-Tilefish - a championship-strength Scrabble engine
-==================================================
+Tilefish - a Scrabble engine
+============================
 
 To play without installing anything, open
      https://leo-y-zhang.github.io/ScrabbleEngine/
