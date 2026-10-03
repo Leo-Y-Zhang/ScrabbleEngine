@@ -3481,6 +3481,7 @@ struct SimParams {
   int plies = 2;
   int playout_bag = 7;        // with this many tiles or fewer in the bag, play out to the end
   int max_candidates = 20;
+  int late_candidates = 0;    // with playout_bag tiles or fewer in the bag (0: max_candidates)
   int max_iterations = 1000000;  // per candidate (in practice the clock decides)
   double time_limit = 5.0;    // seconds
   int threads = 1;
@@ -5078,6 +5079,7 @@ struct EngineConfig {
       else if (k == "plies") c.sim.plies = (int)v;
       else if (k == "playout") c.sim.playout_bag = (int)v;
       else if (k == "cands") c.sim.max_candidates = (int)v;
+      else if (k == "latecands") c.sim.late_candidates = (int)v;
       else if (k == "threads") c.threads = (int)v;
       else if (k == "z") c.sim.prune_z = v;
       else if (k == "tau") c.sim.shrink_tau = v;
@@ -5240,7 +5242,10 @@ class Engine {
       Move keep;
       std::string keep_err;
       const bool has_keep = !cfg.include.empty() && parse_move(P.board, cfg.include, keep, keep_err);
-      std::vector<Move> cands = sim_.candidates(P, cfg.sim.max_candidates, &generated, has_keep ? &keep : nullptr);
+      // Near the end the static ranking is a weaker guide, so more candidates may be kept.
+      const int ncand = P.bag_n <= cfg.sim.playout_bag && cfg.sim.late_candidates > 0 ? cfg.sim.late_candidates
+                                                                                     : cfg.sim.max_candidates;
+      std::vector<Move> cands = sim_.candidates(P, ncand, &generated, has_keep ? &keep : nullptr);
       const double t_gen = now_s() - t_start;
       if (cands.size() > 1) {
         OppModel opp;
@@ -6404,7 +6409,7 @@ struct App {
     quit
 Player SPECs: static (no search), static+ (static + endgame solvers), sim (fast search),
 champion (full strength).  Options: time=S iters=N plies=N cands=N threads=N win=0|1
-eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
+eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,plies=3
 )";
   }
 

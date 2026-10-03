@@ -24,6 +24,7 @@ on:
       seed: { description: "deal seed", default: "1001" }
       lexicon: { description: "word list: ENABLE, CSW24 or NWL23", default: "ENABLE" }
       history: { description: "send the game's history (for inference) to: none, a, b or both", default: "none" }
+      prefix_until_bag: { description: "if set: a static Tilefish plays both seats until the bag holds this many tiles", default: "" }
 permissions:
   contents: read
 jobs:
@@ -56,6 +57,7 @@ jobs:
       SHARD: ${{ matrix.shard }}
       LEX: ${{ inputs.lexicon }}
       HISTORY: ${{ inputs.history }}
+      PREFIX_BAG: ${{ inputs.prefix_until_bag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,7 +74,8 @@ jobs:
           fi
       - name: Build Tilefish engines
         run: |
-          cpu="cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"
+          cpu="cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs); $(lscpu | grep -E '^(Thread\(s\) per core|Core\(s\) per socket|Socket\(s\))' | tr -s ' ' | paste -sd ';' -)"
+          echo "CPU_LINE=$cpu" >> "$GITHUB_ENV"
           for side in a b; do
             if [ $side = a ]; then ref=$A_REF; spec=$A_SPEC; else ref=$B_REF; spec=$B_SPEC; fi
             case "$ref" in magpie@*|macondo@*) continue ;; esac
@@ -94,7 +97,7 @@ jobs:
           # Its data has no word map for the tournament lists; make one as MAGPIE's convert_lexica.sh does.
           (cd "$M" && bin/magpie convert dawg2text "$LEX" > /dev/null && bin/magpie convert text2wordmap "$LEX" -threads 4 > /dev/null)
           sh tools/build_magpie_bot.sh "$M"
-          { cat "$M/bin/magpie_bot.provenance"; echo "mode: ${B_SPEC}"; echo "data: $(grep -m1 '^DATA_VERSION=' "$M/download_data.sh") (download_data.sh), word map made with convert text2wordmap"; echo "cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"; } > b.info
+          { cat "$M/bin/magpie_bot.provenance"; echo "mode: ${B_SPEC}"; echo "data: $(grep -m1 '^DATA_VERSION=' "$M/download_data.sh") (download_data.sh), word map made with convert text2wordmap"; echo "$CPU_LINE"; } > b.info
           cat b.info
           echo "B_CMD=proto:cd $M && ./bin/magpie_bot $LEX $THREADS ./data $B_SPEC" >> "$GITHUB_ENV"
           echo "B_INIT=" >> "$GITHUB_ENV"
@@ -111,14 +114,20 @@ jobs:
           D="$HOME/macondo-data"
           mkdir -p "$D/lexica/gaddag" && cp -r "$M/data/strategy" "$M/data/letterdistributions" "$D/"
           cp "$LEX.kwg" "$LEX.klv2" "$D/lexica/gaddag/"
-          { cat "$M/bin/macondo_bot.provenance"; echo "bot and plies: ${B_SPEC}"; echo "data: Macondo's strategy and letterdistributions; $LEX.kwg/.klv2 from get-lexicon"; echo "cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"; } > b.info
+          { cat "$M/bin/macondo_bot.provenance"; echo "bot and plies: ${B_SPEC}"; echo "data: Macondo's strategy and letterdistributions; $LEX.kwg/.klv2 from get-lexicon"; echo "$CPU_LINE"; } > b.info
           cat b.info
           echo "B_CMD=proto:$M/bin/macondo_bot $D $LEX $THREADS $B_SPEC" >> "$GITHUB_ENV"
           echo "B_INIT=" >> "$GITHUB_ENV"
       - name: Play
         run: |
           case "$HISTORY" in a) H="--a-history" ;; b) H="--b-history" ;; both) H="--a-history --b-history" ;; *) H="" ;; esac
-          python3 tools/referee.py $H --history-lexicon "$LEX" --lexicon "$WORDS" --games "$PAIRS" --first-pair $((SHARD * PAIRS)) --seed "$SEED" \
+          if [ -n "$PREFIX_BAG" ]; then
+            # The prefix player: engine A's build playing "static" (deterministic), one thread.
+            P=(--prefix "proto:./tf_a --lexicon $LEXFILE --threads 1 --quiet" --prefix-init "player static" --prefix-until-bag "$PREFIX_BAG")
+          else
+            P=()
+          fi
+          python3 tools/referee.py $H --history-lexicon "$LEX" "${P[@]}" --lexicon "$WORDS" --games "$PAIRS" --first-pair $((SHARD * PAIRS)) --seed "$SEED" \
             --movetime "$MOVETIME" --parallel $(( $(nproc) / THREADS > 0 ? $(nproc) / THREADS : 1 )) --startup-timeout 900 \
             --a "$A_CMD" --a-init "$A_INIT" --a-name A --a-info a.info \
             --b "$B_CMD" --b-init "$B_INIT" --b-name B --b-info b.info \

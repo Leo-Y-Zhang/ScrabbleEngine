@@ -273,4 +273,13 @@ comparison uses `infer 5` with history if, at 20 s, Tilefish's score against it 
 than against `simming 5` on the same 40 deal pairs (the stronger opponent is the one to
 measure against), and `simming 5` otherwise.
 
+**Added before any of its games (4 October 2026): a four-thread pilot at 60 s.** To check
+the configuration and measure throughput before planning a long match: Tilefish (`main`
+search, `champion`) and Macondo (`simming 5`) with **4 threads each**, 60 s a move, one game
+at a time on each 4-vCPU runner (`--parallel 1`, so only the engine on move is computing),
+4 jobs × 2 deal pairs, seed 3201, CSW24. Recorded: CPU seconds per move for each engine
+(cores actually used), Tilefish's iterations, Macondo's own summary, game length in
+minutes, and the runner's CPU topology (virtual CPUs, cores, threads per core). It is not
+a test and its score is not reported as a result (8 pairs).
+
 The audit itself (positions, decisions, reanalysis) is described with its results.
