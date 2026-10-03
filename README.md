@@ -20,6 +20,14 @@ seconds a move, Tilefish won 57.1% of 760 CSW24 games against MAGPIE's full sear
 game. What that does and does not prove is set out in
 [How strong is it?](#how-strong-is-it).
 
+**Fresh matches against pinned current versions** (October 2026, CSW24, one thread each,
+200 deal pairs per match, versions recorded in every log): against MAGPIE `375ad95`,
+Tilefish 2.2 scored 55.8% at 5 s a move and 59.6% at 20 s. Against Macondo `14c080b`
+with BestBot's settings it scored 60.0% at 5 s and **49.9% at 20 s, level on wins**, while
+still ahead on points. So the earlier 55.0% against BestBot's settings at 20 s did not
+reproduce against today's Macondo. Details and raw games:
+[experiments/](experiments/README.md#3-fresh-versioned-baselines-against-current-magpie-and-macondo-registered-3-october-2026-before-any-game).
+
 ## Quick start
 
 **In your browser:** open **[leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**.
