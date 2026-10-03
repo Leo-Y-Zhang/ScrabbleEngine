@@ -496,16 +496,16 @@ class Engine:
             raise EOFError("engine %s exited" % self.name)
         return line.strip()
 
-    def best(self, cgp, ms, hist=None):
-        return self.deadline(3 * ms / 1000.0 + 60, lambda: self._best(cgp, ms, hist))
+    def best(self, cgp, ms, hist=None, extra=""):
+        return self.deadline(3 * ms / 1000.0 + 60, lambda: self._best(cgp, ms, hist, extra))
 
-    def _best(self, cgp, ms, hist=None):
+    def _best(self, cgp, ms, hist=None, extra=""):
         self.info = None
         if self.kind == "proto":
             if self.history and hist:
                 self.send("history " + hist)
             self.send("position cgp " + cgp)
-            self.send("go movetime %d" % ms)
+            self.send("go movetime %d%s" % (ms, extra))
             while True:
                 line = self.readline()
                 if line.startswith("info "):

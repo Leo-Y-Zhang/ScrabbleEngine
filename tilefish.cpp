@@ -3556,13 +3556,21 @@ class Simulator {
   Simulator(const Lexicon* lex, const LeaveTable* lt, const WinModel* wm) : lex_(lex), lt_(lt), wm_(wm) {}
 
   // Top candidates by static equity for position P (`generated`: how many legal moves there were).
-  std::vector<Move> candidates(const Position& P, int max_n, int* generated = nullptr) const {
+  std::vector<Move> candidates(const Position& P, int max_n, int* generated = nullptr, const Move* keep = nullptr) const {
     MoveGen gen(lex_, lt_);
     std::vector<Move> all;
     EvalCtx ctx = ctx_for(P);
     gen.generate_all(P.board, P.rack, ctx, all);
     if (generated) *generated = (int)all.size();
     sort_by_equity(all);
+    if (keep) {  // appended after the normal candidates if the cut would drop it
+      for (int i = max_n; i < (int)all.size(); ++i)
+        if (all[i].same_as(*keep)) {
+          all[max_n] = all[i];
+          ++max_n;
+          break;
+        }
+    }
     if ((int)all.size() > max_n) all.resize(max_n);
     return all;
   }
@@ -5019,6 +5027,7 @@ struct EngineConfig {
   int threads = 1;
   std::string leaves_file;  // optional per-player data (matches between trained sets)
   std::string win_file;
+  std::string include;      // analysis only: this move is simulated too, even if the cut drops it
 
   // "static", "sim", "champion", optionally followed by ":key=value,key=value".
   static bool parse(const std::string& spec, EngineConfig& c, std::string& err) {
@@ -5118,6 +5127,17 @@ inline std::string jnum(double v, int prec = 4) {
   return o.str();
 }
 
+// Analysis of a given move in a solved or searched endgame: its value among the root moves.
+inline std::string endgame_include(const Position& P, const EndgameResult& er, const std::string& include) {
+  Move keep;
+  std::string err;
+  if (include.empty() || !parse_move(P.board, include, keep, err)) return "";
+  for (size_t i = 0; i < er.root.size(); ++i)
+    if (er.root[i].first.same_as(keep))
+      return ",\"inc\":{\"m\":\"" + move_str(P.board, keep) + "\",\"value\":" + std::to_string(er.root[i].second) + "}";
+  return ",\"inc\":{\"m\":\"" + move_str(P.board, keep) + "\",\"value\":null}";
+}
+
 class Engine {
  public:
   Engine(const Lexicon* lex, const LeaveTable* lt, const WinModel* wm)
@@ -5151,6 +5171,7 @@ class Engine {
                ",\"spread\":" + std::to_string(P.spread()) + ",\"solved\":" + (er.solved ? "true" : "false") +
                ",\"depth\":" + std::to_string(er.depth) + ",\"nodes\":" + std::to_string(er.nodes) +
                ",\"value\":" + std::to_string(er.value) + ",\"roots\":" + std::to_string(er.root.size()) +
+               endgame_include(P, er, cfg.include) +
                ",\"t\":{\"search\":" + jnum(er.seconds) + ",\"total\":" + jnum(now_s() - t_start) + "}}";
       std::ostringstream o;
       o << "endgame: " << move_str(P.board, er.best) << "  value " << std::showpos << er.value << std::noshowpos
@@ -5216,7 +5237,10 @@ class Engine {
     // 3. Simulation.
     if (cfg.simulate) {
       int generated = 0;
-      std::vector<Move> cands = sim_.candidates(P, cfg.sim.max_candidates, &generated);
+      Move keep;
+      std::string keep_err;
+      const bool has_keep = !cfg.include.empty() && parse_move(P.board, cfg.include, keep, keep_err);
+      std::vector<Move> cands = sim_.candidates(P, cfg.sim.max_candidates, &generated, has_keep ? &keep : nullptr);
       const double t_gen = now_s() - t_start;
       if (cands.size() > 1) {
         OppModel opp;
@@ -5289,7 +5313,18 @@ class Engine {
               << ",\"w\":" << jnum(c.mean_win()) << ",\"e\":" << jnum(c.mean_eq()) << ",\"post\":" << jnum(c.post, 5)
               << ",\"d\":" << jnum(c.sim_diff, 5) << ",\"pw\":" << jnum(c.prior_w) << "}";
           }
-          o << "],\"snap\":[";
+          o << "]";
+          if (has_keep) {
+            for (size_t i = 0; i < sr.cands.size(); ++i)
+              if (sr.cands[i].move.same_as(keep)) {
+                const auto& c = sr.cands[i];
+                o << ",\"inc\":{\"m\":\"" << move_str(P.board, c.move) << "\",\"rank\":" << i << ",\"s\":" << srank(c.move)
+                  << ",\"n\":" << c.n << ",\"pr\":" << (c.active ? 0 : 1) << ",\"w\":" << jnum(c.mean_win())
+                  << ",\"e\":" << jnum(c.mean_eq()) << ",\"post\":" << jnum(c.post, 5) << ",\"pw\":" << jnum(c.prior_w) << "}";
+                break;
+              }
+          }
+          o << ",\"snap\":[";
           for (size_t i = 0; i < snaps.size(); ++i)
             o << (i ? "," : "") << "{\"t\":" << jnum(snaps[i].t) << ",\"it\":" << snaps[i].iters << ",\"m\":\""
               << move_str(P.board, snaps[i].top) << "\",\"same\":" << (snaps[i].top.same_as(sr.cands[0].move) ? 1 : 0)
@@ -6456,7 +6491,7 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
   }
 
   // Engine protocol: answers "bestmove <move>" (see tools/referee.py).
-  void cmd_go_protocol(double secs) {
+  void cmd_go_protocol(double secs, const std::string& include = "") {
     if (!lex.loaded() || game.over) {
       std::cout << "bestmove pass" << std::endl;
       return;
@@ -6465,6 +6500,7 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
     EngineConfig c = cfg;
     c.threads = threads;
     c.sim.threads = threads;
+    c.include = include;
     if (secs > 0) {
       c.sim.time_limit = secs;
       c.endgame_time = secs;
@@ -7356,14 +7392,18 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
     } else if (cmd == "go" || cmd == "best" || cmd == "analyze" || cmd == "analyse") {
       bool json = false, protocol = false;
       double secs = 0;
+      std::string include;
       for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "json") json = true;
         else if (args[i] == "movetime" && i + 1 < args.size()) {
           secs = std::atof(args[++i].c_str()) / 1000.0;
           protocol = true;
+        } else if (args[i] == "include") {  // analysis: also simulate this move
+          for (size_t j = i + 1; j < args.size(); ++j) include += (j > i + 1 ? " " : "") + args[j];
+          break;
         } else secs = std::atof(args[i].c_str());
       }
-      if (protocol) cmd_go_protocol(secs);
+      if (protocol) cmd_go_protocol(secs, include);
       else cmd_go(secs, true, json);
     } else if (cmd == "auto") {
       if (!need_lex()) return true;
