@@ -73,6 +73,10 @@ onmessage = async (e) => {
   try {
     if (e.data.load) {
       postMessage({ id, out: await load(e.data.load, id) });
+    } else if (e.data.write) {
+      // A file for the engine to read (an imported game record), in its memory file system.
+      engine.FS.writeFile(e.data.write.path, e.data.write.text);
+      postMessage({ id, out: "written" });
     } else {
       postMessage({ id, out: engine.ccall("tf_run", "string", ["string"], [e.data.run]) });
     }

@@ -70,6 +70,21 @@ Tilefish().then((m) => {
     check(last.total === (last.who === "you" ? s.you : s.bot), "the last total matches the score");
     check(!ui("move pass").ok && !ui("bot").ok, "no moves after the end");
     console.log("game " + (g + 1) + ": " + s.you + "-" + s.bot + " in " + turns + " turns; hint methods: " + [...phases].join(", "));
+    // Take-back and replay: the exact move record rebuilds the identical game (the seed fixes
+    // every draw), and taking two moves back then replaying them changes nothing.
+    const game = (st) => JSON.stringify(Object.assign({}, st, { win: undefined }));  // the estimate is not part of the game
+    const rec = ui("record").moves;
+    check(rec.length === s.history.length, "the record has every move");
+    check(ui("undo").ok && ui("undo").ok, "take back two moves");
+    for (const mv of rec.slice(-2)) check(ui("force " + mv).ok, "replay " + mv);
+    check(game(ui("state").state) === game(s), "take-back then replay restores the identical game");
+    ui("new " + (g % 2 ? "second" : "first") + " " + (11 + g));
+    for (const mv of rec) check(ui("force " + mv).ok, "replay from the seed: " + mv);
+    check(game(ui("state").state) === game(s), "seed plus record rebuilds the identical game");
+    const imp = ui("gcg");
+    m.FS.writeFile("/data/g.gcg", imp.gcg);
+    const back = ui("import /data/g.gcg");
+    check(back.ok && JSON.stringify(back.state.board) === JSON.stringify(s.board) && back.state.moves === s.history.length, "GCG export then import gives the same board and moves");
   }
   console.log("ok");
 });
