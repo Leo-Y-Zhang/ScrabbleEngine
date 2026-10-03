@@ -22,6 +22,14 @@ jobs:
         run: sh web/build.sh
       - name: Play games through the browser build
         run: node web/smoke.js 2
+      - name: Native and browser builds agree on fixed work
+        run: |
+          g++ -O2 -std=c++17 -pthread tilefish.cpp -o tf_native
+          ./tf_native --lexicon ENABLE.txt "benchsim 0 1 3000" | tee native.txt
+          node -e "const fs=require('fs'),T=require('./web/dist/tilefish.js');T().then(m=>{m.FS.mkdir('/d');for(const f of ['ENABLE.txt','ENABLE.leaves','ENABLE.win'])m.FS.writeFile('/d/'+f,fs.readFileSync(f));const r=c=>m.ccall('tf_run','string',['string'],[c]);r('lexicon /d/ENABLE.txt');console.log(r('benchsim 0 1 3000'))})" | tee wasm.txt
+          a=$(grep -o 'checksum [0-9.-]*' native.txt); w=$(grep -o 'checksum [0-9.-]*' wasm.txt)
+          echo "native: $a / browser: $w"
+          test -n "$a" && test "$a" = "$w"
       - uses: actions/upload-pages-artifact@v3
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         with:
