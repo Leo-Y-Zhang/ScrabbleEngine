@@ -1,6 +1,10 @@
 Tilefish - a championship-strength Scrabble engine
 ==================================================
 
+To play without installing anything, open
+     https://leo-y-zhang.github.io/ScrabbleEngine/
+in any browser. This download is the full engine: every core, game review, analysis.
+
 1. Get the championship word list (once, about 10 MB):
      Windows:        double-click get-lexicon.bat
      macOS / Linux:  open a terminal in this folder and type   sh get-lexicon.sh
