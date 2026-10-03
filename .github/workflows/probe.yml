@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [magpie, macondo]
+        engine: [magpie]
     env:
       MAGPIE_COMMIT: 375ad953e20d
       MACONDO_COMMIT: 14c080b57608
@@ -45,7 +45,17 @@ jobs:
           cp -r "$HOME/macondo/data/strategy" "$HOME/macondo/data/letterdistributions" "$HOME/md/"
           cp CSW24.kwg CSW24.klv2 "$HOME/md/lexica/gaddag/"
           ls "$HOME/md/strategy" | head
+      - name: MAGPIE startup, timed
+        if: matrix.engine == 'magpie'
+        run: |
+          cd "$HOME/MAGPIE"
+          ls -la data/lexica | grep -i -E 'csw24|nwl23' || true
+          start=$(date +%s)
+          (echo isready; sleep 2; echo quit) | timeout 900 ./bin/magpie_bot CSW24 1 > out.txt 2> err.txt; echo "exit $? after $(( $(date +%s) - start )) s"
+          cat out.txt; tail -20 err.txt
+          ls -la data/lexica | grep -i -E 'csw24|nwl23' || true
       - name: One refereed pair
+        timeout-minutes: 15
         run: |
           if [ "${{ matrix.engine }}" = magpie ]; then B="proto:cd $HOME/MAGPIE && ./bin/magpie_bot CSW24 1"; else B="proto:$HOME/macondo/bin/macondo_bot $HOME/md CSW24 1"; fi
           python3 tools/referee.py --lexicon CSW24.txt --games 1 --movetime 1000 --parallel 1 \
