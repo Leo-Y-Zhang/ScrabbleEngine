@@ -21,14 +21,24 @@ $sums = @{
   "NWL23.kwg"  = "3e74af981fdd974e107283f686da0fe4b7ec84ad0d825d444330c338c33b91ba"
   "NWL23.klv2" = "37dea945c29c3773eb4cd5a4117f3d3256c8b548cd3bf3b5ce8a219cb5e0a3fa"
 }
+# SHA-256 through .NET: Get-FileHash is missing from some Windows PowerShell 5.1 setups.
+function Get-Sha256([string]$Path) {
+  $stream = [System.IO.File]::OpenRead((Resolve-Path $Path).Path)
+  try {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    return ([System.BitConverter]::ToString($sha.ComputeHash($stream)) -replace "-", "").ToLower()
+  } finally {
+    $stream.Dispose()
+  }
+}
 foreach ($f in @("$Lexicon.kwg", "$Lexicon.klv2")) {
-  if ((Test-Path $f) -and ((Get-FileHash $f -Algorithm SHA256).Hash.ToLower() -eq $sums[$f])) {
+  if ((Test-Path $f) -and ((Get-Sha256 $f) -eq $sums[$f])) {
     Write-Host "$f is already here"
     continue
   }
   Write-Host "downloading $f"
   Invoke-WebRequest -Uri "$url/$f" -OutFile "$f.part" -UseBasicParsing
-  if ((Get-FileHash "$f.part" -Algorithm SHA256).Hash.ToLower() -ne $sums[$f]) {
+  if ((Get-Sha256 "$f.part") -ne $sums[$f]) {
     Remove-Item "$f.part"
     Write-Host "error: $f did not download correctly (checksum mismatch)"
     exit 1

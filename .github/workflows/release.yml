@@ -57,7 +57,9 @@ jobs:
         run: |
           cd "$PKG"
           if [ -f get-lexicon.ps1 ]; then
-            powershell -NoProfile -ExecutionPolicy Bypass -File get-lexicon.ps1
+            # As on machines whose Windows PowerShell 5.1 has no Get-FileHash: the script must not need it.
+            powershell -NoProfile -ExecutionPolicy Bypass -Command "function Get-FileHash { throw 'Get-FileHash is not available' }; & ./get-lexicon.ps1"
+            test -f CSW24.kwg
           else
             sh get-lexicon.sh
           fi
