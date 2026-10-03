@@ -30,6 +30,11 @@ jobs:
           ls data/lexica | head; ls data | head
           make magpie BUILD=no_pgo_release -j4 > build.log 2>&1 || (tail -40 build.log; exit 1)
           ls obj
+          # MAGPIE plays at full strength with a word map, which its data does not ship for CSW24:
+          # make it the way MAGPIE's convert_lexica.sh does.
+          start=$(date +%s)
+          bin/magpie convert dawg2text CSW24 && bin/magpie convert text2wordmap CSW24 -threads 4
+          echo "word map built in $(( $(date +%s) - start )) s"; ls -la data/lexica/CSW24.*
           cd "$GITHUB_WORKSPACE" && sh tools/build_magpie_bot.sh "$HOME/MAGPIE"
       - uses: actions/setup-go@v5
         if: matrix.engine == 'macondo'

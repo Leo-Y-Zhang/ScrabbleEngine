@@ -36,8 +36,10 @@ import multiprocessing as mp
 import os
 import platform
 import random
+import signal
 import subprocess
 import sys
+import threading
 import time
 
 N = 15
@@ -356,15 +358,42 @@ class Engine:
         self.proc = None
         self.start()
 
+    STARTUP_SECONDS = 600  # loading a lexicon and its data; --startup-timeout
+
     def start(self):
+        # Its own process group, so a watchdog can stop a shell command and its children.
         self.proc = subprocess.Popen(self.cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL, text=True, bufsize=1)
+                                     stderr=subprocess.DEVNULL, text=True, bufsize=1,
+                                     start_new_session=(os.name == "posix"))
         for c in self.init:
             self.send(c)
         # Wait until the engine has loaded its data, so start-up is not charged to a move.
         self.send("isready")
-        while self.readline() != "readyok":
+
+        def ready():
+            while self.readline() != "readyok":
+                pass
+        self.deadline(Engine.STARTUP_SECONDS, ready)
+
+    def kill(self):
+        try:
+            if os.name == "posix":
+                os.killpg(self.proc.pid, signal.SIGKILL)
+            else:  # the shell and everything it started
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.proc.pid)], capture_output=True)
+        except Exception:
             pass
+
+    def deadline(self, seconds, fn):
+        # An engine that stops answering is killed; its pipe then closes and readline
+        # raises, which the game loop records as a crash (the move counts as a pass).
+        t = threading.Timer(seconds, self.kill)
+        t.daemon = True
+        t.start()
+        try:
+            return fn()
+        finally:
+            t.cancel()
 
     def send(self, line):
         self.proc.stdin.write(line + "\n")
@@ -377,6 +406,9 @@ class Engine:
         return line.strip()
 
     def best(self, cgp, ms):
+        return self.deadline(3 * ms / 1000.0 + 60, lambda: self._best(cgp, ms))
+
+    def _best(self, cgp, ms):
         if self.kind == "proto":
             self.send("position cgp " + cgp)
             self.send("go movetime %d" % ms)
@@ -427,7 +459,7 @@ def play_game(pair, a_first):
                 text = prefix.best(cgp, args.movetime)
             except Exception as ex:
                 errors.append("prefix crashed: %s" % ex)
-                prefix.proc.kill()
+                prefix.kill()
                 prefix.start()
                 text = "pass"
             score, err = g.apply(text)
@@ -443,7 +475,7 @@ def play_game(pair, a_first):
             text = eng[e].best(cgp, args.movetime)
         except Exception as ex:  # crashed engine: restart, count as pass
             errors.append("%s crashed: %s" % (eng[e].name, ex))
-            eng[e].proc.kill()
+            eng[e].kill()
             eng[e].start()
             text = "pass"
         dt = time.time() - t0
@@ -575,7 +607,17 @@ def main():
     ap.add_argument("--a-info", default="", help="file describing engine A's build (e.g. bin/magpie_bot.provenance), "
                     "copied into the log")
     ap.add_argument("--b-info", default="", help="the same for engine B")
+    ap.add_argument("--startup-timeout", type=float, default=600, help="seconds an engine may take to load")
     args = ap.parse_args()
+    Engine.STARTUP_SECONDS = args.startup_timeout
+    # Start every engine once here: one that cannot start stops the match with a clear
+    # message (inside the worker pool it would be restarted silently, for ever).
+    for spec, name, init in [(args.a, args.a_name, args.a_init), (args.b, args.b_name, args.b_init)] + (
+            [(args.prefix, "prefix", args.prefix_init)] if args.prefix else []):
+        try:
+            Engine(spec, name, init).close()
+        except Exception as ex:
+            raise SystemExit("engine %s did not start (%s): %s" % (name, ex, spec))
     with open(args.lexicon) as f:
         for line in f:
             w = line.split()
