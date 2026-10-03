@@ -51,8 +51,11 @@ jobs:
           cd "$HOME/MAGPIE"
           ls -la data/lexica | grep -i -E 'csw24|nwl23' || true
           start=$(date +%s)
+          set +e +o pipefail
           (echo isready; sleep 2; echo quit) | timeout 900 ./bin/magpie_bot CSW24 1 > out.txt 2> err.txt; echo "exit $? after $(( $(date +%s) - start )) s"
-          cat out.txt; tail -20 err.txt
+          echo "--- stdout"; cat out.txt; echo "--- stderr"; tail -30 err.txt
+          ls data; ls data/lexica | grep -i -v klv | head -40
+          grep -rn "wmp" src/impl/config.c | head -20
           ls -la data/lexica | grep -i -E 'csw24|nwl23' || true
       - name: One refereed pair
         timeout-minutes: 15
