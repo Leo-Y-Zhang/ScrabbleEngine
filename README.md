@@ -2,6 +2,8 @@
 
 *A championship-style Scrabble engine in one C++ file. Stockfish, but for tiles.*
 
+### ▶ **[Play it in your browser: leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**, nothing to install
+
 Everything is in **`tilefish.cpp`**: the lexicon compiler, move generator, evaluation,
 Monte-Carlo simulation, endgame and pre-endgame solvers, opponent-rack inference,
 self-play training, engine-vs-engine matches, game-record import/export and a terminal
