@@ -6064,10 +6064,9 @@ inline bool load_gcg(const std::string& path, const Lexicon& lex, int stop_at, R
   return true;
 }
 
-inline bool save_gcg(const Game& g, const std::string& path, const std::string& lexname, const std::string& p1 = "player1",
-                     const std::string& p2 = "player2") {
-  std::ofstream o(path);
-  if (!o) return false;
+inline std::string gcg_text(const Game& g, const std::string& lexname, const std::string& p1 = "player1",
+                            const std::string& p2 = "player2") {
+  std::ostringstream o;
   const std::string nick[2] = {p1, p2};
   o << "#character-encoding UTF-8\n#player1 " << p1 << ' ' << p1 << "\n#player2 " << p2 << ' ' << p2 << "\n";
   if (!lexname.empty()) o << "#lexicon " << lexname << "\n";
@@ -6094,6 +6093,14 @@ inline bool save_gcg(const Game& g, const std::string& path, const std::string& 
         << ' ' << total[p] << "\n";
     }
   }
+  return o.str();
+}
+
+inline bool save_gcg(const Game& g, const std::string& path, const std::string& lexname, const std::string& p1 = "player1",
+                     const std::string& p2 = "player2") {
+  std::ofstream o(path);
+  if (!o) return false;
+  o << gcg_text(g, lexname, p1, p2);
   return (bool)o;
 }
 
@@ -6233,7 +6240,7 @@ struct App {
                           (json: one machine-readable line, for GUIs and broadcasts)
     position cgp CGP      engine protocol: set a position ...
     go movetime MS        ... and answer "bestmove <move>" (see tools/referee.py)
-    ui new|move|bot|hint|state   a game for a graphical front-end, answered in JSON (web/)
+    ui new|move|bot|hint|state|undo|review ...   a game for a graphical front-end, in JSON (web/)
     auto [N]              let the engine play the next N moves (either side)
     unseen                tiles you cannot see (bag + opponent rack)
     history               moves so far
@@ -6274,8 +6281,14 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
   static std::string json_str(const std::string& x) {
     std::string o = "\"";
     for (char c : x) {
-      if (c == '"' || c == '\\') o += '\\';
-      o += c;
+      if (c == '\n') o += "\\n";
+      else if (c == '\r') o += "\\r";
+      else if (c == '\t') o += "\\t";
+      else if ((unsigned char)c < 0x20) o += fmt("\\u%04x", (unsigned)c);
+      else {
+        if (c == '"' || c == '\\') o += '\\';
+        o += c;
+      }
     }
     return o + "\"";
   }
@@ -6450,6 +6463,26 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
   // engine's rack appears only once the game is over.
   int ui_human = 0;
   double ui_win = -1;  // the human's winning chance after the engine's last move
+  std::vector<Game> ui_before;  // the game before each move: takeback and review
+  std::vector<Rng> ui_rng;      // ... and the tile-drawing generator, so draws repeat exactly
+
+  void ui_apply(const Move& m) {
+    ui_before.push_back(game);
+    ui_rng.push_back(rng);
+    game.apply(lex, m, rng);
+  }
+
+  static std::string board_json(const Board& b) {
+    std::ostringstream o;
+    o << "[";
+    for (int r = 0; r < N; ++r) {
+      std::string row;
+      for (int c = 0; c < N; ++c) row += b.at(r, c) ? tile_char(b.at(r, c)) : '.';
+      o << (r ? "," : "") << json_str(row);
+    }
+    o << "]";
+    return o.str();
+  }
 
   std::string ui_state() {
     const int h = ui_human;
@@ -6468,6 +6501,7 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
       o << ",\"botRack\":" << json_str(game.rack[1 - h].str()) << ",\"endYou\":" << game.end_bonus[h]
         << ",\"endBot\":" << game.end_bonus[1 - h];
     if (ui_win >= 0) o << ",\"win\":" << json_num(ui_win, 4);
+    o << ",\"turn\":" << game.turn << ",\"seat\":" << h << ",\"moves\":" << game.events.size();
     o << ",\"history\":[";
     Board b;
     for (size_t i = 0; i < game.events.size(); ++i) {
@@ -6490,6 +6524,16 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
   //   ui move MOVE                   the human plays MOVE
   //   ui bot [SPEC]                  the engine plays its move (SPEC as for `player`)
   //   ui hint [SECS]                 the engine's analysis of the human's position
+  //   ui force MOVE                  MOVE for whoever is to move (replaying a saved game)
+  //   ui seat 0|1                    whose view the state shows (two players at one screen)
+  //   ui undo                        take back the last move, draws included
+  //   ui gcg                         the game as a GCG record
+  //   ui at N                        the board after the first N moves
+  //   ui review N [SECS]             move N judged with what its player could see then
+  //   ui record                      every move exactly (for saving; not for display)
+  //   ui rewind N                    back to the position before move N, same draws ahead
+  //   ui import FILE.gcg             a game record, for review (racks as recorded)
+  //   ui cgp CGP / ui cgpout         set / show a position (the opponent's rack left out)
   void cmd_ui(const std::vector<std::string>& args, const std::string& rest) {
     const std::string sub = args.empty() ? "state" : to_lower(args[0]);
     auto fail = [](const std::string& e) { std::cout << "{\"ok\":false,\"error\":" << json_str(e) << "}" << std::endl; };
@@ -6504,9 +6548,133 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
       game.reset(rng);
       ui_human = first ? 0 : 1;
       ui_win = -1;
-    } else if (sub == "move" || sub == "check") {
+      ui_before.clear();
+      ui_rng.clear();
+    } else if (sub == "seat") {
+      if (args.size() < 2 || (args[1] != "0" && args[1] != "1")) return fail("usage: ui seat 0|1");
+      ui_human = args[1][0] - '0';
+    } else if (sub == "record") {
+      std::cout << "{\"ok\":true,\"moves\":[";
+      Board b;
+      for (size_t i = 0; i < game.events.size(); ++i) {
+        const Move& m = game.events[i].move;
+        std::cout << (i ? "," : "") << json_str(m.type == MT_EXCHANGE ? "exch " + m.used().str() : move_str(b, m));
+        if (m.type == MT_PLACE) b.place(lex, m);
+      }
+      std::cout << "]}" << std::endl;
+      return;
+    } else if (sub == "rewind") {
+      const size_t n = args.size() > 1 ? (size_t)std::max(0, std::atoi(args[1].c_str())) : 0;
+      if (n >= ui_before.size()) return fail("no such move");
+      game = ui_before[n];
+      rng = ui_rng[n];
+      ui_before.resize(n);
+      ui_rng.resize(n);
+      ui_win = -1;
+    } else if (sub == "import") {
+      const std::string path = args.size() > 1 ? trim(rest.substr(args[0].size())) : "";
+      std::vector<GcgEvent> ev, ev2;
+      std::string err;
+      Game whole;
+      if (path.empty() || !load_gcg(path, lex, -1, rng, whole, ev, err)) return fail(err.empty() ? "usage: ui import FILE" : err);
+      std::vector<Game> before;
+      std::vector<Rng> rngs;
+      std::vector<GameEvent> events;
+      size_t real = 0;
+      for (size_t k = 0; k < ev.size(); ++k) {
+        if (ev[k].withdrawn || ev[k].move.type == 255) continue;
+        ++real;
+        Game g;
+        if (!load_gcg(path, lex, (int)k, rng, g, ev2, err)) break;
+        // The move as played on the board before it (the record's own text, re-parsed).
+        GameEvent e;
+        e.player = ev[k].player;
+        e.rack_before = ev[k].rack;
+        e.score_after = ev[k].total;
+        if (ev[k].move.type == MT_PLACE) {
+          std::string perr;
+          if (!parse_move(g.board, ev[k].text, e.move, perr)) break;
+          e.move.score = (i16)score_move(g.board, e.move);
+        } else {
+          e.move = ev[k].move;
+        }
+        events.push_back(e);
+        before.push_back(g);
+        rngs.push_back(rng);
+      }
+      if (real == 0) return fail("the record has no moves");
+      if (events.size() < real) return fail(fmt("move %zu of the record could not be read", events.size() + 1));
+      // Words are not checked (a record may hold an unchallenged phony), tile counts are.
+      {
+        int count[NLET] = {};
+        const Rack full = Rack::full_distribution();
+        for (int sq = 0; sq < NSQ; ++sq)
+          if (whole.board.sq[sq] && ++count[tile_rack_code(whole.board.sq[sq])] > full.c[tile_rack_code(whole.board.sq[sq])])
+            return fail(std::string("impossible record: more ") +
+                        (tile_rack_code(whole.board.sq[sq]) == BLANK ? std::string("blanks")
+                                                                     : std::string(1, tile_char(whole.board.sq[sq] & 31))) +
+                        " on the board than the set holds");
+      }
+      game = whole;
+      game.events = events;
+      ui_human = 0;
+      ui_win = -1;
+      // Review needs the position before every move; without it, the record is shown only.
+      const bool aligned = before.size() == game.events.size();
+      ui_before = aligned ? before : std::vector<Game>();
+      ui_rng = aligned ? rngs : std::vector<Rng>();
+    } else if (sub == "cgp") {
+      std::string err;
+      Game g;
+      if (!from_cgp(trim(rest.substr(args[0].size())), lex, g, rng, err)) return fail(err);
+      game = g;
+      ui_human = game.turn;
+      ui_win = -1;
+      ui_before.clear();
+      ui_rng.clear();
+    } else if (sub == "cgpout") {
+      std::cout << "{\"ok\":true,\"cgp\":" << json_str(to_cgp(game, lex.name, true)) << "}" << std::endl;
+      return;
+    } else if (sub == "undo") {
+      if (ui_before.empty()) return fail("nothing to take back");
+      game = ui_before.back();
+      rng = ui_rng.back();
+      ui_before.pop_back();
+      ui_rng.pop_back();
+      ui_win = -1;
+    } else if (sub == "gcg") {
+      std::cout << "{\"ok\":true,\"gcg\":" << json_str(gcg_text(game, lex.name, ui_human == 0 ? "you" : "tilefish",
+                                                                ui_human == 0 ? "tilefish" : "you"))
+                << "}" << std::endl;
+      return;
+    } else if (sub == "at") {
+      const size_t n = args.size() > 1 ? (size_t)std::max(0, std::atoi(args[1].c_str())) : game.events.size();
+      const Board& b = n < ui_before.size() ? ui_before[n].board : game.board;
+      std::cout << "{\"ok\":true,\"board\":" << board_json(b) << "}" << std::endl;
+      return;
+    } else if (sub == "review") {
+      const size_t n = args.size() > 1 ? (size_t)std::max(0, std::atoi(args[1].c_str())) : 0;
+      if (n >= ui_before.size() || n >= game.events.size()) return fail("no such move");
+      const double secs = args.size() > 2 ? std::max(0.1, std::atof(args[2].c_str())) : 1.0;
+      const Position P = Position::from_game(ui_before[n]);  // the mover's view at that moment
+      Move actual = game.events[n].move;
+      if (actual.type == MT_PLACE) actual.score = (i16)score_move(P.board, actual);
+      ReviewVerdict v;
+      if (!review_position(P, actual, secs, v)) return fail("no verdict for this move");
+      const bool same = v.best.same_as(actual);
+      std::cout << "{\"ok\":true,\"n\":" << n << ",\"rack\":" << json_str(P.rack.str())
+                << ",\"played\":" << json_str(move_str(P.board, actual)) << ",\"best\":" << json_str(move_str(P.board, v.best))
+                << ",\"same\":" << (same ? "true" : "false") << ",\"winLoss\":" << json_num(v.win_loss, 4)
+                << ",\"valueLoss\":" << json_num(v.eq_loss, 2) << ",\"bestWin\":" << json_num(v.best_win, 4)
+                << ",\"method\":" << json_str(v.method) << ",\"exact\":" << (v.exact ? "true" : "false") << ",\"alts\":[";
+      for (size_t k = 0; k < v.alts.size(); ++k)
+        std::cout << (k ? "," : "") << "{\"move\":" << json_str(v.alts[k].move) << ",\"score\":" << v.alts[k].score
+                  << ",\"win\":" << json_num(v.alts[k].win, 4) << ",\"value\":" << json_num(v.alts[k].value, 2) << "}";
+      std::cout << "]}" << std::endl;
+      return;
+    } else if (sub == "move" || sub == "check" || sub == "force") {
       if (game.over) return fail("the game is over");
-      if (game.turn != ui_human) return fail("it is not your turn");
+      if (sub != "force" && game.turn != ui_human) return fail("it is not your turn");
       Move m;
       std::string err;
       if (!human_move_ok(trim(rest.substr(args[0].size())), m, err)) return fail(err);
@@ -6514,7 +6682,7 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
         std::cout << "{\"ok\":true,\"score\":" << (m.type == MT_PLACE ? m.score : 0) << "}" << std::endl;
         return;
       }
-      game.apply(lex, m, rng);
+      ui_apply(m);
     } else if (sub == "bot") {
       if (game.over) return fail("the game is over");
       if (game.turn == ui_human) return fail("it is your turn");
@@ -6526,7 +6694,7 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
       const Decision D = eng().choose(P, ec, false);
       for (const auto& r : D.rows)
         if (r.move.same_as(D.move) && std::isfinite(r.win)) ui_win = 1.0 - r.win;
-      game.apply(lex, D.move, rng);
+      ui_apply(D.move);
     } else if (sub == "hint") {
       if (game.over || game.turn != ui_human) return fail("a hint needs your turn");
       const double secs = args.size() > 1 ? std::max(0.1, std::atof(args[1].c_str())) : 2.0;
@@ -6771,6 +6939,102 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
 
   // Game review: for every move of a game record with a known rack, compare the move
   // played with the engine's choice (win-probability and spread lost).
+  // How good was `actual` in position P, from the mover's point of view (only what they
+  // could see)?  Exact in the endgame, the one-tile solver with one tile in the bag,
+  // simulation (with `actual` among the candidates) otherwise.  False: no verdict.
+  struct ReviewAlt {
+    std::string move;
+    int score;
+    double win, value;
+  };
+  struct ReviewVerdict {
+    Move best;
+    double win_loss = 0, eq_loss = 0, best_win = 0.5;
+    std::string method;
+    bool exact = false;
+    std::vector<ReviewAlt> alts;
+  };
+  bool review_position(const Position& P, Move actual, double secs, ReviewVerdict& v) {
+    MoveGen gen(&lex, &leaves);
+    const EvalCtx ctx = Simulator::ctx_for(P);
+    actual.equity = gen.equity_of(actual, P.rack, ctx);
+    Move best;
+    double win_loss = 0, eq_loss = 0;
+    double best_win = 0.5;  // win probability of the player to move with best play
+    if (P.bag_n == 0) {
+      // exact: solve before the move, and after the actual move
+      EndgameParams ep;
+      ep.time_limit = secs;
+      ep.threads = threads;
+      const EndgameResult er = eng().endgame().solve(P.board, P.rack, P.unseen, P.zeros, ep);
+      best = er.best;
+      int va;
+      if (actual.type == MT_PLACE && actual.ntiles == P.rack.n) {
+        va = actual.score + 2 * P.unseen.face();
+      } else {
+        Board nb = P.board;
+        if (actual.type == MT_PLACE) nb.place(lex, actual);
+        Rack mine = P.rack;
+        if (actual.type == MT_PLACE) mine.sub_all(actual.used());
+        const EndgameResult ea = eng().endgame().solve(nb, P.unseen, mine, (actual.type == MT_PLACE && actual.score) ? 0 : P.zeros + 1, ep);
+        va = (actual.type == MT_PLACE ? actual.score : 0) - ea.value;
+      }
+      eq_loss = std::max(0, er.value - va);
+      v.method = er.solved ? "endgame (solved)" : "endgame (best found)";
+      v.exact = er.solved;
+    v.method = er.solved ? "endgame (solved)" : "endgame (best found)";
+    v.exact = er.solved;
+      auto res = [&](int v) { const int f = P.spread() + v; return f > 0 ? 1.0 : (f == 0 ? 0.5 : 0.0); };
+      win_loss = std::max(0.0, res(er.value) - res(va));
+      best_win = res(er.value);
+    } else if (P.bag_n == 1) {
+      const PegResult pr = eng().preendgame().solve(P, cfg.peg_candidates, secs, threads, false, &actual);
+      if (pr.rows.empty()) return false;
+      best = pr.rows[0].move;
+      best_win = pr.rows[0].win;
+      v.method = "pre-endgame";
+      for (size_t r = 0; r < pr.rows.size() && r < 5; ++r)
+        v.alts.push_back({move_str(P.board, pr.rows[r].move), pr.rows[r].move.type == MT_PLACE ? pr.rows[r].move.score : 0,
+                          pr.rows[r].win, pr.rows[r].spread});
+      bool found = false;
+      for (const auto& r : pr.rows)
+        if (r.move.same_as(actual)) {
+          found = true;
+          win_loss = std::max(0.0, pr.rows[0].win - r.win);
+          eq_loss = std::max(0.0, pr.rows[0].spread - r.spread);
+        }
+      if (!found && actual.type == MT_PLACE) return false;  // not evaluated in time: no verdict
+    } else {
+      Simulator& sim = eng().simulator();
+      std::vector<Move> cands = sim.candidates(P, cfg.sim.max_candidates);
+      bool found = false;
+      for (const auto& m : cands) found |= m.same_as(actual);
+      if (!found) cands.push_back(actual);
+      SimParams sp = cfg.sim;
+      sp.threads = threads;
+      sp.time_limit = secs;
+      const SimResult sr = sim.run(P, cands, sp);
+      if (sr.cands.empty()) return false;
+      best = sr.cands[0].move;
+      best_win = sr.cands[0].mean_win();
+      v.method = "simulation";
+      for (size_t r = 0; r < sr.cands.size() && r < 5; ++r)
+        v.alts.push_back({move_str(P.board, sr.cands[r].move), sr.cands[r].move.type == MT_PLACE ? sr.cands[r].move.score : 0,
+                          sr.cands[r].mean_win(), sr.cands[r].mean_eq()});
+      for (const auto& c : sr.cands)
+        if (c.move.same_as(actual)) {
+          win_loss = std::max(0.0, sr.cands[0].mean_win() - c.mean_win());
+          eq_loss = std::max(0.0, sr.cands[0].mean_eq() - c.mean_eq());
+        }
+    }
+    v.best = best;
+    if (best.same_as(actual)) win_loss = eq_loss = 0;
+    v.win_loss = win_loss;
+    v.eq_loss = eq_loss;
+    v.best_win = best_win;
+    return true;
+  }
+
   void cmd_review(const std::vector<std::string>& a) {
     if (!need_lex()) return;
     if (a.empty()) {
@@ -6813,66 +7077,11 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
         actual = Move();
       }
       if (actual.type != MT_PASS && !P.rack.contains(actual.used())) continue;
-      MoveGen gen(&lex, &leaves);
-      const EvalCtx ctx = Simulator::ctx_for(P);
-      actual.equity = gen.equity_of(actual, P.rack, ctx);
-      Move best;
-      double win_loss = 0, eq_loss = 0;
-      double best_win = 0.5;  // win probability of the player to move with best play
-      if (P.bag_n == 0) {
-        // exact: solve before the move, and after the actual move
-        EndgameParams ep;
-        ep.time_limit = secs;
-        ep.threads = threads;
-        const EndgameResult er = eng().endgame().solve(P.board, P.rack, P.unseen, P.zeros, ep);
-        best = er.best;
-        int va;
-        if (actual.type == MT_PLACE && actual.ntiles == P.rack.n) {
-          va = actual.score + 2 * P.unseen.face();
-        } else {
-          Board nb = P.board;
-          if (actual.type == MT_PLACE) nb.place(lex, actual);
-          Rack mine = P.rack;
-          if (actual.type == MT_PLACE) mine.sub_all(actual.used());
-          const EndgameResult ea = eng().endgame().solve(nb, P.unseen, mine, (actual.type == MT_PLACE && actual.score) ? 0 : P.zeros + 1, ep);
-          va = (actual.type == MT_PLACE ? actual.score : 0) - ea.value;
-        }
-        eq_loss = std::max(0, er.value - va);
-        auto res = [&](int v) { const int f = P.spread() + v; return f > 0 ? 1.0 : (f == 0 ? 0.5 : 0.0); };
-        win_loss = std::max(0.0, res(er.value) - res(va));
-        best_win = res(er.value);
-      } else if (P.bag_n == 1) {
-        const PegResult pr = eng().preendgame().solve(P, cfg.peg_candidates, secs, threads, false, &actual);
-        if (pr.rows.empty()) continue;
-        best = pr.rows[0].move;
-        best_win = pr.rows[0].win;
-        bool found = false;
-        for (const auto& r : pr.rows)
-          if (r.move.same_as(actual)) {
-            found = true;
-            win_loss = std::max(0.0, pr.rows[0].win - r.win);
-            eq_loss = std::max(0.0, pr.rows[0].spread - r.spread);
-          }
-        if (!found && actual.type == MT_PLACE) continue;  // not evaluated in time: no verdict
-      } else {
-        Simulator& sim = eng().simulator();
-        std::vector<Move> cands = sim.candidates(P, cfg.sim.max_candidates);
-        bool found = false;
-        for (const auto& m : cands) found |= m.same_as(actual);
-        if (!found) cands.push_back(actual);
-        SimParams sp = cfg.sim;
-        sp.threads = threads;
-        sp.time_limit = secs;
-        const SimResult sr = sim.run(P, cands, sp);
-        if (sr.cands.empty()) continue;
-        best = sr.cands[0].move;
-        best_win = sr.cands[0].mean_win();
-        for (const auto& c : sr.cands)
-          if (c.move.same_as(actual)) {
-            win_loss = std::max(0.0, sr.cands[0].mean_win() - c.mean_win());
-            eq_loss = std::max(0.0, sr.cands[0].mean_eq() - c.mean_eq());
-          }
-      }
+      ReviewVerdict v;
+      if (!review_position(P, actual, secs, v)) continue;
+      const Move best = v.best;
+      double win_loss = v.win_loss, eq_loss = v.eq_loss;
+      const double best_win = v.best_win;
       const int p = e.player;
       moves[p]++;
       if (best.same_as(actual)) {
@@ -7728,7 +7937,7 @@ int main(int argc, char** argv) {
   std::streambuf* saved = nullptr;
   std::ostringstream sink;
   if (quiet) saved = std::cout.rdbuf(sink.rdbuf());  // silence start-up messages
-  std::cout << "Tilefish 2.1 - Scrabble engine (" << app.threads << " threads)\n";
+  std::cout << "Tilefish 2.2 - Scrabble engine (" << app.threads << " threads)\n";
   if (lexpath.empty()) {
     // A tournament lexicon placed in the folder wins over the bundled ENABLE list.  The
     // folder is the current one or else the program's own, since a program started by
