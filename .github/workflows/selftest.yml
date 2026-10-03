@@ -27,4 +27,15 @@ jobs:
         run: ./tilefish --threads 2 "selftest quick"
       - name: Referee script parses
         if: runner.os == 'Linux'
-        run: python3 -m py_compile tools/referee.py
+        run: python3 -m py_compile tools/referee.py tools/analyze.py
+      - name: Refereed match, raw log and its analysis
+        if: runner.os == 'Linux'
+        run: |
+          python3 tools/referee.py --lexicon ENABLE.txt --games 2 --movetime 200 --parallel 2 \
+            --a "proto:./tilefish --quiet --threads 1" --a-init "player static" --a-name a \
+            --b "proto:./tilefish --quiet --threads 1" --b-init "player static" --b-name b --log match.jsonl
+          python3 tools/analyze.py match.jsonl --plan 30 | tee analysis.txt
+          test "$(grep -c '"meta"' match.jsonl)" = 1
+          test "$(grep -vc '"meta"' match.jsonl)" = 4
+          grep -q 'W [0-9]* *D [0-9]* *L [0-9]*' analysis.txt
+          grep -q 'illegal/crash/slow events: 0' analysis.txt
