@@ -1,0 +1,94 @@
+name: experiment
+# Engine-vs-engine screening matches on GitHub's runners.  Each job plays its own range
+# of deal pairs under tools/referee.py; the summary job pools the raw logs with
+# tools/analyze.py.  Start it from the Actions tab or with
+#   gh workflow run experiment.yml -f a_spec=champion:plies=3 -f b_ref=v2.1 ...
+# Development screens use seeds 1000-8999; keep 9000 and up for confirmation matches.
+on:
+  workflow_dispatch:
+    inputs:
+      name: { description: "label for this experiment", default: "screen" }
+      a_ref: { description: "git ref that builds engine A (the candidate)", default: "main" }
+      a_spec: { description: "engine A setting", default: "champion" }
+      b_ref: { description: "git ref that builds engine B (the frozen baseline)", default: "v2.1" }
+      b_spec: { description: "engine B setting", default: "champion" }
+      movetime: { description: "milliseconds a move", default: "5000" }
+      threads: { description: "threads per engine", default: "1" }
+      shards: { description: "parallel jobs", default: "10" }
+      pairs: { description: "deal pairs per job", default: "20" }
+      seed: { description: "deal seed", default: "1001" }
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - id: p
+        env:
+          SHARDS: ${{ inputs.shards }}
+        run: python3 -c "import json, os; print('shards=' + json.dumps(list(range(int(os.environ['SHARDS'])))))" >> "$GITHUB_OUTPUT"
+  match:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    env:
+      A_REF: ${{ inputs.a_ref }}
+      B_REF: ${{ inputs.b_ref }}
+      A_SPEC: ${{ inputs.a_spec }}
+      B_SPEC: ${{ inputs.b_spec }}
+      MOVETIME: ${{ inputs.movetime }}
+      THREADS: ${{ inputs.threads }}
+      PAIRS: ${{ inputs.pairs }}
+      SEED: ${{ inputs.seed }}
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build both engines
+        run: |
+          for side in a b; do
+            if [ $side = a ]; then ref=$A_REF; spec=$A_SPEC; else ref=$B_REF; spec=$B_SPEC; fi
+            git show "$ref:tilefish.cpp" > "tf_$side.cpp"
+            g++ -O3 -march=native -std=c++17 -pthread "tf_$side.cpp" -o "tf_$side"
+            { echo "commit: $(git rev-parse "$ref^{commit}") ($ref)"; echo "setting: $spec"; echo "toolchain: $(g++ --version | head -n 1), -O3 -march=native"; echo "cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"; } > "$side.info"
+            cat "$side.info"
+          done
+      - name: Play
+        run: |
+          python3 tools/referee.py --lexicon ENABLE.txt --games "$PAIRS" --first-pair $((SHARD * PAIRS)) --seed "$SEED" \
+            --movetime "$MOVETIME" --parallel $(( $(nproc) / THREADS > 0 ? $(nproc) / THREADS : 1 )) \
+            --a "proto:./tf_a --lexicon ENABLE.txt --threads $THREADS --quiet" --a-init "player $A_SPEC" --a-name A --a-info a.info \
+            --b "proto:./tf_b --lexicon ENABLE.txt --threads $THREADS --quiet" --b-init "player $B_SPEC" --b-name B --b-info b.info \
+            --log "shard-$SHARD.jsonl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: shard-${{ matrix.shard }}.jsonl
+  summary:
+    needs: match
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: logs
+          pattern: shard-*
+          merge-multiple: true
+      - name: Pool and analyse
+        env:
+          NAME: ${{ inputs.name }}
+        run: |
+          cat logs/*.jsonl > "$NAME.jsonl"
+          { echo "## $NAME"; echo '```'; python3 tools/analyze.py "$NAME.jsonl" --bootstrap 10000 --plan 20 30; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.name }}
+          path: ${{ inputs.name }}.jsonl
