@@ -6208,6 +6208,7 @@ struct App {
   Setup
     lexicon FILE          load a word list or a .kwg lexicon (also loads FILE.leaves or
                           FILE.klv2, and FILE.win, if present)
+    savewords FILE        write the word list as text, one word a line (e.g. from a .kwg)
     leaves FILE           load leave values        saveleaves FILE   save them
                           (text "LEAVE value" lines, or binary .klv/.klv2 as used by wolges/Macondo)
     win FILE              load win model           savewin FILE      save it
@@ -6923,6 +6924,21 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
     } else if (cmd == "leaves") {
       if (args.empty()) std::cout << "leave values: " << leaves_src << "\n";
       else load_leaves(rest);
+    } else if (cmd == "savewords") {
+      // The playable words (up to 15 letters), one a line: the plain list that
+      // tools/referee.py checks moves against, from any lexicon including a .kwg.
+      if (!need_lex()) return true;
+      std::ofstream f(rest);
+      size_t n = 0;
+      if (f)
+        lex.for_each_word([&](const std::string& w) {
+          if (w.size() > (size_t)N) return;
+          std::string text(w.size(), ' ');
+          for (size_t i = 0; i < w.size(); ++i) text[i] = char('A' + (u8)w[i] - 1);
+          f << text << '\n';
+          ++n;
+        });
+      std::cout << (f ? fmt("saved %zu words\n", n) : std::string("error: cannot write\n"));
     } else if (cmd == "saveleaves") {
       const std::string low = to_lower(rest);
       const bool klv = low.size() > 5 && low.compare(low.size() - 5, 5, ".klv2") == 0;

@@ -17,6 +17,7 @@ on:
       shards: { description: "parallel jobs", default: "10" }
       pairs: { description: "deal pairs per job", default: "20" }
       seed: { description: "deal seed", default: "1001" }
+      lexicon: { description: "word list: ENABLE, CSW24 or NWL23", default: "ENABLE" }
 permissions:
   contents: read
 jobs:
@@ -47,6 +48,7 @@ jobs:
       PAIRS: ${{ inputs.pairs }}
       SEED: ${{ inputs.seed }}
       SHARD: ${{ matrix.shard }}
+      LEX: ${{ inputs.lexicon }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,12 +62,22 @@ jobs:
             { echo "commit: $(git rev-parse "$ref^{commit}") ($ref)"; echo "setting: $spec"; echo "toolchain: $(g++ --version | head -n 1), -O3 -march=native"; echo "cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"; } > "$side.info"
             cat "$side.info"
           done
+      - name: Word list
+        run: |
+          if [ "$LEX" = ENABLE ]; then
+            echo "LEXFILE=ENABLE.txt" >> "$GITHUB_ENV"; echo "WORDS=ENABLE.txt" >> "$GITHUB_ENV"
+          else
+            sh get-lexicon.sh "$LEX"  # the .kwg and .klv2, checked against pinned SHA-256 sums
+            g++ -O2 -std=c++17 -pthread tilefish.cpp -o tf_tools
+            ./tf_tools --lexicon "$LEX.kwg" "savewords $LEX.txt"  # the referee checks moves against it
+            echo "LEXFILE=$LEX.kwg" >> "$GITHUB_ENV"; echo "WORDS=$LEX.txt" >> "$GITHUB_ENV"
+          fi
       - name: Play
         run: |
-          python3 tools/referee.py --lexicon ENABLE.txt --games "$PAIRS" --first-pair $((SHARD * PAIRS)) --seed "$SEED" \
+          python3 tools/referee.py --lexicon "$WORDS" --games "$PAIRS" --first-pair $((SHARD * PAIRS)) --seed "$SEED" \
             --movetime "$MOVETIME" --parallel $(( $(nproc) / THREADS > 0 ? $(nproc) / THREADS : 1 )) \
-            --a "proto:./tf_a --lexicon ENABLE.txt --threads $THREADS --quiet" --a-init "player $A_SPEC" --a-name A --a-info a.info \
-            --b "proto:./tf_b --lexicon ENABLE.txt --threads $THREADS --quiet" --b-init "player $B_SPEC" --b-name B --b-info b.info \
+            --a "proto:./tf_a --lexicon $LEXFILE --threads $THREADS --quiet" --a-init "player $A_SPEC" --a-name A --a-info a.info \
+            --b "proto:./tf_b --lexicon $LEXFILE --threads $THREADS --quiet" --b-init "player $B_SPEC" --b-name B --b-info b.info \
             --log "shard-$SHARD.jsonl"
       - uses: actions/upload-artifact@v4
         with:
