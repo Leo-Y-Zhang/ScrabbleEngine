@@ -5,7 +5,7 @@
   --tile: #efd59c; --tile-hi: #f7e6bd; --tile-edge: #c9a56a; --tile-ink: #2a2116; --blank-ink: #9a4f16;
   --accent: #2e4a42; --accent-ink: #f3eee4; --warn: #a8432c; --you: #2e4a42; --bot: #8a5a2b;
   --label-dark: rgba(34,29,23,.62); --focus: #1f6feb;
-  --rt: clamp(36px, 11.5vw, 54px);
+  --rt: clamp(34px, 10.5vw, 46px);
   --bw: min(720px, calc(100svh - 300px));
   color-scheme: light;
 }
@@ -94,8 +94,8 @@ kbd { font: 600 11px/1 "IBM Plex Sans", system-ui, sans-serif; padding: 2px 5px;
   box-shadow: inset 0 -0.09em 0 var(--tile-edge), 0 1px 1.5px rgba(0,0,0,.25);
   color: var(--tile-ink); display: grid; place-items: center;
 }
-.tile .ch { font: 800 54cqw/1 Archivo, "Arial Black", system-ui, sans-serif; transform: translate(-3%, -2%); }
-.tile .val { position: absolute; right: 9%; bottom: 6%; font: 600 21cqw/1 Archivo, system-ui, sans-serif; }
+.tile .ch { font: 800 48cqw/1 Archivo, "Arial Black", system-ui, sans-serif; transform: translate(-4%, -3%); }
+.tile .val { position: absolute; right: 9%; bottom: 7%; font: 600 20cqw/1 Archivo, system-ui, sans-serif; }
 .tile.blank .ch { color: var(--blank-ink); font-style: italic; }
 .tile.blank::after { content: ""; position: absolute; inset: 8%; border-radius: 8%; border: 1px dashed rgba(154,79,22,.45); pointer-events: none; }
 .tile.pending { box-shadow: inset 0 -0.09em 0 var(--tile-edge), 0 0 0 2px var(--accent); cursor: grab; }
@@ -118,7 +118,8 @@ kbd { font: 600 11px/1 "IBM Plex Sans", system-ui, sans-serif; padding: 2px 5px;
 .rack .tile.sel { transform: translateY(-14%); box-shadow: inset 0 -0.09em 0 var(--tile-edge), 0 6px 10px -4px rgba(0,0,0,.5); }
 .rack .tile.xsel { box-shadow: inset 0 -0.09em 0 var(--tile-edge), 0 0 0 3px var(--warn); }
 .rack.concealed .tile { visibility: hidden; }
-.ghost { position: fixed; pointer-events: none; z-index: 50; transform: translate(-50%, -50%) scale(1.06); opacity: .95; }
+.ghost { position: fixed; pointer-events: none; z-index: 50; transform: translate(-50%, -50%); opacity: .96; box-shadow: 0 8px 18px -6px rgba(0,0,0,.45); transition: width .08s, height .08s; }
+.sq.drop { background: color-mix(in srgb, var(--accent) 22%, var(--sq)); }
 
 /* ---------- controls ---------- */
 .status { min-height: 22px; font-size: 14px; color: var(--ink-2); text-align: center; max-width: 640px; }
