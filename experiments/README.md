@@ -70,6 +70,67 @@ gh workflow run experiment.yml -f name=confirm-60s -f a_ref=CANDIDATE -f a_spec=
 It can be resumed: each job owns its own range of deal pairs, so "Re-run failed jobs"
 replays only the missing ones, with the same deals.
 
+## 2. Weight of the static prior, and candidate selection (registered 3 October 2026, before any game)
+
+**How the ranking works (read from the code, §11 `rank`).** Each candidate's simulated
+results are compared, rollout by rollout, with the most-sampled candidate's. The mean
+paired difference is then combined with a prior centred on the static-equity difference,
+whose variance is 2(scale × tau)². The combination is the normal-normal posterior mean,
+(m/se² + prior/var) / (1/se² + 1/var). Because se² shrinks as 1/n, the prior's weight
+falls as the rollouts accumulate, so it cannot dominate a long search. The static value is
+used once, as the prior; the rollouts end in static evaluations of the *resulting*
+positions, which is a different quantity, so nothing is counted twice. What is open is
+whether tau = 4 (static equity "right to within about 4 points") is the right strength,
+and whether 30 candidates pruned at z = 2.4 spend the time well.
+
+**Hypotheses** (each a single change to `champion`, all existing options):
+
+| Candidate | Change | Hypothesis |
+|---|---|---|
+| `tau=2` | stronger prior | at 5 s, rollouts are still noisy, so trusting the static ranking more helps |
+| `tau=8` | weaker prior | the static evaluation misjudges more than 4 points, so the rollouts should count sooner |
+| `tau=16` | much weaker prior | as above, more so |
+| `cands=15` | half the candidates | moves ranked 16 to 30 by static equity rarely win, and their samples are better spent on the top 15 |
+| `z=1.8` | prune sooner | clearly worse moves currently use too much time |
+| `z=3.2` | prune later | moves that start badly are dropped before they can recover |
+
+**Protocol.** CSW24 (kwg and klv2 from MAGPIE-DATA at the pinned commit, SHA-256
+checked by `get-lexicon.sh`; win model `CSW24.win` from this repository). 5 s a move, one
+thread each, engine B is frozen `v2.1` with `champion`. 200 deal pairs per candidate,
+10 jobs of 20, seed 1003 for every candidate (the same deals). Selection: the candidate
+with the highest score, if its Bonferroni-corrected interval (6 candidates, 99.2%)
+excludes 50% on the positive side, or failing that the highest score above 51.5%,
+which goes forward only as a lead. **Confirmation of the selected candidate:** fresh
+seed 2001, 300 deal pairs at 5 s and 100 pairs at 20 s, both against v2.1. It is
+promoted to the default only if the 5 s confirmation's 95% interval lies above 50%
+and the 20 s result's point estimate is not below 50%.
+
+**Results** (run 3 October 2026 on `main` at `5555811`, the same search as 2.2; engine B is
+`v2.1`; CSW24, 5 s a move, one thread each, 200 deal pairs, seed 1003; intervals are
+99.2%, Bonferroni over the six candidates):
+
+| Candidate | A: W–D–L | Score | Elo (99.2%) | Spread a game (99.2%) |
+|---|---|---|---|---|
+| `tau=2` | 190–2–208 | 47.75% | −16 (−46 to +14) | −4.6 (−12.1 to +2.9) |
+| `tau=8` | 202–5–193 | 51.12% | +8 (−22 to +38) | +0.5 (−6.8 to +7.8) |
+| `tau=16` | 203–1–196 | 50.88% | +6 (−21 to +33) | −1.0 (−7.9 to +5.9) |
+| `cands=15` | 193–0–207 | 48.25% | −12 (−41 to +16) | +2.1 (−5.1 to +9.4) |
+| `z=1.8` | 200–1–199 | 50.12% | +1 (−29 to +30) | +1.0 (−6.4 to +8.4) |
+| `z=3.2` | 205–2–193 | 51.50% | +10 (−14 to +35) | +1.3 (−5.0 to +7.7) |
+
+Each engine used about 4.5 s of the 5 s a move, with no illegal moves, crashes or slow
+moves. Raw logs: `csw-*-vs-v2.1-5s.jsonl`.
+
+**Decision: nothing promoted; the defaults stay.** No interval excludes 50%. The
+registered rule sends forward the best candidate scoring *above* 51.5%. The best,
+`z=3.2`, scored exactly 51.50%, so under the rule as written none goes to confirmation.
+The rule is not relaxed after the fact. The pattern fits small or zero effects:
+stronger trust in the static prior (`tau=2`) and fewer candidates (`cands=15`) lean
+negative, while weaker trust (`tau=8`, `16`) and later pruning (`z=3.2`) lean positive by
+less than 10 Elo. Detecting 10 Elo needs roughly 3,700 deal pairs at this variance, so the
+screens rule out large effects (beyond about ±35 Elo) and nothing more. If they are
+revisited, the natural single candidate is `tau=8,z=3.2`, registered as a new
+hypothesis and run on fresh seeds.
 ## 3. Fresh, versioned baselines against current MAGPIE and Macondo (registered 3 October 2026, before any game)
 
 The published matches against MAGPIE and Macondo did not record which versions were

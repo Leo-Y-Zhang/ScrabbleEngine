@@ -57,7 +57,9 @@ jobs:
         run: |
           cd "$PKG"
           if [ -f get-lexicon.ps1 ]; then
-            powershell -NoProfile -ExecutionPolicy Bypass -File get-lexicon.ps1
+            # As on machines whose Windows PowerShell 5.1 has no Get-FileHash: the script must not need it.
+            powershell -NoProfile -ExecutionPolicy Bypass -Command "function Get-FileHash { throw 'Get-FileHash is not available' }; & ./get-lexicon.ps1"
+            test -f CSW24.kwg
           else
             sh get-lexicon.sh
           fi
@@ -81,8 +83,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'EOF'
-          A championship-strength Scrabble engine. Download the zip for your computer,
-          unzip it and follow QUICKSTART.txt inside:
+          Tilefish, a Scrabble engine. To play without installing anything, open
+          https://leo-y-zhang.github.io/ScrabbleEngine/ in any browser.
+
+          To run it on your computer, download the zip for your system, unzip it and
+          follow QUICKSTART.txt inside:
 
           1. Get the championship word list once: double-click `get-lexicon.bat` on
              Windows, or type `sh get-lexicon.sh` on macOS and Linux. This downloads
