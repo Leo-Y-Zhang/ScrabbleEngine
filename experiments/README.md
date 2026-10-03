@@ -69,3 +69,22 @@ gh workflow run experiment.yml -f name=confirm-60s -f a_ref=CANDIDATE -f a_spec=
 
 It can be resumed: each job owns its own range of deal pairs, so "Re-run failed jobs"
 replays only the missing ones, with the same deals.
+
+## 3. Fresh, versioned baselines against current MAGPIE and Macondo (registered 3 October 2026, before any game)
+
+The published matches against MAGPIE and Macondo did not record which versions were
+played. These matches measure Tilefish 2.2 (`main`, the same search as 2.1) against
+**pinned current builds**, made by `experiment.yml` itself:
+
+- MAGPIE `375ad953e20d` (2026-10-01), built with `make magpie BUILD=no_pgo_release`, its own
+  data (`download_data.sh`, DATA_VERSION 20260925), a CSW24 word map made with its
+  `convert text2wordmap`, and its full PlayChooser (`full`: simulation, pre-endgame,
+  endgame).
+- Macondo `14c080b57608` (2026-09-22), BestBot's bot type at 5 plies (`simming 5`), and
+  separately its inference bot (`infer 5`).
+
+Protocol: CSW24, one thread each on the same 4-vCPU runner, 5 s a move, 200 deal pairs
+(10 jobs of 20), fresh seed 3001 for all three. This is a measurement, not a test of a
+change. It is reported with 95% intervals and Bonferroni over the three opponents
+(98.3%). Tilefish's leave values are the CSW24 `.klv2` from `get-lexicon`, MAGPIE uses
+its own data, and Macondo uses its own strategy files with the same `.klv2`.
