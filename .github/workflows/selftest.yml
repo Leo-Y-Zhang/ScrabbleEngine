@@ -39,3 +39,5 @@ jobs:
           test "$(grep -vc '"meta"' match.jsonl)" = 4
           grep -q 'W [0-9]* *D [0-9]* *L [0-9]*' analysis.txt
           grep -q 'illegal/crash/slow events: 0' analysis.txt
+          # The same deterministic engine in both seats of every deal pair must come out level.
+          grep -q 'match score 2.0 / 4' analysis.txt
