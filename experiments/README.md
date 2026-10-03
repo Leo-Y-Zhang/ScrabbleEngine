@@ -69,3 +69,38 @@ gh workflow run experiment.yml -f name=confirm-60s -f a_ref=CANDIDATE -f a_spec=
 
 It can be resumed: each job owns its own range of deal pairs, so "Re-run failed jobs"
 replays only the missing ones, with the same deals.
+
+## 2. Weight of the static prior, and candidate selection (registered 3 October 2026, before any game)
+
+**How the ranking works (read from the code, §11 `rank`).** Each candidate's simulated
+results are compared, rollout by rollout, with the most-sampled candidate's. The mean
+paired difference is then combined with a prior centred on the static-equity difference,
+whose variance is 2(scale × tau)². The combination is the normal-normal posterior mean,
+(m/se² + prior/var) / (1/se² + 1/var). Because se² shrinks as 1/n, the prior's weight
+falls as the rollouts accumulate, so it cannot dominate a long search. The static value is
+used once, as the prior; the rollouts end in static evaluations of the *resulting*
+positions, which is a different quantity, so nothing is counted twice. What is open is
+whether tau = 4 (static equity "right to within about 4 points") is the right strength,
+and whether 30 candidates pruned at z = 2.4 spend the time well.
+
+**Hypotheses** (each a single change to `champion`, all existing options):
+
+| Candidate | Change | Hypothesis |
+|---|---|---|
+| `tau=2` | stronger prior | at 5 s, rollouts are still noisy, so trusting the static ranking more helps |
+| `tau=8` | weaker prior | the static evaluation misjudges more than 4 points, so the rollouts should count sooner |
+| `tau=16` | much weaker prior | as above, more so |
+| `cands=15` | half the candidates | moves ranked 16 to 30 by static equity rarely win, and their samples are better spent on the top 15 |
+| `z=1.8` | prune sooner | clearly worse moves currently use too much time |
+| `z=3.2` | prune later | moves that start badly are dropped before they can recover |
+
+**Protocol.** CSW24 (kwg and klv2 from MAGPIE-DATA at the pinned commit, SHA-256
+checked by `get-lexicon.sh`; win model `CSW24.win` from this repository). 5 s a move, one
+thread each, engine B is frozen `v2.1` with `champion`. 200 deal pairs per candidate,
+10 jobs of 20, seed 1003 for every candidate (the same deals). Selection: the candidate
+with the highest score, if its Bonferroni-corrected interval (6 candidates, 99.2%)
+excludes 50% on the positive side, or failing that the highest score above 51.5%,
+which goes forward only as a lead. **Confirmation of the selected candidate:** fresh
+seed 2001, 300 deal pairs at 5 s and 100 pairs at 20 s, both against v2.1. It is
+promoted to the default only if the 5 s confirmation's 95% interval lies above 50%
+and the 20 s result's point estimate is not below 50%.
