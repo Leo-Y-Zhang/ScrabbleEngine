@@ -23,6 +23,7 @@ variance measured in these logs as the pilot estimate.
 """
 
 import argparse
+import gzip
 import json
 import math
 import random
@@ -52,7 +53,7 @@ def load(paths):
     """Games grouped into units: (run, pair) -> games.  A meta line starts a run."""
     units, metas, run = {}, [], 0
     for path in paths:
-        with open(path) as f:
+        with (gzip.open(path, "rt") if path.endswith(".gz") else open(path)) as f:
             for line in f:
                 line = line.strip()
                 if not line:

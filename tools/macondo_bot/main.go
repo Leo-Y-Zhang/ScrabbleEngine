@@ -12,7 +12,9 @@
 // Protocol (one command per line on stdin, answers on stdout):
 //
 //	position cgp <CGP>     set the position (rack of the player to move first)
-//	go movetime <ms>       answer "bestmove <move>"  (8D WORD, D8 WORD, exch ABC, pass)
+//	go movetime <ms>       answer "bestmove <move>"  (8D WORD, D8 WORD, exch ABC, pass),
+//	                       after an "info <JSON>" line: set-up and search time, Macondo's
+//	                       own summary of the search, and whether inference ran
 //	isready                answer "readyok"
 //	quit
 //
@@ -23,6 +25,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
@@ -102,18 +105,25 @@ func main() {
 					ms = v
 				}
 			}
-			say("bestmove " + best(cfg, pos, lex, ms, threads, botType, plies))
+			info := map[string]interface{}{}
+			mv := best(cfg, pos, lex, ms, threads, botType, plies, info)
+			if b, err := json.Marshal(info); err == nil {
+				say("info " + string(b))
+			}
+			say("bestmove " + mv)
 		}
 	}
 }
 
-func best(cfg *config.Config, pos, lex string, ms float64, threads int, botType pb.BotRequest_BotCode, plies int) string {
+func best(cfg *config.Config, pos, lex string, ms float64, threads int, botType pb.BotRequest_BotCode, plies int,
+	info map[string]interface{}) string {
 	start := time.Now()
 	// The deadline covers everything from receiving "go", setup included.
 	left := time.Duration(ms*0.97)*time.Millisecond - time.Since(start)
-	if m := search(cfg, pos, lex, ms, threads, botType, plies, left); m != nil {
+	if m := search(cfg, pos, lex, ms, threads, botType, plies, left, info); m != nil {
 		return notation(m)
 	}
+	info["retry"] = true
 	// Macondo's endgame solver can be cut off before its first iteration and
 	// return an empty line (elite.go then panics on seq[0]).  Its production
 	// budgets are long enough never to see this; here it gets one more search
@@ -122,9 +132,10 @@ func best(cfg *config.Config, pos, lex string, ms float64, threads int, botType 
 	if retry < time.Second {
 		retry = time.Second
 	}
-	if m := search(cfg, pos, lex, ms, threads, botType, plies, retry); m != nil {
+	if m := search(cfg, pos, lex, ms, threads, botType, plies, retry, info); m != nil {
 		return notation(m)
 	}
+	info["fallback"] = "static"
 	g, err := cgp.ParseCGP(cfg, pos+" lex "+lex+";")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "macondo_bot: bad cgp:", err)
@@ -144,7 +155,7 @@ func best(cfg *config.Config, pos, lex string, ms float64, threads int, botType 
 // search runs the bot on the position with the given budget.  It returns nil
 // when the bot fails or panics.
 func search(cfg *config.Config, pos, lex string, ms float64, threads int, botType pb.BotRequest_BotCode, plies int,
-	budget time.Duration) (m *move.Move) {
+	budget time.Duration, info map[string]interface{}) (m *move.Move) {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintln(os.Stderr, "macondo_bot: bot panicked:", r)
@@ -172,6 +183,8 @@ func search(cfg *config.Config, pos, lex string, ms float64, threads int, botTyp
 	tp.SetBackupMode(game.InteractiveGameplayMode)
 	tp.SetStateStackLength(1)
 	tp.RecalculateBoard()
+	info["bag"] = g.Game.Bag().TilesRemaining()
+	info["setup_s"] = time.Since(start).Seconds()
 	left := budget - time.Since(start)
 	if left < 10*time.Millisecond {
 		left = 10 * time.Millisecond
@@ -181,7 +194,13 @@ func search(cfg *config.Config, pos, lex string, ms float64, threads int, botTyp
 	if os.Getenv("MACONDO_BOT_LOG") != "" {
 		ctx = log.Logger.WithContext(ctx)
 	}
+	t1 := time.Now()
 	m, err = tp.BestPlay(ctx)
+	info["search_s"] = time.Since(t1).Seconds()
+	// -1: inference not attempted (simming bot), 0: attempted, nothing inferred
+	// (a game built from a CGP has no history to infer from).
+	info["inferred"] = tp.LastInferenceCount()
+	info["details"] = tp.BestPlayDetails(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "macondo_bot: best play:", err)
 		return nil

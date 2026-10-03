@@ -194,3 +194,62 @@ not reproduce against today's pinned Macondo.** No claim that Tilefish is the st
 engine follows from this. At tournament-length budgets, with four cores (BestBot's
 production setting), the comparison is open, and the deciding match would be the
 60–180 s, four-core profile planned above.
+
+## 4. Why level on wins but ahead on points against Macondo at 20 s? (registered 4 October 2026, before any game)
+
+**What the existing logs can and cannot show.** The logs of section 3 record each game's
+final score, time and errors, **but not its moves**, so no position from those games can
+be reconstructed. What they do show (`python3 tools/margins.py
+experiments/base-v2.2-vs-macondo-simming-20s.jsonl`):
+
+| 20 s against Macondo `simming 5` (400 games) | Value |
+|---|---|
+| Tilefish's wins: count, mean margin, median | 198, +103.4, +84.0 |
+| Tilefish's losses: count, mean margin, median | 199, −72.0, −59.0 |
+| Games decided by 25 points or less: share, Tilefish's score in them | 19.2%, 39.6% |
+| Games decided by 50 points or less: share, Tilefish's score in them (95% bootstrap interval) | 35.2%, 43.6% (36.1% to 51.6%) |
+| Games decided by more than 100: share, Tilefish's score in them | 33.8%, 62.2% |
+
+The positive average spread comes from larger wins, not more of them: Tilefish's wins are
+bigger than its losses, and it loses more of the close games. Against MAGPIE at 20 s the
+same table gives 58.3% in games decided by 25 or less; against Macondo at 5 s, 52.0%.
+This locates the question (close games, so probably the late game, where margins are
+decided) without answering it. A win-probability error is one explanation, not the only
+one: weaker pre-endgame or endgame play, or worse decisions in tight positions, would look
+the same.
+
+**Configuration facts checked in the code before running** (Macondo `14c080b57608`):
+- Each move, both engines get only a CGP, so neither has the game's history. Macondo's
+  inference needs it (`rangefinder/inference.go`, `PrepareFinder` returns `ErrNoEvents`
+  for a game without events), and so does Tilefish's (`Position::has_opp_last`). **So
+  `infer 5` has played as `simming 5` in every match so far, and Tilefish has never
+  inferred either.** The 62.88% against `infer 5` measured the same opponent as the
+  60.00% against `simming 5`.
+- Macondo's phases (`ai/bot/elite.go`): endgame with the bag empty; pre-endgame solver
+  with 1 tile in the bag; with 2 to 7 in the bag, a simulation to the end of the game
+  over its top 100 moves; otherwise 5 plies over its top 100 moves, stopping early at 99%
+  confidence. Tilefish: endgame; pre-endgame with 1 in the bag; with 2 to 7, simulation
+  played out to the end over its top 30 moves; otherwise 2 plies over its top 30.
+
+**New instrumentation** (this branch): the referee now stores each game's full record:
+the position each mover saw (CGP, opponent's rack hidden while the bag has tiles), the
+move, score, time, CPU seconds used by the engine's processes, engine start-up time, and
+an `info` line from each engine. Tilefish's info gives, per move: phase, legal moves
+generated, candidates kept, iterations, positions, candidates pruned, the iterations
+each candidate received, the top six with static rank, simulated win rate and equity,
+posterior, simulated difference and **the share of the posterior precision that comes
+from the static prior**, snapshots of the leading move at 1/64 … 1/2 of the search, and
+the time spent generating, inferring and simulating. Macondo's info gives set-up and
+search time, whether inference ran, and Macondo's own summary of its search. None of
+this changes what either engine plays.
+
+**Runs (measurements, not tests of a change).** CSW24, one thread each, Tilefish `main`
+search (= 2.2) against Macondo `14c080b57608` `simming 5`:
+
+| Run | Budget | Pairs | Seed | Purpose |
+|---|---|---|---|---|
+| `audit-20s` | 20 s | 200 (10 × 20) | 3002 | the section 3 match replayed with records: a replication of 49.88%, and the games to audit |
+| `profile-5s` | 5 s | 40 (2 × 20) | 3101 | where computation goes at 5 s |
+| `profile-60s` | 60 s | 16 (4 × 4) | 3102 | pilot: where computation goes at 60 s |
+
+The audit itself (positions, decisions, reanalysis) is described with its results.
