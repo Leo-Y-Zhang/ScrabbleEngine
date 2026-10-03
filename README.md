@@ -60,6 +60,7 @@ Building from source (below) gives one tuned to your processor, which is somewha
 | `get-lexicon.sh`, `get-lexicon.bat`, `get-lexicon.ps1` | Download CSW24 (or NWL23) and its leave values, checked against known checksums. |
 | `LICENSE` | The GNU General Public License, version 3. |
 | `web/` | The browser version: the page, the worker that runs the engine (compiled to WebAssembly), `build.sh` and a test that plays whole games through it. |
+| `experiments/` | Every engine change screened against the frozen 2.1: hypothesis, setup, result, decision and raw logs, failures included. |
 | `tools/referee.py` | Neutral referee for engine-vs-engine matches (its own rules code, paired games, parallel play). |
 | `tools/analyze.py` | Statistics for the referee's raw logs: wins, draws, losses, Elo and spread with intervals over deal pairs, and match lengths. |
 | `tools/magpie_bot.c`, `tools/build_magpie_bot.sh` | Lets MAGPIE play through the same protocol, for head-to-head matches. |
