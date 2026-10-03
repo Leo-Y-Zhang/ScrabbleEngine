@@ -41,6 +41,37 @@ jobs:
       - name: Self-test
         shell: bash
         run: ./tilefish --threads 2 "selftest quick"
+      # Code signing (docs/windows.md).  Dormant until the owner has a SignPath project and
+      # sets the repository variable SIGNPATH_ORGANIZATION_ID and the secret
+      # SIGNPATH_API_TOKEN; until then releases are built unsigned, as before.
+      - name: Upload the unsigned program for signing
+        id: unsigned
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-${{ matrix.name }}
+          path: tilefish.exe
+      - name: Sign with SignPath (waits for the owner's approval in SignPath)
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'ScrabbleEngine' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+      - name: Use the signed program, and check its signature
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: |
+          Copy-Item signed/tilefish.exe tilefish.exe -Force
+          $sig = Get-AuthenticodeSignature tilefish.exe
+          "signature: $($sig.Status), signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "the signed program's signature is not valid" }
+          ./tilefish.exe --threads 2 "selftest quick"
       - name: Package
         shell: bash
         run: |
@@ -57,7 +88,9 @@ jobs:
         run: |
           cd "$PKG"
           if [ -f get-lexicon.ps1 ]; then
-            # As on machines whose Windows PowerShell 5.1 has no Get-FileHash: the script must not need it.
+            # Tests the fallback, not the original problem: the script must work even where
+            # Get-FileHash fails.  The original failure (v2.2's script started from a
+            # PowerShell 7 prompt) is reproduced in selftest.yml's windows-lexicon job.
             powershell -NoProfile -ExecutionPolicy Bypass -Command "function Get-FileHash { throw 'Get-FileHash is not available' }; & ./get-lexicon.ps1"
             test -f CSW24.kwg
           else

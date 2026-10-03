@@ -72,8 +72,12 @@ warning has a "Run anyway" button (under "More info"). **Smart App Control** (Wi
 on some new installations) may block the program outright, with no override; whether it
 does is decided file by file. On one such laptop the v2.2 program ran and v2.2.1, built
 from the same source, was blocked. If that happens, use the browser version above, which
-needs no download. Signing the releases would fix this, and free signing for open-source
-projects is available (for example through SignPath).
+needs no download. Signing the releases would fix this: the release workflow is ready for
+SignPath Foundation's free signing for open-source projects, which needs the owner's
+accounts to switch on ([docs/windows.md](docs/windows.md)). v2.2's `get-lexicon.bat`
+also failed when started from a PowerShell 7 window, because Windows PowerShell 5.1 then
+loads PowerShell 7's modules; v2.2.1 avoids `Get-FileHash`, and the current file clears
+the inherited module path (same page).
 Building from source (below) gives one tuned to your processor, which is somewhat faster.
 
 ## What's in this folder

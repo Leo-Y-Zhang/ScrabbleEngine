@@ -21,7 +21,11 @@ $sums = @{
   "NWL23.kwg"  = "3e74af981fdd974e107283f686da0fe4b7ec84ad0d825d444330c338c33b91ba"
   "NWL23.klv2" = "37dea945c29c3773eb4cd5a4117f3d3256c8b548cd3bf3b5ce8a219cb5e0a3fa"
 }
-# SHA-256 through .NET: Get-FileHash is missing from some Windows PowerShell 5.1 setups.
+# SHA-256 through .NET rather than Get-FileHash.  Windows PowerShell 5.1 has Get-FileHash, but
+# started with PowerShell 7's module path (for example from a PowerShell 7 prompt through
+# cmd.exe) it loads PowerShell 7's Microsoft.PowerShell.Utility, which lacks it, and v2.2
+# failed there.  get-lexicon.bat now clears the inherited path; this keeps the script
+# working however it is started.
 function Get-Sha256([string]$Path) {
   $stream = [System.IO.File]::OpenRead((Resolve-Path $Path).Path)
   try {

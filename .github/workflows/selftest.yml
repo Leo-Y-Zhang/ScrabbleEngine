@@ -47,3 +47,56 @@ jobs:
           grep -q 'bootstrap over pairs (200 resamples)' analysis.txt
           # The same deterministic engine in both seats of every deal pair must come out level.
           grep -q 'match score 2.0 / 4' analysis.txt
+  windows-lexicon:
+    # get-lexicon.bat started from a PowerShell 7 prompt (docs/windows.md).  cmd.exe passes
+    # PowerShell 7's PSModulePath on to Windows PowerShell 5.1, which then loads
+    # PowerShell 7's Microsoft.PowerShell.Utility and has no Get-FileHash; v2.2 failed there.
+    # Each step below tests one claim, and the reproduction is kept apart from the fallback.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: "The condition: 5.1 started through cmd.exe from PowerShell 7 has no Get-FileHash"
+        run: |
+          Set-Content probe.ps1 'if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) { "present" } else { "missing" }; (Get-Module Microsoft.PowerShell.Utility -ListAvailable | Select-Object -First 1).Version.ToString()'
+          $direct = powershell.exe -NoProfile -ExecutionPolicy Bypass -File probe.ps1
+          $viaCmd = cmd /c "powershell.exe -NoProfile -ExecutionPolicy Bypass -File probe.ps1"
+          $cleared = cmd /c "set PSModulePath=& powershell.exe -NoProfile -ExecutionPolicy Bypass -File probe.ps1"
+          "PowerShell $($PSVersionTable.PSVersion) -> powershell.exe:          $direct"
+          "PowerShell 7 -> cmd.exe -> powershell.exe:     $viaCmd"
+          "... with PSModulePath cleared in cmd.exe:      $cleared"
+          if ($viaCmd[0] -ne 'missing') { throw "not reproduced: Get-FileHash was found through cmd.exe" }
+          if ($cleared[0] -ne 'present') { throw "clearing PSModulePath did not restore Get-FileHash" }
+      - name: "The original failure: v2.2's get-lexicon, started from PowerShell 7, stops at Get-FileHash"
+        run: |
+          New-Item -ItemType Directory v22 | Out-Null
+          git show v2.2:get-lexicon.ps1 | Set-Content v22/get-lexicon.ps1
+          git show v2.2:get-lexicon.bat | Where-Object { $_ -ne 'pause' } | Set-Content v22/get-lexicon.bat
+          $out = cmd /c "v22\get-lexicon.bat" 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $out
+          if ($code -eq 0 -or $out -notmatch "Get-FileHash" -or $out -notmatch "CommandNotFoundException") { throw "v2.2's failure was not reproduced (exit $code)" }
+      - name: "The fix on its own: today's get-lexicon.bat runs v2.2's script (which needs Get-FileHash) to completion"
+        run: |
+          Copy-Item get-lexicon.bat v22/get-lexicon.bat -Force
+          $out = cmd /c "echo.| v22\get-lexicon.bat" 2>&1 | Out-String
+          $out
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path v22/CSW24.kwg) -or -not (Test-Path v22/CSW24.klv2)) { throw "failed" }
+      - name: "Today's get-lexicon.bat from PowerShell 7: downloads and verifies, and a second run recognises the files"
+        run: |
+          $out = cmd /c "echo.| get-lexicon.bat" 2>&1 | Out-String
+          $out
+          if ($LASTEXITCODE -ne 0 -or $out -notmatch "Done") { throw "first run failed" }
+          $out = cmd /c "echo.| get-lexicon.bat" 2>&1 | Out-String
+          $out
+          if ($out -notmatch "CSW24.kwg is already here" -or $out -notmatch "CSW24.klv2 is already here") { throw "second run did not recognise the files" }
+          if ((Get-FileHash CSW24.kwg).Hash -ne (Get-FileHash v22/CSW24.kwg).Hash) { throw "the two downloads differ" }
+      - name: "The fallback (not the original problem): the script works with Get-FileHash made to fail"
+        run: |
+          Remove-Item CSW24.kwg, CSW24.klv2
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "function Get-FileHash { throw 'Get-FileHash is not available' }; & ./get-lexicon.ps1"
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path CSW24.kwg)) { throw "failed" }
