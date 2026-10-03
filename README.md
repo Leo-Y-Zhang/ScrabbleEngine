@@ -51,6 +51,7 @@ Building from source (below) gives one tuned to your processor, which is somewha
 | `get-lexicon.sh`, `get-lexicon.bat`, `get-lexicon.ps1` | Download CSW24 (or NWL23) and its leave values, checked against known checksums. |
 | `LICENSE` | The GNU General Public License, version 3. |
 | `tools/referee.py` | Neutral referee for engine-vs-engine matches (its own rules code, paired games, parallel play). |
+| `tools/analyze.py` | Statistics for the referee's raw logs: wins, draws, losses, Elo and spread with intervals over deal pairs, and match lengths. |
 | `tools/magpie_bot.c`, `tools/build_magpie_bot.sh` | Lets MAGPIE play through the same protocol, for head-to-head matches. |
 | `tools/macondo_bot/`, `tools/build_macondo_bot.sh` | The same for Macondo with Woogles' BestBot settings. |
 | `.github/workflows/selftest.yml` | Builds with g++, clang and Visual Studio and runs the quick self-test on every push. |
@@ -211,6 +212,28 @@ python3 tools/referee.py --lexicon CSW24.txt --games 25 --movetime 20000 --paral
 The two bots are built against MAGPIE and Macondo, which are GPL-3.0, so their sources
 here are GPL-3.0 too. The engine itself contains no code from either.
 
+**Record every match so it can be checked.** Both build scripts write a provenance file
+next to the bot (`bin/magpie_bot.provenance`, `bin/macondo_bot.provenance`) with the
+engine's commit, whether its checkout was changed, the compiler and the settings. Pass
+it to the referee with `--a-info`/`--b-info`, and add `--log match.jsonl`. The log then
+starts with one line naming both engines, their builds, the settings, the seed and the
+SHA-256 of the word list, followed by one line per game (scores, time used, any illegal
+move or crash). The home folder is written as `~`, so a log can be shared as it is.
+`tools/analyze.py` turns one or more logs into wins, draws and losses, the match score,
+the standard-Elo difference and the spread, each with a 95% interval over deal pairs:
+
+```sh
+python3 tools/referee.py ... --b-info ~/MAGPIE/bin/magpie_bot.provenance --log match.jsonl
+python3 tools/analyze.py match.jsonl                  # the result, with intervals
+python3 tools/analyze.py pilot.jsonl --plan 20 30     # deal pairs needed to show +20 or +30 Elo
+python3 tools/analyze.py screen.jsonl --candidates 4  # corrected when 4 versions were screened
+```
+
+`--plan` uses the variance between deal pairs in a pilot match to say how long a
+confirmation match must be. `--candidates` widens the intervals (Bonferroni), so the
+best of several screened versions is not mistaken for a real improvement. CI plays a
+short refereed match on every push and checks its log and analysis.
+
 ## Use a tournament dictionary (important)
 
 ENABLE is only a stand-in. Real play uses **CSW** (Collins; WESPA and the World
@@ -277,6 +300,11 @@ MAGPIE (an open-source C engine that started as a rewrite of Macondo) was built 
 source and played through `tools/magpie_bot.c`. That wrapper calls MAGPIE's own
 PlayChooser, its full-strength move picker: simulation in the midgame, its pre-endgame
 solver when the bag is low, and its endgame solver when the bag is empty.
+
+The exact MAGPIE and Macondo commits used for the matches below were not recorded, and
+neither were the raw game logs; only the summaries are here. Matches played from now on
+record both (see [Record every match](#driving-tilefish-from-other-programs-guis-broadcasts-scripts)).
+Tilefish has not played Quackle.
 
 Both engines used the CSW24 lexicon (NWL23 where stated) and **the same leave values**
 (MAGPIE's `.klv2` files), one thread each unless stated otherwise, and the same fixed

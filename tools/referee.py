@@ -29,10 +29,12 @@ Example:
 """
 
 import argparse
+import hashlib
 import json
 import math
 import multiprocessing as mp
 import os
+import platform
 import random
 import subprocess
 import sys
@@ -521,6 +523,34 @@ def summarize(results, args, final=False):
     return s
 
 
+def run_meta(args):
+    """What a log needs to be reproduced: engines, settings, word list, builds.
+    The home directory is written as ~ so a shared log names no user."""
+    home = os.path.expanduser("~")
+
+    def clean(s):
+        return s.replace(home, "~") if home and home != "~" else s
+
+    def info(path):
+        if not path:
+            return ""
+        with open(path) as f:
+            return clean(f.read())
+
+    h = hashlib.sha256()
+    with open(args.lexicon, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return dict(started=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                a=clean(args.a), b=clean(args.b), a_name=args.a_name, b_name=args.b_name,
+                a_init=args.a_init, b_init=args.b_init, a_info=info(args.a_info), b_info=info(args.b_info),
+                prefix=clean(args.prefix), prefix_init=args.prefix_init, prefix_until_bag=args.prefix_until_bag,
+                games=args.games, first_pair=args.first_pair, single=args.single, movetime=args.movetime,
+                parallel=args.parallel, seed=args.seed, lexicon=os.path.basename(args.lexicon),
+                lexicon_sha256=h.hexdigest(), python=platform.python_version(),
+                os=platform.system() + " " + platform.release(), cpus=os.cpu_count())
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--lexicon", required=True, help="word list (one word per line)")
@@ -541,7 +571,10 @@ def main():
     ap.add_argument("--prefix-init", default="", help="commands sent to the prefix engine at start")
     ap.add_argument("--prefix-until-bag", type=int, default=7, help="hand over once the bag has this many tiles or fewer")
     ap.add_argument("--gcg-dir", default="")
-    ap.add_argument("--log", default="", help="append per-game JSON lines here")
+    ap.add_argument("--log", default="", help="append per-game JSON lines here (analyse with tools/analyze.py)")
+    ap.add_argument("--a-info", default="", help="file describing engine A's build (e.g. bin/magpie_bot.provenance), "
+                    "copied into the log")
+    ap.add_argument("--b-info", default="", help="the same for engine B")
     args = ap.parse_args()
     with open(args.lexicon) as f:
         for line in f:
@@ -551,6 +584,9 @@ def main():
     t0 = time.time()
     results = []
     logf = open(args.log, "a") if args.log else None
+    if logf:
+        logf.write(json.dumps({"meta": run_meta(args)}) + "\n")
+        logf.flush()
     with mp.Pool(args.parallel, initializer=worker_init, initargs=(args,)) as pool:
         for r in pool.imap_unordered(run_pair, range(args.first_pair, args.first_pair + args.games)):
             results.append(r)
