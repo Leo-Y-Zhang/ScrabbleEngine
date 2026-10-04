@@ -3903,7 +3903,7 @@ class Simulator {
   int greedy_finish(Board b, const Rack& me, const Rack& opp, int zeros, MoveGen& gen) const {
     Rack r[2] = {me, opp};
     int side = 0, spread = 0;
-    for (int turn = 0; turn < 30; ++turn) {
+    for (int turn = 0; turn < 30 && zeros < 6; ++turn) {  // six scoreless turns end the game at once
       EvalCtx ctx;
       ctx.bag = 0;
       ctx.opp_face = r[1 - side].face();
