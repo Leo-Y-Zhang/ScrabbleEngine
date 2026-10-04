@@ -1,0 +1,62 @@
+name: report
+# When an experiment run finishes, records it in experiments/: the pooled log (gzipped) and,
+# appended to experiments/README.md, the numbers from tools/report.py with the verdict of the
+# rule registered for that run before any game (sections 9, 10 and 12). Runs without a
+# registered rule in tools/report.py are left alone. Mechanical only: prose comes later.
+on:
+  workflow_run:
+    workflows: [experiment]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id: { description: "experiment run to record", required: true }
+permissions:
+  contents: write
+  actions: read
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Record the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN: ${{ github.event.workflow_run.id || inputs.run_id }}
+        run: |
+          set -eu
+          conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq .conclusion)
+          name=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/artifacts" --jq '[.artifacts[].name | select(startswith("shard-") | not)][0] // ""')
+          echo "run $RUN: artifact '$name', conclusion $conclusion"
+          if [ -z "$name" ]; then echo "no pooled log; nothing to record"; exit 0; fi
+          gh run download "$RUN" -n "$name" -D "$RUNNER_TEMP/dl"
+          gzip -9 -n -c "$RUNNER_TEMP/dl/$name.jsonl" > "$RUNNER_TEMP/$name.jsonl.gz"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Several runs can finish together: start again from the newest main until the push lands.
+          for i in 1 2 3 4 5 6; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            if [ -e "experiments/$name.jsonl.gz" ]; then echo "already recorded"; exit 0; fi
+            cp "$RUNNER_TEMP/$name.jsonl.gz" experiments/
+            rc=0
+            python3 tools/report.py "$name" "experiments/$name.jsonl.gz" --run "$RUN" --conclusion "$conclusion" > "$RUNNER_TEMP/record.md" || rc=$?
+            if [ "$rc" = 3 ]; then echo "no registered rule for '$name'; nothing recorded"; rm "experiments/$name.jsonl.gz"; exit 0; fi
+            test "$rc" = 0
+            if ! grep -q '^## Results recorded automatically' experiments/README.md; then
+              {
+                echo
+                echo "## Results recorded automatically"
+                echo
+                echo "Each run below was recorded by .github/workflows/report.yml when it finished: its pooled"
+                echo "log and the verdict of the rule registered for it before any game. Prose comes later, by hand."
+              } >> experiments/README.md
+            fi
+            { echo; cat "$RUNNER_TEMP/record.md"; } >> experiments/README.md
+            git add "experiments/$name.jsonl.gz" experiments/README.md
+            git commit -q -m "experiments: record $name (run $RUN) automatically"
+            if git push -q origin HEAD:main; then cat "$RUNNER_TEMP/record.md" >> "$GITHUB_STEP_SUMMARY"; exit 0; fi
+            sleep $((15 * i))
+          done
+          exit 1
