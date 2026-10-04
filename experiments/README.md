@@ -759,3 +759,51 @@ that the look-ahead's greedy play-out took one more turn when entered after five
 turns plus a scoreless placement; it is fixed in `daaf441`, which the confirmation uses. The
 case needs six scoreless turns in a row inside a play-out, so it cannot have affected the
 screen materially, but the confirmation is the first test of the corrected build.
+
+### Confirmation result (4 October 2026): not promoted; the default stays
+
+Engine A built at `daaf441` (the candidate with the scoreless-turn fix); 196 deal pairs from
+`positions-late-test.jsonl`, used once; seeds 9101 (both Macondo runs) and 9102; mean 5.1
+tiles in the bag at the handover; identical handovers in all 196 pairs; no illegal moves,
+crashes or forfeits in 1,176 games. Logs: `egk-confirm-macondo.jsonl.gz`,
+`egk-confirm-control.jsonl.gz`, `egk-confirm-frozen.jsonl.gz`.
+
+| Run | Points A gains after the handover (95%) | A's score (95%) |
+|---|---|---|
+| `egk=6` vs Macondo `simming 5` | +5.13 (+2.60 to +7.74) | 50.13% (48.34% to 51.79%) |
+| default vs Macondo, same positions and bags | +3.85 (+1.59 to +6.25) | 49.87% (48.34% to 51.40%) |
+| **Candidate − control, paired by deal pair** | **+1.28 (−0.56 to +3.14)** | **+0.26 points (−1.28 to +1.79)** |
+| `egk=6` vs frozen `v2.2.1` | +2.30 (+0.46 to +4.21) | 52.04% (50.51% to 53.57%) |
+
+**Decision: not promoted.** Promotion required the primary measure's 95% interval to lie above
+zero; it contains zero. The secondary measure is positive and the frozen-Tilefish condition
+holds, but the rule is not relaxed after the fact. `egk` stays an option, off by default.
+
+**What it established.** In both the screen and the confirmation, on different real-game
+positions, the look-ahead pointed the same way: +0.34 and +0.26 points of score and +1.84 and
++1.28 points a game against Macondo relative to the default, and 50.45% and 52.04% with +1.43
+and +2.30 points a game against frozen Tilefish (the last interval excludes zero). That is the
+most consistent late-game signal so far, but effects of this size (about one or two points a
+game, a fraction of a percentage point of score) need roughly 600 deal pairs to resolve; the
+pair-level standard deviation of the points difference is about 13. It is a lead, not a
+result.
+
+**A near-exact check of the mechanism** (`tools/exactpeg.py`, log `exact-dev-bag2.jsonl.gz`).
+With exactly 2 tiles in the bag, a move that places two or more tiles empties the bag, so its
+true value is the average over every possible draw of the solved endgame. On the development
+positions (3 s per endgame; 45% of draws proven exact, the rest the solver's best line), the
+play-outs' estimate for the chosen move exceeded this reference by **+4.1 points (+1.1 to +8.3;
+27 positions)** with the default and **+2.8 (+1.0 to +4.7; 23)** with `egk=6`; the chosen move
+was the reference's best among the evaluated moves in 25 of 27 and 21 of 23. So the static
+endgame in the play-outs is a real but small part of the bias. Against game results the
+over-estimate at bag 2 is about +22 points, so most of it comes from elsewhere: candidates are
+the actual opponent racks (not uniform; the measured effect of the `keep` prior was small but
+was averaged over bags 2–7) and the play after the move in real games, which neither the
+play-outs nor this reference model.
+
+**Next step, registered here but not run.** A powered test of `egk=6`: about 600 deal pairs of
+real-game late positions never used before (the 222 of `positions-late-val.jsonl` plus about
+400 extracted from fresh full games on seeds from 9200), primary measure the paired difference
+in points after the handover against Macondo `simming 5` at 20 s (candidate − control), promoted
+only if its 95% interval lies above zero and the score difference is not negative; then 60 s,
+four threads and MAGPIE before any wider claim.
