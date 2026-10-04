@@ -37,7 +37,12 @@ search settles early. It loses more of the close games, mainly late: its late-ga
 winning estimates run about 15 points too high, and Macondo comes back from 41–100
 behind more often. A first fix, keeping 100 late-game candidates instead of 30, was
 screened, then failed its registered confirmation, so the defaults are unchanged.
-Everything, including the failure, is in
+A second diagnosis found the late estimates run about as high against Tilefish itself, most
+when the chosen move empties the bag, and are not a sampling effect. A one-move endgame
+look-ahead inside the play-outs (`egk=6`) then passed its screen and pointed the same way in
+its confirmation (+1.3 to +1.8 points a game against Macondo from real late positions) but
+did not clear the registered promotion rule, so it stays an option, off by default.
+Everything, including the failures, is in
 [experiments/](experiments/README.md#4-why-level-on-wins-but-ahead-on-points-against-macondo-at-20-s-registered-4-october-2026-before-any-game).
 
 ## Quick start

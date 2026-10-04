@@ -30,6 +30,13 @@ position against the CGP).
 With --prefix, a (deterministic) engine plays both seats until the bag holds
 --prefix-until-bag tiles; A and B then take over from identical positions, which
 measures pre-endgame and endgame play on their own.
+With --positions FILE, each pair starts from a recorded position extracted by
+tools/positions.py.  Pair k uses zero-based line k (starting at --first-pair), with
+the same board, racks, scores and shuffled remaining bag in both games.  A holds
+the mover's rack in the first game, B in the second.  This also measures points
+gained after the handover.  --prefix and --positions cannot be combined.
+History before a recorded start position is unknown: --a-history / --b-history
+send only moves played after that position, with no earlier history lines.
 
 Engine specs on the command line:
     proto:<shell command>          speaks the protocol above (tilefish --quiet does)
@@ -122,22 +129,54 @@ class IllegalMove(Exception):
     pass
 
 
+def parse_board(rows):
+    """Expand the board rows of a CGP, preserving lower-case blanks."""
+    board = []
+    for row in rows.split("/"):
+        cells = []
+        i = 0
+        while i < len(row):
+            if row[i].isdigit():
+                j = i + 1
+                while j < len(row) and row[j].isdigit():
+                    j += 1
+                run = int(row[i:j])
+                if not 1 <= run <= N:
+                    raise ValueError("invalid empty run in CGP board")
+                cells.extend([None] * run)
+                i = j
+            elif row[i].upper() in LETTERS:
+                cells.append(row[i])
+                i += 1
+            else:
+                raise ValueError("invalid tile in CGP board")
+        if len(cells) != N:
+            raise ValueError("CGP board row must have 15 squares")
+        board.append(cells)
+    if len(board) != N:
+        raise ValueError("CGP board must have 15 rows")
+    return board
+
+
 class Game:
-    def __init__(self, words, seed):
+    def __init__(self, words, seed, position=None):
         self.words = words
         self.rng = random.Random(seed)
-        bag = [t for t, k in DIST.items() for _ in range(k)]
+        bag = list(position["bag"]) if position is not None else [t for t, k in DIST.items() for _ in range(k)]
         self.rng.shuffle(bag)
         self.bag = bag  # draw from the end
-        self.board = [[None] * N for _ in range(N)]
-        self.racks = [[], []]
-        self.scores = [0, 0]
+        self.board = parse_board(position["board"]) if position is not None else [[None] * N for _ in range(N)]
+        self.racks = [list(r) for r in position["racks"]] if position is not None else [[], []]
+        self.scores = list(position["scores"]) if position is not None else [0, 0]
         self.turn = 0
-        self.zeros = 0
+        self.zeros = position["zeros"] if position is not None else 0
         self.over = False
         self.moves = []  # (player, rack_before, text, score)
-        for p in (0, 1):
-            self.draw(p)
+        self.initial_scores = list(self.scores)
+        self.initial_tiles = ["?" if t.islower() else t for row in self.board for t in row if t is not None]
+        if position is None:
+            for p in (0, 1):
+                self.draw(p)
 
     def draw(self, p):
         while len(self.racks[p]) < RACK and self.bag:
@@ -364,8 +403,8 @@ class Game:
         out = ["#character-encoding UTF-8", "#player1 p1 p1", "#player2 p2 p2"]
         if lexicon:
             out.append("#lexicon %s" % lexicon)
-        tot = [0, 0]
-        on_board = []
+        tot = list(self.initial_scores)
+        on_board = list(self.initial_tiles)
         mine = [m[1] for m in self.moves if m[0] == me and m[2][0] != "end"] + [rack_str(self.racks[me])]
 
         def placeholder(n, k):
@@ -408,7 +447,7 @@ class Game:
     def gcg(self, names):
         out = ["#character-encoding UTF-8", "#player1 %s %s" % (names[0], names[0]),
                "#player2 %s %s" % (names[1], names[1])]
-        tot = [0, 0]
+        tot = list(self.initial_scores)
         for p, before, mv, text, score in self.moves:
             tot[p] += score
             if mv[0] == "end":
@@ -541,6 +580,31 @@ def load_words(path):
                 WORDS.add(w[0].upper())
 
 
+def load_positions(path, first_pair, games):
+    """Load and check recorded starts before launching any engines."""
+    if first_pair < 0:
+        raise ValueError("--first-pair must be nonnegative")
+    with open(path) as f:
+        positions = [json.loads(line) for line in f]
+    needed = first_pair + games
+    if len(positions) < needed:
+        raise ValueError("file has %d positions; need %d for --first-pair %d and --games %d" % (
+            len(positions), needed, first_pair, games))
+    full = sorted(t for t, n in DIST.items() for _ in range(n))
+    for k in range(first_pair, needed):
+        try:
+            g = Game(set(), 0, positions[k])
+            if len(g.racks) != 2 or len(g.scores) != 2 or any(len(r) > RACK for r in g.racks):
+                raise ValueError("expected two racks and two scores")
+            if sorted(g.initial_tiles + g.racks[0] + g.racks[1] + g.bag) != full:
+                raise ValueError("tiles do not match the distribution")
+            if not all(isinstance(s, int) for s in g.scores) or not isinstance(g.zeros, int) or not 0 <= g.zeros < 6:
+                raise ValueError("invalid scores or zero-score-turn count")
+        except (ValueError, KeyError, TypeError) as ex:
+            raise ValueError("line %d: %s" % (k + 1, ex)) from ex
+    return positions
+
+
 def worker_init(args):
     if not WORDS:  # processes started with "spawn" (Windows, macOS) do not inherit it
         load_words(args.lexicon)
@@ -553,7 +617,8 @@ def worker_init(args):
 def play_game(pair, a_first):
     args = WORKER["args"]
     eng = WORKER["engines"]
-    g = Game(WORDS, args.seed * 1000003 + pair)
+    position = args.position_data[pair] if args.positions else None
+    g = Game(WORDS, args.seed * 1000003 + pair, position)
     # seat 0 moves first
     seat = [0, 1] if a_first else [1, 0]  # seat -> engine index (0 = A)
     errors, spent, maxt = [], [0.0, 0.0], [0.0, 0.0]
@@ -561,7 +626,7 @@ def play_game(pair, a_first):
     record = []  # one entry a move: what the mover saw, what it played, how long it took
     bingos = [0, 0]
     turns = 0
-    handoff = None  # scores of A and B when the prefix engine hands over
+    handoff = None  # scores of A and B at the start position or prefix handover
     prefix = WORKER["prefix"]
     while not g.over and turns < 150:
         cgp = g.cgp(show_opp=not g.bag)
@@ -682,11 +747,12 @@ def summarize(results, args, final=False):
          "  time/move %.3fs (max %.2fs) vs %.3fs (max %.2fs)   illegal/crash events: %d"
          % (args.a_name, args.b_name, n, m, args.movetime, args.a_name, 100 * wr, 196 * se(pw), msp,
             1.96 * se(ps), avg_a, avg_b, bi_a, bi_b, ta, mxa, tb, mxb, nerr))
-    if args.prefix:
-        # Spread gained after the handoff (the prefix is identical within a pair).
+    if args.prefix or args.positions:
+        # Spread gained after the handoff (the position is identical within a pair).
         pg = [sum((g["sa"] - g["sb"]) - (g["ha"] - g["hb"]) for g in r) / len(r) for r in results]
-        s += "\n  from %d tiles in the bag: %s gains %+.2f +/- %.2f points a game" % (
-            args.prefix_until_bag, args.a_name, sum(pg) / len(pg), 1.96 * se(pg))
+        start = "recorded positions" if args.positions else "%d tiles in the bag" % args.prefix_until_bag
+        s += "\n  from %s: %s gains %+.2f +/- %.2f points a game" % (
+            start, args.a_name, sum(pg) / len(pg), 1.96 * se(pg))
     return s
 
 
@@ -708,11 +774,17 @@ def run_meta(args):
     with open(args.lexicon, "rb") as f:
         for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
+    ph = hashlib.sha256()
+    if args.positions:
+        with open(args.positions, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                ph.update(block)
     return dict(started=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 a=clean(args.a), b=clean(args.b), a_name=args.a_name, b_name=args.b_name,
                 a_init=args.a_init, b_init=args.b_init, a_info=info(args.a_info), b_info=info(args.b_info),
                 a_history=args.a_history, b_history=args.b_history,
                 prefix=clean(args.prefix), prefix_init=args.prefix_init, prefix_until_bag=args.prefix_until_bag,
+                positions=os.path.basename(args.positions), positions_sha256=ph.hexdigest() if args.positions else "",
                 games=args.games, first_pair=args.first_pair, single=args.single, movetime=args.movetime,
                 parallel=args.parallel, seed=args.seed, lexicon=os.path.basename(args.lexicon),
                 lexicon_sha256=h.hexdigest(), python=platform.python_version(),
@@ -734,8 +806,10 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--first-pair", type=int, default=0, help="start at this pair number (to resume a match)")
     ap.add_argument("--single", action="store_true", help="one game per seed instead of a swapped pair")
-    ap.add_argument("--prefix", default="", help="engine that plays both seats until the bag is small (e.g. a static "
+    start = ap.add_mutually_exclusive_group()
+    start.add_argument("--prefix", default="", help="engine that plays both seats until the bag is small (e.g. a static "
                     "player), so A and B meet in identical pre-endgame or endgame positions")
+    start.add_argument("--positions", default="", help="recorded positions in JSON lines; pair k uses zero-based line k")
     ap.add_argument("--prefix-init", default="", help="commands sent to the prefix engine at start")
     ap.add_argument("--prefix-until-bag", type=int, default=7, help="hand over once the bag has this many tiles or fewer")
     ap.add_argument("--gcg-dir", default="")
@@ -748,6 +822,11 @@ def main():
     ap.add_argument("--history-lexicon", default="", help="lexicon name written into the history's GCG")
     ap.add_argument("--startup-timeout", type=float, default=600, help="seconds an engine may take to load")
     args = ap.parse_args()
+    if args.positions:
+        try:
+            args.position_data = load_positions(args.positions, args.first_pair, args.games)
+        except (OSError, ValueError, KeyError, TypeError) as ex:
+            ap.error("--positions: %s" % ex)
     Engine.STARTUP_SECONDS = args.startup_timeout
     # Start every engine once here: one that cannot start stops the match with a clear
     # message (inside the worker pool it would be restarted silently, for ever).
