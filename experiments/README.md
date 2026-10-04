@@ -452,3 +452,26 @@ reported whatever the outcome.
   score at least 50%, and the 60 s candidate not to gain fewer points than the 60 s control
   (point estimates). Otherwise the default stays at 30 candidates and the result is
   recorded as failed or inconclusive, with its numbers.
+
+### Screen results (4 October 2026)
+
+Engine A built at `aab79c8`; handover when the bag first holds 7 or fewer (mean 4.9–5.1
+tiles); CSW24, 20 s a move, one thread each, 200 pairs a run; `tools/handover.py`.
+No illegal moves, crashes or forfeits.
+
+| Run | Points A gains after the handover (95%) | A's score (95%) |
+|---|---|---|
+| `late-screen`: `latecands=100` vs frozen `v2.2.1` (seed 4001) | +0.93 (−0.37 to +2.26) | 50.50% (50.00% to 51.25%) |
+| `late-vs-macondo`: `latecands=100` vs Macondo `simming 5` (seed 4002) | +4.46 (+2.51 to +6.46) | 51.38% (50.12% to 52.75%) |
+| `late-vs-macondo-control`: default vs Macondo, same 200 positions | +3.37 (+0.91 to +5.75) | 49.12% (47.38% to 50.75%) |
+| Candidate − control, paired by deal (all 200 handovers identical) | +1.09 (−1.46 to +3.67) | +2.25 points (+0.50 to +4.00) |
+
+The change did what it was meant to do mechanically: in `late-screen`, 51 of Tilefish's
+304 late-phase choices (16.8%) were moves ranked 31st to 100th by static equity, which
+the default can never play. **The screen passes under the registered rule** (positive
+point estimate with a score of at least 50% against frozen Tilefish, and at least the
+control's points against Macondo). On its own, no interval for points gained excludes
+zero, so this is a lead for the confirmation, not a result.
+
+Logs: `late-screen-latecands100-vs-v2.2.1-20s.jsonl.gz`, `late-latecands100-vs-macondo-20s.jsonl.gz`,
+`late-control-vs-macondo-20s.jsonl.gz`.
