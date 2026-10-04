@@ -9,8 +9,8 @@ size, that Tilefish's extra points against Macondo come partly after a game is s
 (games still open late are level, 50.3%), and that section 4's 41–100 conversion gap
 shrinks from 10.8 to 3.0 points on fresh games. No late-game deficit against Macondo is
 established. README notices were also tightened (not affiliated with Hasbro, Mattel,
-HarperCollins, NASPA or Woogles; AI assistance stated; the stale 55.0% headline
-replaced by the current level result).
+HarperCollins, NASPA or Woogles; the stale 55.0% headline replaced by the current
+level result; PRs #23 and #24 put those notices and self-hosted web fonts on main).
 
 ## Defaults
 The engine's default search is unchanged since v2.2.1 (fixed-work checksum `349.2837`). The

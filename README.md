@@ -755,12 +755,6 @@ options are `time`, `iters`, `plies`, `cands`, `threads`, `win` (0 = rank by spr
 `tau` (trust in the static evaluation), `playout`, `eg`, `egtime`, `peg`, `pegtime`,
 `inf`, `leaves=FILE`, `winmodel=FILE`.
 
-## How it was made
-
-Tilefish is AI-assisted: much of its code was written with Anthropic's Claude, and the
-commit history shows which commits. Every strength figure in this README comes from logged
-matches in [experiments/](experiments/README.md) that anyone can re-run.
-
 ## License
 
 Tilefish is free software: you can redistribute it and/or modify it under the terms of
