@@ -578,3 +578,30 @@ minutes of a runner's time, so a 340-minute job holds 11 pairs.
 A runner-hour here is one 4-vCPU machine (2 physical cores) for an hour. The match
 should use `simming 5` (inference pilot, above), `iters` raised for Tilefish, and fresh
 seeds from 9100.
+
+## 6. More late candidates against Macondo specifically (registered 4 October 2026, before any game, and before the 60 s results of section 5 were seen)
+
+**Why a new test.** Section 5's promotion test (against frozen Tilefish) failed and stays
+failed. The evidence that remains points at Macondo specifically: on the same 200
+positions, `latecands=100` scored +2.25 percentage points more than the default against
+Macondo (+0.50 to +4.00, a screen); and Macondo's judge preferred a move outside
+Tilefish's top 30 in 8 of the 11 late decisions it rejected. Against an opponent that plays the late
+game like Tilefish's own greedy rollouts, the extra candidates change little. Against
+one that fishes and sets up bingos, the moves that are good in reply (often blocks, which
+score little) may be exactly the ones ranked low by static equity.
+
+**Hypothesis.** Against Macondo `simming 5`, Tilefish with `latecands=100` wins more
+often from the same late-game positions than Tilefish with the default.
+
+**Design.** As in section 5 (static prefix until the bag holds 7 or fewer, 20 s a move,
+one thread, CSW24, engine A built at `aab79c8`), with **fresh seed 9003, 300 pairs**, two
+runs on identical positions: `late-macondo-confirm` (A = `latecands=100`) and
+`late-macondo-confirm-control` (A = `champion`). Primary measure: the difference in A's
+score, candidate − control, paired by deal pair (bootstrap over pairs, 10,000
+resamples). Secondary: the same for points gained after the handover.
+
+**Rule, fixed now.** Played to full size, no interim looks. `latecands=100` becomes the
+default only if the primary measure's 95% interval lies above zero **and** the
+secondary's point estimate is not negative. Otherwise the default stays and the result
+is reported with its numbers. A pass would support only this claim: better late-game
+results against this Macondo configuration, at 20 s.
