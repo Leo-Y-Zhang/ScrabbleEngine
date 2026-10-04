@@ -103,10 +103,15 @@ def main():
                                                     "%.2f" % (sum(cpu) / sum(wall)) if cpu and sum(wall) > 0 else "n/a"))
         setup = [i["setup_s"] for _, i in ov if isinstance(i.get("setup_s"), (int, float))]
         search = [i["search_s"] for _, i in ov if isinstance(i.get("search_s"), (int, float))]
-        inf = collections.Counter(i.get("inferred") for _, i in ov if "inferred" in i)
+        infv = [i.get("inferred") for r, i in ov if "inferred" in i and r.get("bag", 0) > 0]
+        games = collections.Counter(str(i.get("game", "cgp"))[:7] for _, i in ov if "setup_s" in i)
         if setup:
-            print("  opponent set-up a move: mean %.3fs, max %.3fs; search a move: mean %.2fs; inference results: %s"
-                  % (mean(setup), max(setup), mean(search), dict(inf)))
+            print("  opponent set-up a move: mean %.3fs, max %.3fs; search a move: mean %.2fs; game built from: %s"
+                  % (mean(setup), max(setup), mean(search), dict(games)))
+            print("  opponent inference, moves with tiles in the bag: %d not attempted, %d attempted with nothing "
+                  "inferred, %d inferred (median %s possible racks)" % (
+                      sum(1 for x in infv if x == -1), sum(1 for x in infv if x == 0),
+                      sum(1 for x in infv if x and x > 0), pct([x for x in infv if x and x > 0], 0.5)))
             its = []
             for _, i in ov:
                 m = re.search(r"(\d+)\s+iterations", str(i.get("details", "")))
