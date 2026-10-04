@@ -732,3 +732,30 @@ score from the handover, candidate minus control against Macondo, paired by deal
   its numbers. A pass supports only this claim: better results from real late-game positions
   against this Macondo configuration at 20 s on one thread; longer budgets, four threads and
   MAGPIE would follow before any wider claim.
+
+### Screen results (4 October 2026): the screen passes
+
+Engine A built at `9e5154e` (the registered build); CSW24, 20 s a move, one thread each,
+222 deal pairs from `positions-late-dev.jsonl` (mean 5.3 tiles in the bag at the handover);
+candidate and control played identical handover positions and bags in all 222 pairs
+(`tools/handover.py`). No illegal moves, crashes or forfeits in 1,332 games. Logs:
+`egk-screen-macondo.jsonl.gz`, `egk-screen-control.jsonl.gz`, `egk-screen-frozen.jsonl.gz`.
+
+| Run | Points A gains after the handover (95%) | A's score (95%) |
+|---|---|---|
+| `egk=6` vs Macondo `simming 5` (seed 4101) | +4.72 (+2.32 to +7.18) | 49.32% (47.75% to 50.90%) |
+| default vs Macondo, same positions and bags | +2.87 (+0.47 to +5.31) | 48.99% (47.52% to 50.45%) |
+| **Candidate − control, paired by deal pair** | **+1.84 (−0.64 to +4.34)** | **+0.34 points (−0.68 to +1.46)** |
+| `egk=6` vs frozen `v2.2.1` (seed 4102) | +1.43 (+0.08 to +2.90) | 50.45% (49.55% to 51.35%) |
+
+Under the registered rule the screen passes: the primary point estimate is above zero, the
+secondary is not negative, and against frozen Tilefish the candidate scores at least 50%
+and gains points. No interval for the primary measure excludes zero, so this is a lead for
+the confirmation, not a result. (From these real-game positions the default itself gains
+points on Macondo but scores slightly under 50%.)
+
+**A defect found before the confirmation.** A second-model review of the candidate found
+that the look-ahead's greedy play-out took one more turn when entered after five scoreless
+turns plus a scoreless placement; it is fixed in `daaf441`, which the confirmation uses. The
+case needs six scoreless turns in a row inside a play-out, so it cannot have affected the
+screen materially, but the confirmation is the first test of the corrected build.
