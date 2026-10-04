@@ -5226,6 +5226,9 @@ struct EngineConfig {
       err = "unknown player '" + base + "' (use static, static+, sim or champion)";
       return false;
     }
+    // Option values come from users and GUIs: the experimental options are kept in sensible
+    // ranges (a NaN becomes the lower bound) so no setting can make a move unbounded.
+    auto clampd = [](double x, double lo, double hi) { return x >= lo ? (x <= hi ? x : hi) : lo; };
     for (const auto& kv : parse_kv(opts)) {
       const std::string& k = kv.first;
       const double v = std::atof(kv.second.c_str());
@@ -5239,15 +5242,15 @@ struct EngineConfig {
       else if (k == "playout") c.sim.playout_bag = (int)v;
       else if (k == "cands") c.sim.max_candidates = (int)v;
       else if (k == "latecands") c.sim.late_candidates = (int)v;
-      else if (k == "deep") c.sim.deep_k = (int)v;
-      else if (k == "deepplies") c.sim.deep_plies = (int)v;
-      else if (k == "deepfrac") c.sim.deep_frac = v;
+      else if (k == "deep") c.sim.deep_k = (int)clampd(v, 0, 30);
+      else if (k == "deepplies") c.sim.deep_plies = (int)clampd(v, 1, 40);
+      else if (k == "deepfrac") c.sim.deep_frac = clampd(v, 0.05, 0.95);
       else if (k == "threads") c.threads = (int)v;
       else if (k == "z") c.sim.prune_z = v;
       else if (k == "tau") c.sim.shrink_tau = v;
-      else if (k == "keep") c.sim.keep = v;
-      else if (k == "keepbag") c.sim.keep_bag = (int)v;
-      else if (k == "egk") c.sim.eg_k = (int)v;
+      else if (k == "keep") c.sim.keep = clampd(v, 0, 1);
+      else if (k == "keepbag") c.sim.keep_bag = (int)clampd(v, 0, 100);
+      else if (k == "egk") c.sim.eg_k = (int)clampd(v, 0, 64);
       else if (k == "win") c.sim.win_objective = v != 0;
       else if (k == "eg") c.endgame = v != 0;
       else if (k == "egtime") c.endgame_time = v;

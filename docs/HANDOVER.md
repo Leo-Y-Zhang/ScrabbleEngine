@@ -19,6 +19,11 @@ pooled log is the run's artifact (named after the run; GitHub keeps artifacts 90
 | [37209469683](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37209469683) `deep-screen-macondo` | the same candidate vs Macondo, 20 s, 200 pairs, seed 9200 (the `fresh-9200` deals) | ... and its score here is not below the default's 52.25% on the same deals |
 
 ## Exact next steps
+0. This file and sections 9–10 live on branch `tournament-match` (PR #22). Its CI was queued
+   behind the experiment runs, which take all 20 of the account's job slots for about 12 hours;
+   merge PR #22 once its checks are green (the experiment runs build from fixed commits, so
+   merging does not affect them). The option values are clamped to sensible ranges since
+   `tournament-match`'s last commit (a review finding; the registered settings are inside them).
 1. Download the artifacts (`gh run download RUN -n NAME`), gzip them into `experiments/`,
    and run `python3 tools/analyze.py LOG --bootstrap 10000`. For the Macondo screen, also
    pair it by deal with `experiments/fresh-9200.jsonl.gz` (same seed and pair numbers).
