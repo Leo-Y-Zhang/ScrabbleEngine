@@ -605,3 +605,50 @@ default only if the primary measure's 95% interval lies above zero **and** the
 secondary's point estimate is not negative. Otherwise the default stays and the result
 is reported with its numbers. A pass would support only this claim: better late-game
 results against this Macondo configuration, at 20 s.
+
+### Results of sections 5 (60 s) and 6 (4 October 2026): no effect; the default stays
+
+Engine A built at `aab79c8`; Macondo `simming 5`; handover when the bag first holds 7 or
+fewer; one thread each; no illegal moves, crashes or forfeits. Candidate and control
+played identical handover positions in every pair (checked by `tools/handover.py`); the
+candidate used 100 candidates on its late moves (454 in section 6) and the control 30
+(468). Logs: `late-confirm-60s-latecands100-vs-macondo.jsonl.gz`,
+`late-confirm-60s-control-vs-macondo.jsonl.gz`, `late-macondo-confirm-latecands100.jsonl.gz`,
+`late-macondo-confirm-control.jsonl.gz`.
+
+| Run (fresh seeds) | Candidate − control: A's score (95%) | Candidate − control: points after the handover (95%) | Candidate / control: points after the handover |
+|---|---|---|---|
+| Section 5, 60 s, seed 9002, 100 pairs | −1.00 percentage points (−2.50 to 0.00) | +0.43 (−1.97 to +2.91) | +4.64 / +4.21 |
+| **Section 6, 20 s, seed 9003, 300 pairs (primary)** | **+0.00 (−1.17 to +1.17)** | −0.00 (−1.93 to +1.92) | +4.30 / +4.30 |
+
+In section 6 the two runs differ in 202 of 600 games. That the totals agree (303.5 wins
+each; 2,579 and 2,581 points) is coincidence; the logs show different settings and
+different games.
+
+**Decision: section 6 fails its rule (the interval contains zero), so `latecands=100` is
+not adopted, and the +2.25-point screen signal against Macondo did not replicate.** The
+60 s condition of section 5 held on its point estimate, but section 5 had already
+failed at 20 s.
+
+**What the late-game experiments established, together.**
+1. The cut of 30 candidates does bind in the late game. Macondo's judge prefers moves
+   ranked 37 to 66 in 8 of 11 rejected decisions, and with 100 candidates Tilefish picks
+   a move ranked beyond 30 in about one late decision in seven.
+2. Widening the list does not change results, against frozen Tilefish (−0.52, −1.86 to
+   +0.75) or against Macondo (±1.2 percentage points of score at 20 s, 300 pairs). The new
+   moves are chosen by the same late-game evaluation, which section 4 found 14.7 points
+   too optimistic in undecided positions. So the binding constraint is that evaluation
+   (greedy play-outs that never fish or set up a bingo), not the candidate list.
+3. Against Macondo from the same late positions, Tilefish gains about 4 points a game
+   after the handover with either setting (+4.30, 95% +2.4 to +6.2, 300 pairs). The 20 s
+   match's late-game conversion deficit (section 4) therefore probably depends on the
+   positions real games reach (for example, open boards with bingo lanes) more than on
+   late-game skill measured from these static-prefix positions. The prefix positions
+   come from a static player and may not be typical.
+
+**Next hypothesis, not yet tested:** late-game evaluation rather than breadth. Either
+play-outs in which the side to move may fish (keep a bingo-prone leave with a small
+play) when the bag is low, or an exact pre-endgame for 2 tiles in the bag, as Tilefish
+already has for 1. Either should be screened first from real-game late positions
+(sampled from the 20 s audit records), not from static-prefix positions, since point 3
+suggests the two differ.
