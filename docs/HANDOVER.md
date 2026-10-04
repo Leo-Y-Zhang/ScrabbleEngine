@@ -35,6 +35,12 @@ pooled log is the run's artifact (named after the run; GitHub keeps artifacts 90
 | [37219857657](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37219857657) `infer-screen-macondo` | the same vs Macondo `simming 5`, 20 s, 200 pairs, seed 9200 (the `fresh-9200` deals) | ... and its score here is not below the default's 52.25% on the same deals |
 
 ## Exact next steps
+**Automated since the evening of 4 October:** `.github/workflows/report.yml` records each of
+these runs when it finishes (its log gzipped into `experiments/` and, under "Results recorded
+automatically" at the end of `experiments/README.md`, the numbers and the registered rule's
+verdict from `tools/report.py`). Check those records first; steps 1 and 2 below then reduce
+to writing the prose and the summary in `README.md`.
+
 0. This file and sections 9–10 live on branch `tournament-match` (PR #22). Its CI was queued
    behind the experiment runs, which take all 20 of the account's job slots for about 12 hours;
    merge PR #22 once its checks are green (the experiment runs build from fixed commits, so
