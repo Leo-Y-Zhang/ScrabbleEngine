@@ -884,3 +884,30 @@ deal pairs, and the Elo difference. **Secondary:** points a game. **What may be 
 entirely below, otherwise "level within the interval". Nothing beyond this opponent, this
 configuration, CSW24 and this budget follows; no claim of the strongest engine follows from
 one match.
+
+## 10. Deeper simulation of the finalists in the middle game (registered 4 October 2026, before any game)
+
+**Why.** Tilefish's lead over Macondo in the opening and middle game falls from +33 points a
+game at 5 s to +5 at 20 s (section 4), and its 2-ply search has settled on its final choice
+by about 1/8 of a 20 s move; the rest of the time refines the duel of the top two candidates
+(96% of iterations). Section 1 found 4-ply simulation of all 30 candidates worse at 20 s,
+because every candidate then gets fewer samples. The candidate spends the settled half of the
+time differently: **2-ply simulation of all candidates for half the move, then 4-ply
+simulation of the top 3 for the rest**, choosing by the second stage. It targets exactly the
+time that more thinking currently wastes.
+
+**Candidate:** `champion:deep=3,deepplies=4,deepfrac=0.5` (new option, off by default; the
+fixed-work checksum is unchanged at 349.2837; a self-test checks that the choice is a legal
+first-stage finalist). Built at the commit that adds this section.
+
+| Run | A | B | Pairs | Seed | Role |
+|---|---|---|---|---|---|
+| `deep-screen-frozen` | candidate | frozen `v2.2.1` `champion` | 200 | 9400 | screen against frozen Tilefish |
+| `deep-screen-macondo` | candidate | Macondo `14c080b57608` `simming 5` | 200 | 9200 | the same deals as `fresh-9200` (section 8), where the default scored 52.25% |
+
+CSW24, 20 s a move, one thread each, full games, played to full size.
+**Screen rule, fixed now:** it passes if against frozen Tilefish the candidate scores above
+50% with a positive spread, **and** against Macondo its score on the `fresh-9200` deals is
+not below the default's 52.25% (point estimates; the paired difference by deal is also
+reported). A pass leads only to a registered confirmation on fresh seeds with more pairs, at
+20 s and at 60 s with four threads; nothing becomes the default from a screen.
