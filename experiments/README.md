@@ -830,3 +830,9 @@ pair (bootstrap over pairs, 10,000 resamples). **Secondary:** the same for A's s
 zero **and** the secondary point estimate is not negative; otherwise the default stays and
 the result is reported with its numbers. Expected precision from section 7 (pair SD about 13
 points): about ±1.0 points a game with 600 pairs.
+
+**Addendum before any position game (same day).** `fresh-9200` played its 400 games with no
+illegal moves, crashes or forfeits (log `fresh-9200.jsonl.gz`) and gave 400 positions, so
+`positions-late-powered.jsonl` has 622. The workflow gives every job the same number of
+pairs, so 620 = 20 jobs × 31 pairs are played: the file's first 620 lines; the last two (from
+`fresh-9200`) are not used. Nothing else changes.
