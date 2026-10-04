@@ -1060,3 +1060,20 @@ experiments/deep-screen-frozen.jsonl.gz: seed 9400, 200 deal pairs
 
 This leg's condition under section 10's screen rule: **met**. The screen's decision needs the other leg too; it is added when that run is recorded.
 
+
+### Recorded automatically: `deep-screen-macondo` (section 10)
+
+Run 37209469683, recorded 2026-10-04 by `tools/report.py`; log `experiments/deep-screen-macondo.jsonl.gz`; 200 of 200 registered deal pairs; run conclusion: success.
+
+```text
+experiments/deep-screen-macondo.jsonl.gz: seed 9200, 200 deal pairs
+  A's score   50.12% (45.62% to 54.62%)
+  A's spread   +13.1 a game (+4.8 to +21.4)
+  control on the same 200 deal pairs (400 first positions checked identical): score 52.25%
+  paired difference, candidate - control: score -2.12 points (-8.12 to +4.00); spread -8.7 (-20.6 to +3.1)
+  rule: score >= 52.25%: NOT met
+  decision: FAILS (point estimates, as registered)
+```
+
+This leg's condition under section 10's screen rule: **not met**. The other leg (`deep-screen-frozen`, recorded earlier) was met, so **the screen FAILS**. The default stays.
+
