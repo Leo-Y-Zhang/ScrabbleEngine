@@ -3481,6 +3481,7 @@ struct SimParams {
   int plies = 2;
   int playout_bag = 7;        // with this many tiles or fewer in the bag, play out to the end
   int max_candidates = 20;
+  int late_candidates = 0;    // with playout_bag tiles or fewer in the bag (0: max_candidates)
   int max_iterations = 1000000;  // per candidate (in practice the clock decides)
   double time_limit = 5.0;    // seconds
   int threads = 1;
@@ -3501,6 +3502,8 @@ struct SimCandidate {
   int n = 0;
   bool active = true;
   double post = 0;  // posterior objective relative to the most-simulated candidate (ranking key)
+  double prior_w = NAN;  // share of the posterior's precision that comes from the static prior (0..1)
+  double sim_diff = NAN;  // simulated difference from the reference candidate (objective units)
   double mean_eq() const {
     double s = 0;
     for (int i = 0; i < n; ++i) s += eq[i];
@@ -3553,13 +3556,22 @@ class Simulator {
  public:
   Simulator(const Lexicon* lex, const LeaveTable* lt, const WinModel* wm) : lex_(lex), lt_(lt), wm_(wm) {}
 
-  // Top candidates by static equity for position P.
-  std::vector<Move> candidates(const Position& P, int max_n) const {
+  // Top candidates by static equity for position P (`generated`: how many legal moves there were).
+  std::vector<Move> candidates(const Position& P, int max_n, int* generated = nullptr, const Move* keep = nullptr) const {
     MoveGen gen(lex_, lt_);
     std::vector<Move> all;
     EvalCtx ctx = ctx_for(P);
     gen.generate_all(P.board, P.rack, ctx, all);
+    if (generated) *generated = (int)all.size();
     sort_by_equity(all);
+    if (keep) {  // appended after the normal candidates if the cut would drop it
+      for (int i = max_n; i < (int)all.size(); ++i)
+        if (all[i].same_as(*keep)) {
+          all[max_n] = all[i];
+          ++max_n;
+          break;
+        }
+    }
     if ((int)all.size() > max_n) all.resize(max_n);
     return all;
   }
@@ -3663,6 +3675,14 @@ class Simulator {
     R.seconds = now_s() - t0;
     R.positions = positions.load();
     return R;
+  }
+
+  // The ranking `run` ends with, applied to a snapshot taken during the search (telemetry:
+  // how the choice changes with more work).
+  static void rank_snapshot(SimResult& R, const Position& P, const SimParams& sp) {
+    SimParams rp = sp;
+    if (P.bag_n <= sp.playout_bag) rp.shrink_tau *= 2.5;
+    rank(R, rp);
   }
 
  private:
@@ -3821,9 +3841,13 @@ class Simulator {
       const double prior_var = 2.0 * std::pow(scale * sp.shrink_tau, 2);
       if (&c == &Rc) {
         c.post = 0;
+        c.prior_w = NAN;
+        c.sim_diff = 0;
         continue;
       }
       const int n = std::min(c.n, Rc.n);
+      c.prior_w = n < 2 ? 1.0 : (sp.shrink_tau <= 0 ? 0.0 : NAN);
+      c.sim_diff = NAN;
       if (n < 2 || sp.shrink_tau <= 0) {
         c.post = n < 2 ? prior_mean : c.objective(sp.win_objective, sp.equity_tiebreak) -
                                           Rc.objective(sp.win_objective, sp.equity_tiebreak);
@@ -3838,6 +3862,8 @@ class Simulator {
       const double m = sum / n;
       const double se2 = std::max(1e-12, (sum2 / n - m * m) / (n - 1));
       c.post = (m / se2 + prior_mean / prior_var) / (1.0 / se2 + 1.0 / prior_var);
+      c.prior_w = (1.0 / prior_var) / (1.0 / se2 + 1.0 / prior_var);
+      c.sim_diff = m;
     }
     std::stable_sort(R.cands.begin(), R.cands.end(), [](const SimCandidate& a, const SimCandidate& b) { return a.post > b.post; });
   }
@@ -5002,6 +5028,7 @@ struct EngineConfig {
   int threads = 1;
   std::string leaves_file;  // optional per-player data (matches between trained sets)
   std::string win_file;
+  std::string include;      // analysis only: this move is simulated too, even if the cut drops it
 
   // "static", "sim", "champion", optionally followed by ":key=value,key=value".
   static bool parse(const std::string& spec, EngineConfig& c, std::string& err) {
@@ -5052,6 +5079,7 @@ struct EngineConfig {
       else if (k == "plies") c.sim.plies = (int)v;
       else if (k == "playout") c.sim.playout_bag = (int)v;
       else if (k == "cands") c.sim.max_candidates = (int)v;
+      else if (k == "latecands") c.sim.late_candidates = (int)v;
       else if (k == "threads") c.threads = (int)v;
       else if (k == "z") c.sim.prune_z = v;
       else if (k == "tau") c.sim.shrink_tau = v;
@@ -5090,7 +5118,27 @@ struct Decision {
   std::vector<DecisionRow> rows;    // structured analysis, best first
   double seconds = 0;
   bool exact = false;               // proven result (solved endgame / exhaustive pre-endgame)
+  std::string info;                 // telemetry, one JSON object (protocol mode prints it as "info ...")
 };
+
+// Numbers for telemetry JSON (NaN and infinities become null).
+inline std::string jnum(double v, int prec = 4) {
+  if (!std::isfinite(v)) return "null";
+  std::ostringstream o;
+  o << std::setprecision(prec) << v;
+  return o.str();
+}
+
+// Analysis of a given move in a solved or searched endgame: its value among the root moves.
+inline std::string endgame_include(const Position& P, const EndgameResult& er, const std::string& include) {
+  Move keep;
+  std::string err;
+  if (include.empty() || !parse_move(P.board, include, keep, err)) return "";
+  for (size_t i = 0; i < er.root.size(); ++i)
+    if (er.root[i].first.same_as(keep))
+      return ",\"inc\":{\"m\":\"" + move_str(P.board, keep) + "\",\"value\":" + std::to_string(er.root[i].second) + "}";
+  return ",\"inc\":{\"m\":\"" + move_str(P.board, keep) + "\",\"value\":null}";
+}
 
 class Engine {
  public:
@@ -5121,6 +5169,12 @@ class Engine {
         row.win = final_spread > 0 ? 1.0 : (final_spread == 0 ? 0.5 : 0.0);
         D.rows.push_back(row);
       }
+      D.info = "{\"phase\":\"endgame\",\"bag\":0,\"unseen\":" + std::to_string(P.unseen.n) +
+               ",\"spread\":" + std::to_string(P.spread()) + ",\"solved\":" + (er.solved ? "true" : "false") +
+               ",\"depth\":" + std::to_string(er.depth) + ",\"nodes\":" + std::to_string(er.nodes) +
+               ",\"value\":" + std::to_string(er.value) + ",\"roots\":" + std::to_string(er.root.size()) +
+               endgame_include(P, er, cfg.include) +
+               ",\"t\":{\"search\":" + jnum(er.seconds) + ",\"total\":" + jnum(now_s() - t_start) + "}}";
       std::ostringstream o;
       o << "endgame: " << move_str(P.board, er.best) << "  value " << std::showpos << er.value << std::noshowpos
         << (er.solved ? " (exact)" : " (best found)") << ", depth " << er.depth << ", " << er.nodes << " nodes, "
@@ -5143,6 +5197,7 @@ class Engine {
       if (pr.rows.empty()) {  // not even one candidate solved in time: static play
         D.move = gen.generate_best(P.board, P.rack, ctx);
         D.method = "static (pre-endgame out of time)";
+        D.info = "{\"phase\":\"peg\",\"bag\":1,\"rows\":0,\"t\":{\"total\":" + jnum(now_s() - t_start) + "}}";
         DecisionRow row;
         row.move = D.move;
         row.static_eq = D.move.equity;
@@ -5154,6 +5209,18 @@ class Engine {
         D.method = "pre-endgame";
         D.seconds = pr.seconds;
         D.exact = pr.rows[0].exact;
+        {
+          int exact_rows = 0;
+          for (const auto& r : pr.rows) exact_rows += r.exact;
+          std::string top;
+          for (size_t i = 0; i < std::min<size_t>(4, pr.rows.size()); ++i)
+            top += std::string(i ? "," : "") + "{\"m\":\"" + move_str(P.board, pr.rows[i].move) + "\",\"w\":" +
+                   jnum(pr.rows[i].win) + ",\"e\":" + jnum(pr.rows[i].spread) + "}";
+          D.info = "{\"phase\":\"peg\",\"bag\":1,\"unseen\":" + std::to_string(P.unseen.n) + ",\"spread\":" +
+                   std::to_string(P.spread()) + ",\"rows\":" + std::to_string(pr.rows.size()) + ",\"exact_rows\":" +
+                   std::to_string(exact_rows) + ",\"best\":{\"w\":" + jnum(pr.rows[0].win) + "},\"top\":[" + top +
+                   "],\"t\":{\"search\":" + jnum(pr.seconds) + ",\"total\":" + jnum(now_s() - t_start) + "}}";
+        }
         for (const auto& r : pr.rows) {
           DecisionRow row;
           row.move = r.move;
@@ -5171,22 +5238,106 @@ class Engine {
     }
     // 3. Simulation.
     if (cfg.simulate) {
-      std::vector<Move> cands = sim_.candidates(P, cfg.sim.max_candidates);
+      int generated = 0;
+      Move keep;
+      std::string keep_err;
+      const bool has_keep = !cfg.include.empty() && parse_move(P.board, cfg.include, keep, keep_err);
+      // Near the end the static ranking is a weaker guide, so more candidates may be kept.
+      const int ncand = P.bag_n <= cfg.sim.playout_bag && cfg.sim.late_candidates > 0 ? cfg.sim.late_candidates
+                                                                                     : cfg.sim.max_candidates;
+      std::vector<Move> cands = sim_.candidates(P, ncand, &generated, has_keep ? &keep : nullptr);
+      const double t_gen = now_s() - t_start;
       if (cands.size() > 1) {
         OppModel opp;
         std::string note;
         // Inference and simulation share the time for the move.
         InferenceParams ip = cfg.inf;
         ip.time_limit = std::min(ip.time_limit, 0.25 * cfg.sim.time_limit);
+        const double t_inf0 = now_s();
         if (cfg.inference) opp = inf_.infer(P, ip, &note);
+        const double t_inf = now_s() - t_inf0;
         if (!note.empty()) D.report.push_back(note);
         SimParams sp = cfg.sim;
         sp.threads = std::max(sp.threads, cfg.threads);
         sp.time_limit = std::max(0.02, cfg.sim.time_limit - (now_s() - t_start));
-        const SimResult sr = sim_.run(P, cands, sp, opp.empty() ? nullptr : &opp);
+        // Telemetry: the ranking at 1/64, 1/32, ... 1/2 of the search, to see how the
+        // choice changes with more work (a copy is ranked; the search itself is untouched).
+        struct Snap {
+          double t;
+          int iters;
+          Move top;
+        };
+        std::vector<Snap> snaps;
+        double next_frac = 1.0 / 64;
+        const double t_sim0 = now_s();
+        auto progress = [&](const SimResult& R) {
+          const double el = now_s() - t_sim0;
+          if (next_frac >= 1.0 || el < next_frac * sp.time_limit) return;
+          while (next_frac < 1.0 && next_frac * sp.time_limit <= el) next_frac *= 2;
+          SimResult copy = R;
+          Simulator::rank_snapshot(copy, P, sp);
+          int it = 0;
+          for (const auto& c : R.cands) it = std::max(it, c.n);
+          snaps.push_back({el, it, copy.cands[0].move});
+        };
+        const SimResult sr = sim_.run(P, cands, sp, opp.empty() ? nullptr : &opp, progress);
         D.move = sr.cands[0].move;
         D.method = "simulation";
         D.seconds = sr.seconds;
+        {
+          // Static rank of each candidate (cands is in static order).
+          auto srank = [&](const Move& m) {
+            for (size_t i = 0; i < cands.size(); ++i)
+              if (cands[i].same_as(m)) return (int)i;
+            return -1;
+          };
+          std::vector<int> alloc(cands.size(), 0);
+          int pruned = 0;
+          for (const auto& c : sr.cands) {
+            const int k = srank(c.move);
+            if (k >= 0) alloc[k] = c.n;
+            pruned += !c.active;
+          }
+          const bool playout = P.bag_n <= sp.playout_bag;
+          const int plies = playout ? std::max(sp.plies, 40) : sp.plies;
+          std::ostringstream o;
+          o << "{\"phase\":\"" << (playout ? "playout" : "sim") << "\",\"bag\":" << P.bag_n
+            << ",\"unseen\":" << P.unseen.n << ",\"spread\":" << P.spread() << ",\"gen\":" << generated
+            << ",\"cands\":" << cands.size() << ",\"plies\":" << plies << ",\"iters\":" << sr.iterations
+            << ",\"pos\":" << sr.positions << ",\"pruned\":" << pruned
+            << ",\"inf\":" << (opp.empty() ? -1 : (int)opp.leaves.size())
+            << ",\"tau\":" << jnum(sp.shrink_tau * (playout ? 2.5 : 1.0)) << ",\"z\":" << jnum(sp.prune_z)
+            << ",\"best\":{\"w\":" << jnum(sr.cands[0].mean_win()) << ",\"e\":" << jnum(sr.cands[0].mean_eq())
+            << ",\"s\":" << srank(sr.cands[0].move) << "},\"alloc\":[";
+          for (size_t i = 0; i < alloc.size(); ++i) o << (i ? "," : "") << alloc[i];
+          o << "],\"top\":[";
+          for (size_t i = 0; i < std::min<size_t>(6, sr.cands.size()); ++i) {
+            const auto& c = sr.cands[i];
+            o << (i ? "," : "") << "{\"m\":\"" << move_str(P.board, c.move) << "\",\"s\":" << srank(c.move)
+              << ",\"st\":" << jnum(c.static_eq) << ",\"n\":" << c.n << ",\"pr\":" << (c.active ? 0 : 1)
+              << ",\"w\":" << jnum(c.mean_win()) << ",\"e\":" << jnum(c.mean_eq()) << ",\"post\":" << jnum(c.post, 5)
+              << ",\"d\":" << jnum(c.sim_diff, 5) << ",\"pw\":" << jnum(c.prior_w) << "}";
+          }
+          o << "]";
+          if (has_keep) {
+            for (size_t i = 0; i < sr.cands.size(); ++i)
+              if (sr.cands[i].move.same_as(keep)) {
+                const auto& c = sr.cands[i];
+                o << ",\"inc\":{\"m\":\"" << move_str(P.board, c.move) << "\",\"rank\":" << i << ",\"s\":" << srank(c.move)
+                  << ",\"n\":" << c.n << ",\"pr\":" << (c.active ? 0 : 1) << ",\"w\":" << jnum(c.mean_win())
+                  << ",\"e\":" << jnum(c.mean_eq()) << ",\"post\":" << jnum(c.post, 5) << ",\"pw\":" << jnum(c.prior_w) << "}";
+                break;
+              }
+          }
+          o << ",\"snap\":[";
+          for (size_t i = 0; i < snaps.size(); ++i)
+            o << (i ? "," : "") << "{\"t\":" << jnum(snaps[i].t) << ",\"it\":" << snaps[i].iters << ",\"m\":\""
+              << move_str(P.board, snaps[i].top) << "\",\"same\":" << (snaps[i].top.same_as(sr.cands[0].move) ? 1 : 0)
+              << "}";
+          o << "],\"t\":{\"gen\":" << jnum(t_gen) << ",\"inf\":" << jnum(t_inf) << ",\"sim\":" << jnum(sr.seconds)
+            << ",\"total\":" << jnum(now_s() - t_start) << "}}";
+          D.info = o.str();
+        }
         for (const auto& c : sr.cands) {
           DecisionRow row;
           row.move = c.move;
@@ -5209,6 +5360,7 @@ class Engine {
       if (cands.size() == 1) {
         D.move = cands[0];
         D.method = "only move";
+        D.info = "{\"phase\":\"only\",\"bag\":" + std::to_string(P.bag_n) + ",\"gen\":1}";
         DecisionRow row;
         row.move = cands[0];
         row.static_eq = cands[0].equity;
@@ -6257,7 +6409,7 @@ struct App {
     quit
 Player SPECs: static (no search), static+ (static + endgame solvers), sim (fast search),
 champion (full strength).  Options: time=S iters=N plies=N cands=N threads=N win=0|1
-eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
+eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,plies=3
 )";
   }
 
@@ -6344,7 +6496,7 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
   }
 
   // Engine protocol: answers "bestmove <move>" (see tools/referee.py).
-  void cmd_go_protocol(double secs) {
+  void cmd_go_protocol(double secs, const std::string& include = "") {
     if (!lex.loaded() || game.over) {
       std::cout << "bestmove pass" << std::endl;
       return;
@@ -6353,12 +6505,14 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
     EngineConfig c = cfg;
     c.threads = threads;
     c.sim.threads = threads;
+    c.include = include;
     if (secs > 0) {
       c.sim.time_limit = secs;
       c.endgame_time = secs;
       c.peg_time = secs;
     }
     Decision D = eng().choose(P, c, false);
+    if (!D.info.empty()) std::cout << "info " << D.info << "\n";
     std::cout << "bestmove " << move_str(P.board, D.move) << std::endl;
   }
 
@@ -7243,14 +7397,18 @@ eg=0|1 peg=0|1 inf=0|1   e.g.  champion:time=30,plies=3
     } else if (cmd == "go" || cmd == "best" || cmd == "analyze" || cmd == "analyse") {
       bool json = false, protocol = false;
       double secs = 0;
+      std::string include;
       for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "json") json = true;
         else if (args[i] == "movetime" && i + 1 < args.size()) {
           secs = std::atof(args[++i].c_str()) / 1000.0;
           protocol = true;
+        } else if (args[i] == "include") {  // analysis: also simulate this move
+          for (size_t j = i + 1; j < args.size(); ++j) include += (j > i + 1 ? " " : "") + args[j];
+          break;
         } else secs = std::atof(args[i].c_str());
       }
-      if (protocol) cmd_go_protocol(secs);
+      if (protocol) cmd_go_protocol(secs, include);
       else cmd_go(secs, true, json);
     } else if (cmd == "auto") {
       if (!need_lex()) return true;

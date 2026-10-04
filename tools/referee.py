@@ -14,6 +14,19 @@ Engine protocol (one line each way, like UCI for chess):
     <- bestmove <move>             8D WORD (across), D8 WORD (down), WO(R)D or WO.D for
                                    tiles already on the board, lower case = blank,
                                    exch ABC, pass
+Before "bestmove" an engine may print "info <JSON>" lines (its search statistics); the
+last one is stored with the move in the log.  Every game in the log carries its full
+record: for each move the position the mover saw (CGP, opponent's rack hidden while the
+bag has tiles), the move, its score, the time it took, the CPU time the engine's
+processes used (Linux), and the engine's info.
+With --a-history / --b-history the engine is also sent, before each position,
+    -> history <GCG>               the game so far as the mover knows it: GCG lines joined
+                                   by " | ", the mover's own racks, and for the opponent's
+                                   plays only the tiles they played
+so it can infer the opponent's rack.  The mover never saw the tiles of the opponent's
+exchanges and passes; the GCG names placeholder tiles from the mover's unseen pool for
+them, which only keeps the replay's tile count right (the engine checks the replayed
+position against the CGP).
 With --prefix, a (deterministic) engine plays both seats until the bag holds
 --prefix-until-bag tiles; A and B then take over from identical positions, which
 measures pre-endgame and endgame play on their own.
@@ -43,6 +56,28 @@ import threading
 import time
 
 N = 15
+CLK_TCK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") and "SC_CLK_TCK" in getattr(os, "sysconf_names", {}) else 100
+
+
+def session_cpu(sid):
+    """CPU seconds (user + system) used so far by the live processes of session `sid`
+    (an engine and everything it started).  None where /proc is not available."""
+    if not os.path.isdir("/proc"):
+        return None
+    total = 0
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open("/proc/%s/stat" % d) as f:
+                st = f.read()
+        except OSError:
+            continue
+        rest = st[st.rfind(")") + 2:].split()
+        # fields after the command: state ppid pgrp session ... utime(12) stime(13)
+        if int(rest[3]) == sid:
+            total += int(rest[11]) + int(rest[12])
+    return total / float(CLK_TCK)
 CENTER = (7, 7)
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 DIST = dict(zip("?" + LETTERS, [2, 9, 2, 2, 4, 12, 2, 3, 2, 9, 1, 1, 4, 2, 6, 8, 2, 1, 6, 4, 6, 4, 2, 2, 1, 2, 1]))
@@ -322,6 +357,54 @@ class Game:
         self.turn = 1 - p
         return score, err
 
+    def mover_gcg(self, lexicon):
+        """The game so far as the player to move knows it, as GCG lines."""
+        me = self.turn
+        names = ["p1", "p2"]
+        out = ["#character-encoding UTF-8", "#player1 p1 p1", "#player2 p2 p2"]
+        if lexicon:
+            out.append("#lexicon %s" % lexicon)
+        tot = [0, 0]
+        on_board = []
+        mine = [m[1] for m in self.moves if m[0] == me and m[2][0] != "end"] + [rack_str(self.racks[me])]
+
+        def placeholder(n, k):
+            # n tiles the mover could not see at move k: unseen = all - board - own rack
+            pool = [t for t, c in DIST.items() for _ in range(c)]
+            own = mine[sum(1 for m in self.moves[:k] if m[0] == me and m[2][0] != "end")]
+            for t in on_board + list(own):
+                pool.remove(t)
+            return "".join(sorted(pool)[:n])
+
+        for k, (p, before, mv, text, score) in enumerate(self.moves):
+            if mv[0] == "end":
+                return None
+            tot[p] += score
+            if mv[0] == "place":
+                _, row, col, d, cells = mv
+                w = "".join("." if through else ch for ch, through in cells)
+                if p == me:
+                    rack = before
+                else:  # only the tiles they put down
+                    rack = rack_str(["?" if ch.islower() else ch for ch, through in cells if not through])
+                out.append(">%s: %s %s %s +%d %d" % (names[p], rack, text.split()[0].upper(), w, score, tot[p]))
+                on_board += ["?" if ch.islower() else ch for ch, through in cells if not through]
+            elif p != me:
+                n = len(mv[1]) if mv[0] == "exch" else 1
+                fake = placeholder(n, k)
+                if len(fake) < n:
+                    return None
+                if mv[0] == "exch":
+                    out.append(">%s: %s -%s +0 %d" % (names[p], fake, fake, tot[p]))
+                else:
+                    out.append(">%s: %s - +0 %d" % (names[p], fake, tot[p]))
+            elif mv[0] == "exch":
+                out.append(">%s: %s -%s +0 %d" % (names[p], before, mv[1], tot[p]))
+            else:
+                out.append(">%s: %s - +0 %d" % (names[p], before, tot[p]))
+        out.append("#rack%d %s" % (me + 1, rack_str(self.racks[me])))
+        return " | ".join(out)
+
     def gcg(self, names):
         out = ["#character-encoding UTF-8", "#player1 %s %s" % (names[0], names[0]),
                "#player2 %s %s" % (names[1], names[1])]
@@ -348,19 +431,23 @@ class Game:
 
 
 class Engine:
-    def __init__(self, spec, name, init=""):
+    def __init__(self, spec, name, init="", history=False):
         self.name = name
+        self.history = history  # send "history <GCG>" before each position
         self.init = [c.strip() for c in init.split(";") if c.strip()]
         kind, _, cmd = spec.partition(":")
         if kind not in ("proto", "legacy"):
             raise SystemExit("engine spec must start with proto: or legacy:")
         self.kind, self.cmd = kind, cmd
         self.proc = None
+        self.info = None  # the last "info" line before a bestmove
+        self.startup_s = None
         self.start()
 
     STARTUP_SECONDS = 600  # loading a lexicon and its data; --startup-timeout
 
     def start(self):
+        t0 = time.time()
         # Its own process group, so a watchdog can stop a shell command and its children.
         self.proc = subprocess.Popen(self.cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, text=True, bufsize=1,
@@ -374,6 +461,10 @@ class Engine:
             while self.readline() != "readyok":
                 pass
         self.deadline(Engine.STARTUP_SECONDS, ready)
+        self.startup_s = time.time() - t0
+
+    def cpu(self):
+        return session_cpu(self.proc.pid) if os.name == "posix" else None
 
     def kill(self):
         try:
@@ -405,16 +496,24 @@ class Engine:
             raise EOFError("engine %s exited" % self.name)
         return line.strip()
 
-    def best(self, cgp, ms):
-        return self.deadline(3 * ms / 1000.0 + 60, lambda: self._best(cgp, ms))
+    def best(self, cgp, ms, hist=None, extra=""):
+        return self.deadline(3 * ms / 1000.0 + 60, lambda: self._best(cgp, ms, hist, extra))
 
-    def _best(self, cgp, ms):
+    def _best(self, cgp, ms, hist=None, extra=""):
+        self.info = None
         if self.kind == "proto":
+            if self.history and hist:
+                self.send("history " + hist)
             self.send("position cgp " + cgp)
-            self.send("go movetime %d" % ms)
+            self.send("go movetime %d%s" % (ms, extra))
             while True:
                 line = self.readline()
-                if line.startswith("bestmove "):
+                if line.startswith("info "):
+                    try:
+                        self.info = json.loads(line[5:])
+                    except ValueError:
+                        self.info = line[5:]
+                elif line.startswith("bestmove "):
                     return line[9:].strip()
         self.send("cgp " + cgp)
         self.send("go %.3f json" % (ms / 1000.0))
@@ -434,9 +533,20 @@ class Engine:
 WORKER = {}
 
 
+def load_words(path):
+    with open(path) as f:
+        for line in f:
+            w = line.split()
+            if w and w[0].isalpha():
+                WORDS.add(w[0].upper())
+
+
 def worker_init(args):
+    if not WORDS:  # processes started with "spawn" (Windows, macOS) do not inherit it
+        load_words(args.lexicon)
     WORKER["args"] = args
-    WORKER["engines"] = [Engine(args.a, args.a_name, args.a_init), Engine(args.b, args.b_name, args.b_init)]
+    WORKER["engines"] = [Engine(args.a, args.a_name, args.a_init, args.a_history),
+                         Engine(args.b, args.b_name, args.b_init, args.b_history)]
     WORKER["prefix"] = Engine(args.prefix, "prefix", args.prefix_init) if args.prefix else None
 
 
@@ -447,6 +557,8 @@ def play_game(pair, a_first):
     # seat 0 moves first
     seat = [0, 1] if a_first else [1, 0]  # seat -> engine index (0 = A)
     errors, spent, maxt = [], [0.0, 0.0], [0.0, 0.0]
+    cpu = [0.0, 0.0]
+    record = []  # one entry a move: what the mover saw, what it played, how long it took
     bingos = [0, 0]
     turns = 0
     handoff = None  # scores of A and B when the prefix engine hands over
@@ -462,30 +574,49 @@ def play_game(pair, a_first):
                 prefix.kill()
                 prefix.start()
                 text = "pass"
+            bag_before = len(g.bag)
+            n_moves = len(g.moves)
             score, err = g.apply(text)
             if err:
                 errors.append("prefix: %s  [%s]" % (err, cgp))
+            record.append(dict(p="prefix", bag=bag_before, cgp=cgp, mv=g.moves[n_moves][3], sc=score))
             turns += 1
             continue
         if handoff is None:
             handoff = (g.scores[seat.index(0)], g.scores[seat.index(1)], len(g.bag))
         e = seat[g.turn]
+        c0 = eng[e].cpu()
         t0 = time.time()
+        hist = g.mover_gcg(args.history_lexicon) if eng[e].history else None
         try:
-            text = eng[e].best(cgp, args.movetime)
+            text = eng[e].best(cgp, args.movetime, hist)
         except Exception as ex:  # crashed engine: restart, count as pass
             errors.append("%s crashed: %s" % (eng[e].name, ex))
             eng[e].kill()
             eng[e].start()
             text = "pass"
         dt = time.time() - t0
+        c1 = eng[e].cpu()
+        used = (c1 - c0) if c0 is not None and c1 is not None and c1 >= c0 else None
+        if used is not None:
+            cpu[e] += used
         if dt > 3 * args.movetime / 1000.0 + 0.2:
             errors.append("%s slow: %.2fs, bag %d  [%s]" % (eng[e].name, dt, len(g.bag), cgp))
         spent[e] += dt
         maxt[e] = max(maxt[e], dt)
+        bag_before = len(g.bag)
+        n_moves = len(g.moves)
         score, err = g.apply(text)
         if err:
             errors.append("%s: %s  [%s]" % (eng[e].name, err, cgp))
+        rec = dict(p=e, bag=bag_before, cgp=cgp, mv=g.moves[n_moves][3], sc=score, t=round(dt, 3))
+        if used is not None:
+            rec["cpu"] = round(used, 3)
+        if err:
+            rec["err"] = err
+        if eng[e].info is not None:
+            rec["info"] = eng[e].info
+        record.append(rec)
         if g.last_tiles == RACK:
             bingos[e] += 1
         turns += 1
@@ -498,10 +629,14 @@ def play_game(pair, a_first):
             f.write(g.gcg(names))
     if handoff is None:
         handoff = (0, 0, len(g.bag)) if prefix is None else (sa, sb, 0)
+    for p, before, mv, text, score in g.moves:
+        if mv[0] == "end":
+            record.append(dict(p=seat[p], end=text, sc=score))
     return dict(pair=pair, a_first=a_first, sa=sa, sb=sb, ha=handoff[0], hb=handoff[1], hbag=handoff[2], errors=errors,
-                spent=spent, maxt=maxt,
+                spent=spent, maxt=maxt, cpu=[round(c, 2) for c in cpu],
+                startup=[round(x.startup_s or 0, 2) for x in eng],
                 moves=[len([m for m in g.moves if m[2][0] != "end" and seat[m[0]] == k]) for k in (0, 1)],
-                bingos=bingos)
+                bingos=bingos, record=record)
 
 
 def run_pair(pair):
@@ -576,6 +711,7 @@ def run_meta(args):
     return dict(started=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 a=clean(args.a), b=clean(args.b), a_name=args.a_name, b_name=args.b_name,
                 a_init=args.a_init, b_init=args.b_init, a_info=info(args.a_info), b_info=info(args.b_info),
+                a_history=args.a_history, b_history=args.b_history,
                 prefix=clean(args.prefix), prefix_init=args.prefix_init, prefix_until_bag=args.prefix_until_bag,
                 games=args.games, first_pair=args.first_pair, single=args.single, movetime=args.movetime,
                 parallel=args.parallel, seed=args.seed, lexicon=os.path.basename(args.lexicon),
@@ -607,6 +743,9 @@ def main():
     ap.add_argument("--a-info", default="", help="file describing engine A's build (e.g. bin/magpie_bot.provenance), "
                     "copied into the log")
     ap.add_argument("--b-info", default="", help="the same for engine B")
+    ap.add_argument("--a-history", action="store_true", help="send engine A the game's history (see above)")
+    ap.add_argument("--b-history", action="store_true", help="send engine B the game's history")
+    ap.add_argument("--history-lexicon", default="", help="lexicon name written into the history's GCG")
     ap.add_argument("--startup-timeout", type=float, default=600, help="seconds an engine may take to load")
     args = ap.parse_args()
     Engine.STARTUP_SECONDS = args.startup_timeout
@@ -618,11 +757,7 @@ def main():
             Engine(spec, name, init).close()
         except Exception as ex:
             raise SystemExit("engine %s did not start (%s): %s" % (name, ex, spec))
-    with open(args.lexicon) as f:
-        for line in f:
-            w = line.split()
-            if w and w[0].isalpha():
-                WORDS.add(w[0].upper())
+    load_words(args.lexicon)
     t0 = time.time()
     results = []
     logf = open(args.log, "a") if args.log else None

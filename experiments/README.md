@@ -194,3 +194,261 @@ not reproduce against today's pinned Macondo.** No claim that Tilefish is the st
 engine follows from this. At tournament-length budgets, with four cores (BestBot's
 production setting), the comparison is open, and the deciding match would be the
 60–180 s, four-core profile planned above.
+
+## 4. Why level on wins but ahead on points against Macondo at 20 s? (registered 4 October 2026, before any game)
+
+**What the existing logs can and cannot show.** The logs of section 3 record each game's
+final score, time and errors, **but not its moves**, so no position from those games can
+be reconstructed. What they do show (`python3 tools/margins.py
+experiments/base-v2.2-vs-macondo-simming-20s.jsonl`):
+
+| 20 s against Macondo `simming 5` (400 games) | Value |
+|---|---|
+| Tilefish's wins: count, mean margin, median | 198, +103.4, +84.0 |
+| Tilefish's losses: count, mean margin, median | 199, −72.0, −59.0 |
+| Games decided by 25 points or less: share, Tilefish's score in them | 19.2%, 39.6% |
+| Games decided by 50 points or less: share, Tilefish's score in them (95% bootstrap interval) | 35.2%, 43.6% (36.1% to 51.6%) |
+| Games decided by more than 100: share, Tilefish's score in them | 33.8%, 62.2% |
+
+The positive average spread comes from larger wins, not more of them: Tilefish's wins are
+bigger than its losses, and it loses more of the close games. Against MAGPIE at 20 s the
+same table gives 58.3% in games decided by 25 or less; against Macondo at 5 s, 52.0%.
+This locates the question (close games, so probably the late game, where margins are
+decided) without answering it. A win-probability error is one explanation, not the only
+one: weaker pre-endgame or endgame play, or worse decisions in tight positions, would look
+the same.
+
+**Configuration facts checked in the code before running** (Macondo `14c080b57608`):
+- Each move, both engines get only a CGP, so neither has the game's history. Macondo's
+  inference needs it (`rangefinder/inference.go`, `PrepareFinder` returns `ErrNoEvents`
+  for a game without events), and so does Tilefish's (`Position::has_opp_last`). **So
+  `infer 5` has played as `simming 5` in every match so far, and Tilefish has never
+  inferred either.** The 62.88% against `infer 5` measured the same opponent as the
+  60.00% against `simming 5`.
+- Macondo's phases (`ai/bot/elite.go`): endgame with the bag empty; pre-endgame solver
+  with 1 tile in the bag; with 2 to 7 in the bag, a simulation to the end of the game
+  over its top 100 moves; otherwise 5 plies over its top 100 moves, stopping early at 99%
+  confidence. Tilefish: endgame; pre-endgame with 1 in the bag; with 2 to 7, simulation
+  played out to the end over its top 30 moves; otherwise 2 plies over its top 30.
+
+**New instrumentation** (this branch): the referee now stores each game's full record:
+the position each mover saw (CGP, opponent's rack hidden while the bag has tiles), the
+move, score, time, CPU seconds used by the engine's processes, engine start-up time, and
+an `info` line from each engine. Tilefish's info gives, per move: phase, legal moves
+generated, candidates kept, iterations, positions, candidates pruned, the iterations
+each candidate received, the top six with static rank, simulated win rate and equity,
+posterior, simulated difference and **the share of the posterior precision that comes
+from the static prior**, snapshots of the leading move at 1/64 … 1/2 of the search, and
+the time spent generating, inferring and simulating. Macondo's info gives set-up and
+search time, whether inference ran, and Macondo's own summary of its search. None of
+this changes what either engine plays.
+
+**Runs (measurements, not tests of a change).** CSW24, one thread each, Tilefish `main`
+search (= 2.2) against Macondo `14c080b57608` `simming 5`:
+
+| Run | Budget | Pairs | Seed | Purpose |
+|---|---|---|---|---|
+| `audit-20s` | 20 s | 200 (10 × 20) | 3002 | the section 3 match replayed with records: a replication of 49.88%, and the games to audit |
+| `profile-5s` | 5 s | 40 (2 × 20) | 3101 | where computation goes at 5 s |
+| `profile-60s` | 60 s | 16 (4 × 4) | 3102 | pilot: where computation goes at 60 s |
+
+**Added before any of its games (4 October 2026): an inference-mode pilot.** The referee
+can now send an engine the game so far as the mover knows it (`--b-history`: a GCG with
+the mover's own racks and only the tiles the opponent played; placeholder tiles from the
+mover's unseen pool for the opponent's exchanges and passes). The Macondo wrapper rebuilds
+the game from it with Macondo's own `gcgio` and `NewFromHistory`, as Macondo's bot worker
+(`bot/bot.go`) does, checks the board, scores and rack against the CGP, and falls back to
+the CGP if they differ. In a local test (2 pairs, 1.5 s) all 50 of Macondo's moves used
+the history and inference found up to 57,120 possible racks. Tilefish gets no history
+here, so it plays exactly as in the runs above; only Macondo's configuration changes.
+
+| Run | Budget | Pairs | Seed | Macondo |
+|---|---|---|---|---|
+| `infer-20s` | 20 s | 40 (2 × 20) | 3002 (pairs 0–39, the same deals as `audit-20s`) | `infer 5` with history |
+| `infer-60s` | 60 s | 16 (4 × 4) | 3102 (the same deals as `profile-60s`) | `infer 5` with history |
+
+This is a pilot for choosing Macondo's configuration for the final comparison, not a
+test: 40 pairs measure a score to about ±9 percentage points. Rule, fixed now: the final
+comparison uses `infer 5` with history if, at 20 s, Tilefish's score against it is lower
+than against `simming 5` on the same 40 deal pairs (the stronger opponent is the one to
+measure against), and `simming 5` otherwise.
+
+**Added before any of its games (4 October 2026): a four-thread pilot at 60 s.** To check
+the configuration and measure throughput before planning a long match: Tilefish (`main`
+search, `champion`) and Macondo (`simming 5`) with **4 threads each**, 60 s a move, one game
+at a time on each 4-vCPU runner (`--parallel 1`, so only the engine on move is computing),
+4 jobs × 2 deal pairs, seed 3201, CSW24. Recorded: CPU seconds per move for each engine
+(cores actually used), Tilefish's iterations, Macondo's own summary, game length in
+minutes, and the runner's CPU topology (virtual CPUs, cores, threads per core). It is not
+a test and its score is not reported as a result (8 pairs).
+
+The audit itself (positions, decisions, reanalysis) is described with its results.
+
+### Results of section 4 (4 October 2026)
+
+Logs: `audit-v2.2-vs-macondo-simming-20s.jsonl.gz`, `profile-v2.2-vs-macondo-simming-5s.jsonl.gz`,
+`profile-v2.2-vs-macondo-simming-60s.jsonl.gz`, `infer-v2.2-vs-macondo-infer-history-20s.jsonl.gz`,
+`infer-v2.2-vs-macondo-infer-history-60s.jsonl.gz` (every game with its full record). Tilefish
+is engine A, built at `d18fd01` (the 2.2 search plus telemetry); Macondo `14c080b57608`.
+Every number below comes from `tools/analyze.py`, `margins.py`, `audit.py` and
+`profile.py` on these files. There were no illegal moves, crashes or forfeits in any run.
+
+**The replay reproduces the original 20 s result.**
+
+| 20 s, `simming 5`, seed 3002, 200 pairs | Section 3 (no records) | Replay with records |
+|---|---|---|
+| Tilefish's score (95%) | 49.88% | 49.75% (45.1% to 54.4%), W–D–L 198–2–200 |
+| Spread a game (95%) | +15.4 | +13.8 (+4.1 to +23.4) |
+| Score in games decided by ≤ 50 (95%) | 43.6% (36.1% to 51.6%) | 41.0% (33.9% to 48.6%) |
+| Mean margin of Tilefish's wins / losses | +103.4 / −72.0 | +101.0 / −72.4 |
+
+**Where the points are won and lost** (`audit.py`; tiles in the bag before the move;
+95% intervals by bootstrap over pairs):
+
+| Points Tilefish gains a game | Opening 61+ | Middle 15–60 | Approach 8–14 | Late 2–7 | Last tile | Endgame | Rack adj. | Total |
+|---|---|---|---|---|---|---|---|---|
+| 5 s, 40 pairs | +11.9 (+3.9 to +20.4) | +21.2 (+7.0 to +36.1) | +6.7 (−4.3 to +16.9) | −0.1 (−6.9 to +7.5) | +4.2 | −0.2 | +0.7 | +44.5 |
+| 20 s, 200 pairs | +2.8 (−1.0 to +6.8) | +2.3 (−4.8 to +9.7) | +6.9 (+2.4 to +11.6) | +1.1 (−2.7 to +4.6) | +0.0 | −0.5 | +1.1 | +13.8 |
+| 60 s, 16 pairs | −6.9 | +14.7 | −2.1 | +4.9 | +1.5 | +9.4 | +3.4 | +24.9 |
+
+Between 5 s and 20 s, Tilefish's gain in the opening and middle game falls from +33.1 to
++5.1 points a game; the later phases hardly change. (The 5 s figures come from 40 pairs
+on other deals, so the comparison is indicative.)
+
+**Converting the late game** (spread when the bag first holds 7 or fewer, 20 s):
+
+| Lead at that point | Tilefish ahead: games, Tilefish wins | Macondo ahead: games, Macondo wins |
+|---|---|---|
+| 1–40 | 67, 58.2% | 63, 65.1% |
+| 41–100 | 65, **83.1%** | 81, **93.8%** |
+| 101+ | 78, 98.7% | 46, 97.8% |
+
+For 41–100 the difference is 10.7 points (1.1 to 20.7; not corrected for the several
+cuts examined). **In all 11 games that Tilefish lost from a 41–100 lead, Macondo made a
+bingo after the bag reached 7 tiles** (for example `.ANGRELS` +83, `.tECHNIC` +104,
+`BUNcHED` +105, `sIR.AMED` +140); in 9 of the 11 it had first made a smaller play in
+that phase. Where Tilefish had simulated its last move before the bingo (8 games), its
+estimate of its winning chance was 0.22 to 1.00, and 0.82 or more in four of them.
+
+**Tilefish's estimated winning chances** (its chosen move's simulated win rate against
+the game's result, 20 s): in the 2-ply phase, estimates between 0.1 and 0.9 are 2.3 points
+too high on average (−2.2 to +6.9; 2,982 moves), so they are calibrated. **In the late
+phase (2–7 in the bag) they are 14.7 points too high (+7.0 to +22.6; 112 moves).** The
+late rollouts play both sides greedily to the end of the game. Greedy play never fishes
+or sets up a bingo, so the estimates miss exactly how Macondo came back.
+
+**Where the computation goes** (Tilefish, one thread; `profile.py`):
+
+| | 5 s | 20 s | 60 s (pilot) |
+|---|---|---|---|
+| Moves profiled (2-ply phase / late playout phase) | 769 / 64 | 3,749 / 325 | 307 / 26 |
+| Legal moves generated, median; candidates kept | 689; 30 | 673; 30 | 577; 30 |
+| Iterations of the most-simulated candidate, median | 13,871 | 55,166 | 196,542 |
+| Candidates pruned by the end, mean | 28.0 of 30 | 28.0 of 30 | 28.0 of 30 |
+| Share of iterations to the top two candidates | 87.8% | 96.3% | 98.7% |
+| Leader at 1/16 of the search ≠ final choice | 12.9% | 6.4% | 5.2% |
+| Leader at 1/4 of the search ≠ final choice | 3.5% | 2.3% | 2.3% |
+| Leader at 1/2 of the search ≠ final choice | 3.8% | 1.3% | 1.0% |
+| Prior's share of the posterior precision, competitive candidates (posterior within 0.02): median, p90, share > 0.5 | 0.027, 0.148, 1.4% | 0.030, 0.180, 2.0% | 0.038, 0.223, 5.2% |
+| Same, late playout phase: median, p90, share > 0.5 | 0.019, 0.227, 8.4% | 0.021, 0.876, 18.3% | 0.023, 0.886, 20.5% |
+| Chosen move's static rank #1 (2-ply / late) | 66.7% / 35.9% | 65.2% / 24.6% | 62.5% / 19.2% |
+| Chosen move from static ranks 20–29 (2-ply / late) | 0.4% / 9.3% | 0.7% / 14.8% | not computed |
+| Wall time a move (simulated moves); CPU / wall | 5.00 s; 1.00 | 20.01 s; 1.00 | 60.03 s; 1.00 |
+| Time generating / inferring / simulating | 0.001 / 0 / 5.00 s | 0.001 / 0 / 20.01 s | 0.001 / 0 / 60.03 s |
+| Endgames solved exactly | 82.2% | 89.9% | 93.3% |
+| Pre-endgames (1 in the bag): candidates evaluated, of them exactly | 16, 0 | 16, 0 | 16, 0 |
+
+What this shows: once its 2-ply search has settled, which by 1/8 of a 20 s move it has in
+96% of cases, nearly all further work refines the duel between the final two candidates.
+That rarely changes the move. The prior is a small part of the posterior for
+competitive candidates in the 2-ply phase. In the late phase it dominates for about one
+competitive candidate in five, because those candidates are pruned after about 100–150
+playouts. Its asymptotic decay does not make it negligible there.
+
+**The opponent's resources and configuration.**
+
+| Macondo `simming 5`, one thread | 5 s | 20 s | 60 s |
+|---|---|---|---|
+| Wall time a move; CPU / wall | 4.59 s; 0.99 | 17.32 s; 1.00 | 43.16 s; 1.00 |
+| Iterations a move (its own summary), bag 15+: median (p10–p90) | not computed | 193 (117–471) | 1,030 (388–5,248) |
+| Moves stopped early by its 99% rule, bag 15+ | not computed | 7% (stopped before 18 s) | 43% (before 55 s) |
+| Set-up a move (parsing the position, building the bot) | 0.001 s | 0.001 s | 0.001 s |
+
+Engine start-up (process start to `readyok`) is outside the move clocks: Tilefish 1.3–1.4
+s; Macondo answers at once and loads its data during its first move, once per worker
+process (one move in 40 games). Both engines used one core each throughout (CPU/wall 0.99–1.00).
+The runner's 4 virtual CPUs ran 4 games at once, so each engine's thread shared the
+machine with three other games' threads.
+
+**Inference pilot** (Macondo `infer 5` with the game's history; Tilefish unchanged).
+Macondo rebuilt the game from history on every move (942 at 20 s, 373 at 60 s). Its
+inference produced possible racks on 588 of 830 moves with tiles in the bag at 20 s
+(median 1,774 racks) and 236 of 329 at 60 s.
+
+| Same deal pairs | Tilefish vs `simming 5` | Tilefish vs `infer 5` + history | Difference (95%) |
+|---|---|---|---|
+| 20 s, pairs 0–39 of seed 3002 | 45.62% | 52.50% | +6.9 (−8.8 to +22.5) |
+| 60 s, pairs 0–15 of seed 3102 | 53.12% | 50.00% | −3.1 (16 pairs; not computed) |
+
+Under the rule fixed beforehand, Tilefish did not score lower against `infer 5` at 20 s,
+so **the final comparison uses `simming 5`**. Inference spends a quarter of each move
+(`InferenceTimeSecs` = move time / 4 in the wrapper), which is one reason it may not
+help at these budgets; the pilot cannot separate that from noise.
+
+## 5. More candidates near the end of the game (registered 4 October 2026, before any game)
+
+**What the audit found first** (section 4's runs; full tables with the results there).
+The replayed 20 s match reproduces the original: 49.75% (45.1% to 54.4%), +13.8 points a
+game (+4.1 to +23.4). Tilefish scores 41.0% (33.9% to 48.6%) in games decided by 50 or
+less. Two things stand out:
+
+- *Where the 5 s lead goes.* Points Tilefish gains in the opening and middle game (bag 15
+  or more): +33.1 a game at 5 s (40 pairs), +5.1 at 20 s (200 pairs). Its search barely
+  changes its mind with more time: at 20 s the leader after 1/8 of the search is the final
+  choice 96.2% of the time, and the top two candidates take 96.3% of all iterations.
+  Macondo, at a median 193 iterations of 5 plies a move, is far from that point.
+- *The end of the game.* When the bag first holds 7 or fewer, Tilefish 41 to 100 points
+  ahead wins 83.1% (65 games); Macondo as far ahead wins 93.8% (81 games); difference
+  10.7 points (1.1 to 20.7, bootstrap over pairs, not corrected for the several cuts
+  examined). In that phase (2 to 7 in the bag) Tilefish's chosen move is outside its top
+  5 by static equity 47.4% of the time, and **14.8% of its choices come from static ranks
+  20–29, with more in 25–29 (8.0%) than in 20–24 (6.8%)**: the density is still rising at
+  the cut of 30, so good moves are very likely being cut. In the 2-ply phase ranks 20–29
+  hold 0.7% of choices. Macondo keeps 100 candidates in this phase.
+
+The opening/middle-game time scaling is the larger effect in points, but its remedy is
+not obvious (deeper rollouts lost earlier in section 1). The late-game cut is the
+weakness with the most specific evidence and the most specific remedy, so it is tested
+first; the time scaling is the next hypothesis.
+
+**Hypothesis.** With 2 to 7 tiles in the bag, keeping 100 candidates instead of 30
+(`champion:latecands=100`; everything else unchanged, including the 1-tile pre-endgame
+and the endgame) finds better late-game moves.
+
+**Design.** To measure late-game play on its own, both games of a deal pair are played
+by a deterministic static Tilefish until the bag holds 7 tiles or fewer
+(`prefix_until_bag=7`); the two engines then take over from the same position with
+seats swapped. Primary measure: points engine A gains on B from the handover to the end
+(per pair, bootstrap over pairs). Secondary: A's score (wins) in those games. CSW24, one
+thread each, 20 s a move unless stated.
+
+| Run | A | B | Pairs | Seed | Role |
+|---|---|---|---|---|---|
+| `late-screen` | `latecands=100` | frozen `v2.2.1` `champion` | 200 | 4001 | screen against frozen Tilefish |
+| `late-vs-macondo` | `latecands=100` | Macondo `simming 5` | 200 | 4002 | screen against Macondo |
+| `late-vs-macondo-control` | `champion` (default) | Macondo `simming 5` | 200 | 4002 | the same positions with the default |
+| `late-confirm` | `latecands=100` | frozen `v2.2.1` | 300 | 9001 | confirmation, fresh seeds |
+| `late-confirm-60s` | `latecands=100` vs Macondo, and `champion` vs Macondo | | 100 each | 9002 | longer budget, 60 s |
+
+**Rules, fixed now.** Seeds 4001–4002 are tuning seeds; 9001–9002 are used once, for
+confirmation. Every run is played to its full size (no interim looks, no early stop) and
+reported whatever the outcome.
+- *Screen passes* if in `late-screen` the 95% interval for points gained after the
+  handover lies above 0, **or** the point estimate is positive and A scores at least 50%
+  after the handover; **and** in the Macondo pair of runs the candidate gains at least as
+  many points after the handover as the control (point estimates).
+- *Confirmation* is run only if the screen passes. **Promotion to the default** requires
+  `late-confirm`'s 95% interval for points after the handover to lie above 0 with A's
+  score at least 50%, and the 60 s candidate not to gain fewer points than the 60 s control
+  (point estimates). Otherwise the default stays at 30 candidates and the result is
+  recorded as failed or inconclusive, with its numbers.

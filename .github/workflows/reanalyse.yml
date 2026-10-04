@@ -1,0 +1,109 @@
+name: reanalyse
+# Judges the decisions of a logged match with a longer search: see tools/reanalyse.py.
+#   gh workflow run reanalyse.yml -f log=experiments/X.jsonl.gz -f judge=tilefish -f ref=main
+#   gh workflow run reanalyse.yml -f log=... -f judge=macondo@14c080b57608 -f spec="simming 5"
+on:
+  workflow_dispatch:
+    inputs:
+      log: { description: "match log in this repository (.jsonl or .jsonl.gz)", required: true }
+      judge: { description: "tilefish, or macondo@COMMIT", default: "tilefish" }
+      ref: { description: "git ref that builds a Tilefish judge", default: "main" }
+      spec: { description: "judge setting (Tilefish: player spec; Macondo: bot and plies)", default: "champion" }
+      movetime: { description: "milliseconds a decision", default: "60000" }
+      threads: { description: "threads for the judge", default: "4" }
+      shards: { description: "parallel jobs", default: "10" }
+      per_stratum: { description: "games sampled from each of the four strata", default: "6" }
+      sample_seed: { description: "seed for the sample", default: "1" }
+      name: { description: "label", default: "judge" }
+permissions:
+  contents: read
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - id: p
+        env:
+          SHARDS: ${{ inputs.shards }}
+        run: python3 -c "import json, os; print('shards=' + json.dumps(list(range(int(os.environ['SHARDS'])))))" >> "$GITHUB_OUTPUT"
+  judge:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+    env:
+      LOG: ${{ inputs.log }}
+      JUDGE: ${{ inputs.judge }}
+      REF: ${{ inputs.ref }}
+      SPEC: ${{ inputs.spec }}
+      MOVETIME: ${{ inputs.movetime }}
+      THREADS: ${{ inputs.threads }}
+      SHARDS: ${{ inputs.shards }}
+      SHARD: ${{ matrix.shard }}
+      PER: ${{ inputs.per_stratum }}
+      SEED: ${{ inputs.sample_seed }}
+      NAME: ${{ inputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Word list
+        run: sh get-lexicon.sh CSW24
+      - name: Build the Tilefish judge
+        if: inputs.judge == 'tilefish'
+        run: |
+          git show "$REF:tilefish.cpp" > judge.cpp
+          g++ -O3 -march=native -std=c++17 -pthread judge.cpp -o judge
+          echo "J_CMD=proto:./judge --lexicon CSW24.kwg --threads $THREADS --quiet" >> "$GITHUB_ENV"
+          echo "J_INIT=player $SPEC" >> "$GITHUB_ENV"
+          echo "J_INC=--include" >> "$GITHUB_ENV"
+          echo "judge: Tilefish $(git rev-parse "$REF^{commit}") ($REF), $SPEC, $THREADS threads, $MOVETIME ms; cpu: $(nproc) x $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"
+      - uses: actions/setup-go@v5
+        if: startsWith(inputs.judge, 'macondo@')
+        with:
+          go-version: '1.26.1'
+      - name: Build the Macondo judge
+        if: startsWith(inputs.judge, 'macondo@')
+        run: |
+          M="$HOME/macondo"
+          git clone -q https://github.com/domino14/macondo.git "$M" && git -C "$M" checkout -q "${JUDGE#macondo@}"
+          sh tools/build_macondo_bot.sh "$M"
+          D="$HOME/macondo-data"
+          mkdir -p "$D/lexica/gaddag" && cp -r "$M/data/strategy" "$M/data/letterdistributions" "$D/"
+          cp CSW24.kwg CSW24.klv2 "$D/lexica/gaddag/"
+          echo "J_CMD=proto:$M/bin/macondo_bot $D CSW24 $THREADS $SPEC" >> "$GITHUB_ENV"
+          echo "J_INIT=" >> "$GITHUB_ENV"
+          echo "J_INC=" >> "$GITHUB_ENV"
+      - name: Judge
+        run: |
+          python3 tools/reanalyse.py judge "$LOG" --per-stratum "$PER" --sample-seed "$SEED" --shard "$SHARD" --shards "$SHARDS" \
+            --engine "$J_CMD" --init "$J_INIT" --name "$NAME" --movetime "$MOVETIME" $J_INC --out "judge-$SHARD.jsonl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: judge-${{ matrix.shard }}
+          path: judge-${{ matrix.shard }}.jsonl
+  summary:
+    needs: judge
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          pattern: judge-*
+          merge-multiple: true
+      - name: Pool and report
+        env:
+          NAME: ${{ inputs.name }}
+        run: |
+          cat out/*.jsonl > "$NAME.jsonl"
+          { echo "## $NAME"; echo '```'; python3 tools/reanalyse.py report "$NAME.jsonl"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.name }}
+          path: ${{ inputs.name }}.jsonl
