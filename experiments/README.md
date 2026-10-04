@@ -861,3 +861,26 @@ an option for analysis.
 **Fresh full games (`fresh-9200`, the default against Macondo `simming 5`, 20 s, 200 pairs,
 seed 9200):** 52.25% (47.96% to 56.54%), +16 Elo (−14 to +46), +21.8 points a game (+12.8 to
 +30.8): level on wins and ahead on points, as in sections 3 and 4.
+
+## 9. The tournament-budget match: four threads, 60 s a move, against BestBot's settings (registered 4 October 2026, before any game)
+
+**Question.** At 20 s a move on one core, Tilefish is level on wins with Macondo using
+BestBot's settings (sections 3, 4 and 8). BestBot plays in production with more time and three
+or four cores. This match measures the two engines at a budget close to that, as planned in
+section 5. It is a measurement, not a test of a change.
+
+**Setup.** Tilefish `main` at `10deb30` with `champion:iters=100000000` (the per-candidate cap
+of 1,000,000 bound on at least 10% of moves in the section 5 pilot; the default search is
+otherwise unchanged) against Macondo `14c080b57608` `simming 5`. CSW24, **60 s a move, 4
+threads each**, one game at a time on each 4-vCPU runner (only the engine on move computes),
+seed 9300 (never used), **416 deal pairs** (52 jobs of 8 pairs; the section 5 plan asked for
+409, and 8 pairs a job keeps each job inside the runners' time limit). No interim looks: the
+match is played to full size and reported whatever the outcome. Recorded as in section 4:
+CPU seconds per move for each engine, game length, Tilefish's iterations.
+
+**Primary measure:** Tilefish's score (draws half) with a 95% interval from a bootstrap over
+deal pairs, and the Elo difference. **Secondary:** points a game. **What may be claimed:**
+"ahead at this budget" only if the score interval lies entirely above 50%, "behind" only if
+entirely below, otherwise "level within the interval". Nothing beyond this opponent, this
+configuration, CSW24 and this budget follows; no claim of the strongest engine follows from
+one match.
