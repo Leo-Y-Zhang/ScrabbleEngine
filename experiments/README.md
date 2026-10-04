@@ -1276,3 +1276,19 @@ A's share of the decisive games by final margin:
 
 **Incomplete run: not a result under the registered rule** (the rule requires the registered number of deal pairs, played to full size). Shown for the record only.
 
+
+### Recorded automatically: `infer-screen-frozen` (section 12)
+
+Run 37219855057, recorded 2026-10-04 by `tools/report.py`; log `experiments/infer-screen-frozen.jsonl.gz`; 200 of 200 registered deal pairs; run conclusion: success.
+
+```text
+experiments/infer-screen-frozen.jsonl.gz: seed 9500, 200 deal pairs
+  A's score   49.12% (45.75% to 52.50%)
+  A's spread    +1.5 a game (-4.5 to +7.7)
+  rule: score > 50.00%: NOT met
+  rule: spread > +0.0: met
+  decision: FAILS (point estimates, as registered)
+```
+
+This leg's condition under section 12's screen rule: **not met**. The screen's decision needs the other leg too; it is added when that run is recorded.
+
