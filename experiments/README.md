@@ -475,3 +475,106 @@ zero, so this is a lead for the confirmation, not a result.
 
 Logs: `late-screen-latecands100-vs-v2.2.1-20s.jsonl.gz`, `late-latecands100-vs-macondo-20s.jsonl.gz`,
 `late-control-vs-macondo-20s.jsonl.gz`.
+
+### Confirmation result, 20 s (4 October 2026): fails the promotion rule
+
+Fresh seed 9001, used once; 300 pairs; `latecands=100` (built at `aab79c8`) against frozen
+`v2.2.1`; handover at a mean of 5.0 tiles; no illegal moves, crashes or forfeits. Log:
+`late-confirm-latecands100-vs-v2.2.1-20s.jsonl.gz`.
+
+| | Points A gains after the handover (95%) | A's score (95%) | Late choices from static ranks 31–100 |
+|---|---|---|---|
+| `late-screen` (seed 4001, 200 pairs) | +0.93 (−0.37 to +2.26) | 50.50% (50.00% to 51.25%) | 51 of 304 (16.8%) |
+| `late-confirm` (seed 9001, 300 pairs) | **−0.52 (−1.86 to +0.75)** | 50.75% (49.83% to 51.75%) | 63 of 468 (13.5%) |
+
+**Decision: not promoted. The default stays at 30 candidates.** Promotion required the
+confirmation's interval for points after the handover to lie above zero; it contains
+zero and the point estimate is negative.
+
+**What the experiment established.** The change works as intended: one late-game
+decision in seven picks a move the default can never play. Against Tilefish's own
+late-game play this is worth nothing measurable: screen and confirmation together put it
+within about ±1.5 points a game from the handover. The one positive signal was against
+Macondo: +2.25 percentage points of score on the same 200 positions (+0.50 to +4.00),
+and +1.09 points (−1.46 to +3.67). That is consistent with the reanalysis below, but it
+was a screening measurement, and the promotion test was fixed in advance. It is
+reported as a lead only (the 60 s runs against Macondo, also registered above, are
+reported below).
+
+### Reanalysis of critical decisions (4 October 2026)
+
+`tools/reanalyse.py` and `reanalyse.yml` on the replayed 20 s match: 20 games, 5 from
+each stratum (Tilefish lost by 1–50, won by 1–50, lost by 51+, won by 51+; sample seed
+1), every decision of both engines, 485 decisions. Each judge saw only the position the
+mover saw (the CGP in the record: the opponent's rack hidden while the bag has tiles)
+and searched 40 s with 4 threads, 8 times the compute of a 20 s one-thread move. Logs:
+`judge-tilefish-4t-40s.jsonl.gz`, `judge-macondo-4t-40s.jsonl.gz`.
+
+A stronger search is not an oracle, and each judge shares one engine's evaluation. The
+Tilefish judge agrees with Tilefish's own moves 96.3% of the time (all but endgame) and
+with Macondo's 55.8%. That mostly shows that more time rarely changes Tilefish's mind, as
+the profile above found; it says little about who is right. The Macondo judge is the
+informative one for Tilefish's decisions:
+
+| Macondo's judge agrees with… | Opening 61+ | Middle 15–60 | Approach 8–14 | Late 2–7 | Last tile | Endgame | All but endgame |
+|---|---|---|---|---|---|---|---|
+| Tilefish's 20 s moves | 77.9% (68) | 75.9% (108) | 63.2% (19) | **38.9% (18)** | 33.3% (3) | 81.5% (27) | 71.8% (216) |
+| Macondo's own 20 s moves | 69.1% (68) | 60.6% (109) | 66.7% (15) | **76.5% (17)** | 87.5% (8) | 72.0% (25) | 65.9% (217) |
+
+By Macondo's own longer search, Tilefish's opening and middle-game moves are closer to
+right than Macondo's 20 s moves. In the late phase the judge rejected 11 of Tilefish's 18
+decisions:
+- **In 8 of the 11 it preferred a move that Tilefish ranks 37th to 66th by static
+  equity** (ranks 37, 44, 53, 55, 56, 61, 64, 66). Those are outside the cut of 30, so
+  Tilefish could not play them.
+- The other 3 are the same placement with the blank named differently, or moves the
+  judge rates equal.
+- By the judge's own estimates most disagreements are small (0.5 to 4 points of winning
+  chance). One is large: pair 71, bag 3, `15H (D)EI` 49.0% against the played `M12 HE`
+  28.9%, static rank 53 against 7.
+
+This is the clearest evidence for the late-game cut, and it is what `latecands=100`
+tested. Against Tilefish itself the wider list did not pay; against Macondo the signal
+is positive but unconfirmed.
+
+### Four-thread, 60 s pilot: configuration and throughput (4 October 2026)
+
+Engine A at `dd3dd86` (the 2.2 search), Macondo `simming 5`, both with 4 threads, one game
+at a time per runner, 8 pairs (seed 3201). Log: `pilot-4t-v2.2-vs-macondo-simming-60s.jsonl.gz`.
+The score (50.00%, 31.5% to 68.5%, 8 pairs) is not a result.
+
+| Measured | Value |
+|---|---|
+| Runner CPU (`lscpu`) | 4 virtual CPUs = 2 physical cores × 2 hardware threads (AMD EPYC 7763 or 9V74) |
+| Cores used while thinking (CPU s / wall s) | Tilefish 3.98, Macondo 3.97 |
+| Tilefish time a move: all moves / simulated moves | 50.0 s / 58.6 s (median 60.05 s) |
+| Tilefish iterations, most-simulated candidate: median, p90 | 763,611, **1,000,000 (its per-candidate cap in `champion`)** |
+| Tilefish share of iterations to the top two candidates | 99.7% |
+| Macondo time a move | **22.7 s of 60 s** |
+| Macondo iterations a move, bag 15+: median, p90 | 5,250, 5,252 |
+| Game length (both engines thinking) | mean 14.8 min (10.8 to 18.7) |
+
+Two configuration facts follow:
+
+- **Macondo with BestBot's settings stops by itself.** Its 99% stopping rule also ends
+  every simulation after 2,000 + 625 × plies = 5,125 iterations
+  (`montecarlo/stopping_condition.go`, lines 29–30 and 113). With 4 threads it gets
+  there in about 20 s in the middle game. **At 60 s or more on 4 threads, these settings
+  are at full strength already;** a longer budget changes only Tilefish.
+- **Tilefish hits its own cap.** `champion` stops at 1,000,000 iterations per candidate,
+  which binds on at least 10% of moves at 60 s with 4 threads. Longer budgets need a
+  higher `iters`, though the profile suggests the extra iterations would mostly refine
+  the final duel.
+
+**Plan for a larger four-thread match against Macondo**, from these measurements
+(pair-score SD 0.311 from section 1, assumed to carry over): one game takes about 15
+minutes of a runner's time, so a 340-minute job holds 11 pairs.
+
+| Target (80% power, two-sided 5%) | Pairs | Games | Runner-hours | vCPU-hours | Jobs of 11 pairs | Elapsed at 20 runners |
+|---|---|---|---|---|---|---|
+| +30 Elo | 409 | 818 | 202 | 808 | 38 | about 10 h |
+| +20 Elo | 916 | 1,832 | 452 | 1,808 | 84 | about 23 h |
+
+A runner-hour here is one 4-vCPU machine (2 physical cores) for an hour. The match
+should use `simming 5` (inference pilot, above), `iters` raised for Tilefish, and fresh
+seeds from 9100.
