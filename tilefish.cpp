@@ -6591,6 +6591,8 @@ struct App {
                           (json: one machine-readable line, for GUIs and broadcasts)
     position cgp CGP      engine protocol: set a position ...
     go movetime MS        ... and answer "bestmove <move>" (see tools/referee.py)
+    history GCG           (optional, before position) the game so far, GCG lines joined by " | ",
+                          so the engine can infer the opponent's rack from their last play
     ui new|move|bot|hint|state|undo|review ...   a game for a graphical front-end, in JSON (web/)
     auto [N]              let the engine play the next N moves (either side)
     unseen                tiles you cannot see (bag + opponent rack)

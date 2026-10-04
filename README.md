@@ -251,6 +251,11 @@ go movetime 1000
 bestmove E5 ANESTRI
 ```
 
+Before `position`, an engine may also be sent `history <GCG>`: the game so far as the
+mover knows it (GCG lines joined by ` | `; the referee sends it with `--a-history`). Tilefish
+replays it and, if the replay reproduces the position's board, infers the opponent's rack
+from their last play, as it does in its own games.
+
 `tools/referee.py` uses it to run matches between any two engines that speak it. The
 referee deals the tiles, checks every move against the word list, scores it itself and
 plays each deal twice with the seats swapped. With `--prefix`, a deterministic engine
