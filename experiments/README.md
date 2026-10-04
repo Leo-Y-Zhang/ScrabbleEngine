@@ -283,3 +283,61 @@ minutes, and the runner's CPU topology (virtual CPUs, cores, threads per core). 
 a test and its score is not reported as a result (8 pairs).
 
 The audit itself (positions, decisions, reanalysis) is described with its results.
+
+## 5. More candidates near the end of the game (registered 4 October 2026, before any game)
+
+**What the audit found first** (section 4's runs; full tables with the results there).
+The replayed 20 s match reproduces the original: 49.75% (45.1% to 54.4%), +13.8 points a
+game (+4.1 to +23.4). Tilefish scores 41.0% (33.9% to 48.6%) in games decided by 50 or
+less. Two things stand out:
+
+- *Where the 5 s lead goes.* Points Tilefish gains in the opening and middle game (bag 15
+  or more): +33.1 a game at 5 s (40 pairs), +5.1 at 20 s (200 pairs). Its search barely
+  changes its mind with more time: at 20 s the leader after 1/8 of the search is the final
+  choice 96.2% of the time, and the top two candidates take 96.3% of all iterations.
+  Macondo, at a median 193 iterations of 5 plies a move, is far from that point.
+- *The end of the game.* When the bag first holds 7 or fewer, Tilefish 41 to 100 points
+  ahead wins 83.1% (65 games); Macondo as far ahead wins 93.8% (81 games); difference
+  10.7 points (1.1 to 20.7, bootstrap over pairs, not corrected for the several cuts
+  examined). In that phase (2 to 7 in the bag) Tilefish's chosen move is outside its top
+  5 by static equity 47.4% of the time, and **14.8% of its choices come from static ranks
+  20–29, with more in 25–29 (8.0%) than in 20–24 (6.8%)**: the density is still rising at
+  the cut of 30, so good moves are very likely being cut. In the 2-ply phase ranks 20–29
+  hold 0.7% of choices. Macondo keeps 100 candidates in this phase.
+
+The opening/middle-game time scaling is the larger effect in points, but its remedy is
+not obvious (deeper rollouts lost earlier in section 1). The late-game cut is the
+weakness with the most specific evidence and the most specific remedy, so it is tested
+first; the time scaling is the next hypothesis.
+
+**Hypothesis.** With 2 to 7 tiles in the bag, keeping 100 candidates instead of 30
+(`champion:latecands=100`; everything else unchanged, including the 1-tile pre-endgame
+and the endgame) finds better late-game moves.
+
+**Design.** To measure late-game play on its own, both games of a deal pair are played
+by a deterministic static Tilefish until the bag holds 7 tiles or fewer
+(`prefix_until_bag=7`); the two engines then take over from the same position with
+seats swapped. Primary measure: points engine A gains on B from the handover to the end
+(per pair, bootstrap over pairs). Secondary: A's score (wins) in those games. CSW24, one
+thread each, 20 s a move unless stated.
+
+| Run | A | B | Pairs | Seed | Role |
+|---|---|---|---|---|---|
+| `late-screen` | `latecands=100` | frozen `v2.2.1` `champion` | 200 | 4001 | screen against frozen Tilefish |
+| `late-vs-macondo` | `latecands=100` | Macondo `simming 5` | 200 | 4002 | screen against Macondo |
+| `late-vs-macondo-control` | `champion` (default) | Macondo `simming 5` | 200 | 4002 | the same positions with the default |
+| `late-confirm` | `latecands=100` | frozen `v2.2.1` | 300 | 9001 | confirmation, fresh seeds |
+| `late-confirm-60s` | `latecands=100` vs Macondo, and `champion` vs Macondo | | 100 each | 9002 | longer budget, 60 s |
+
+**Rules, fixed now.** Seeds 4001–4002 are tuning seeds; 9001–9002 are used once, for
+confirmation. Every run is played to its full size (no interim looks, no early stop) and
+reported whatever the outcome.
+- *Screen passes* if in `late-screen` the 95% interval for points gained after the
+  handover lies above 0, **or** the point estimate is positive and A scores at least 50%
+  after the handover; **and** in the Macondo pair of runs the candidate gains at least as
+  many points after the handover as the control (point estimates).
+- *Confirmation* is run only if the screen passes. **Promotion to the default** requires
+  `late-confirm`'s 95% interval for points after the handover to lie above 0 with A's
+  score at least 50%, and the 60 s candidate not to gain fewer points than the 60 s control
+  (point estimates). Otherwise the default stays at 30 candidates and the result is
+  recorded as failed or inconclusive, with its numbers.
