@@ -452,3 +452,203 @@ reported whatever the outcome.
   score at least 50%, and the 60 s candidate not to gain fewer points than the 60 s control
   (point estimates). Otherwise the default stays at 30 candidates and the result is
   recorded as failed or inconclusive, with its numbers.
+
+### Screen results (4 October 2026)
+
+Engine A built at `aab79c8`; handover when the bag first holds 7 or fewer (mean 4.9–5.1
+tiles); CSW24, 20 s a move, one thread each, 200 pairs a run; `tools/handover.py`.
+No illegal moves, crashes or forfeits.
+
+| Run | Points A gains after the handover (95%) | A's score (95%) |
+|---|---|---|
+| `late-screen`: `latecands=100` vs frozen `v2.2.1` (seed 4001) | +0.93 (−0.37 to +2.26) | 50.50% (50.00% to 51.25%) |
+| `late-vs-macondo`: `latecands=100` vs Macondo `simming 5` (seed 4002) | +4.46 (+2.51 to +6.46) | 51.38% (50.12% to 52.75%) |
+| `late-vs-macondo-control`: default vs Macondo, same 200 positions | +3.37 (+0.91 to +5.75) | 49.12% (47.38% to 50.75%) |
+| Candidate − control, paired by deal (all 200 handovers identical) | +1.09 (−1.46 to +3.67) | +2.25 points (+0.50 to +4.00) |
+
+The change did what it was meant to do mechanically: in `late-screen`, 51 of Tilefish's
+304 late-phase choices (16.8%) were moves ranked 31st to 100th by static equity, which
+the default can never play. **The screen passes under the registered rule** (positive
+point estimate with a score of at least 50% against frozen Tilefish, and at least the
+control's points against Macondo). On its own, no interval for points gained excludes
+zero, so this is a lead for the confirmation, not a result.
+
+Logs: `late-screen-latecands100-vs-v2.2.1-20s.jsonl.gz`, `late-latecands100-vs-macondo-20s.jsonl.gz`,
+`late-control-vs-macondo-20s.jsonl.gz`.
+
+### Confirmation result, 20 s (4 October 2026): fails the promotion rule
+
+Fresh seed 9001, used once; 300 pairs; `latecands=100` (built at `aab79c8`) against frozen
+`v2.2.1`; handover at a mean of 5.0 tiles; no illegal moves, crashes or forfeits. Log:
+`late-confirm-latecands100-vs-v2.2.1-20s.jsonl.gz`.
+
+| | Points A gains after the handover (95%) | A's score (95%) | Late choices from static ranks 31–100 |
+|---|---|---|---|
+| `late-screen` (seed 4001, 200 pairs) | +0.93 (−0.37 to +2.26) | 50.50% (50.00% to 51.25%) | 51 of 304 (16.8%) |
+| `late-confirm` (seed 9001, 300 pairs) | **−0.52 (−1.86 to +0.75)** | 50.75% (49.83% to 51.75%) | 63 of 468 (13.5%) |
+
+**Decision: not promoted. The default stays at 30 candidates.** Promotion required the
+confirmation's interval for points after the handover to lie above zero; it contains
+zero and the point estimate is negative.
+
+**What the experiment established.** The change works as intended: one late-game
+decision in seven picks a move the default can never play. Against Tilefish's own
+late-game play this is worth nothing measurable: screen and confirmation together put it
+within about ±1.5 points a game from the handover. The one positive signal was against
+Macondo: +2.25 percentage points of score on the same 200 positions (+0.50 to +4.00),
+and +1.09 points (−1.46 to +3.67). That is consistent with the reanalysis below, but it
+was a screening measurement, and the promotion test was fixed in advance. It is
+reported as a lead only (the 60 s runs against Macondo, also registered above, are
+reported below).
+
+### Reanalysis of critical decisions (4 October 2026)
+
+`tools/reanalyse.py` and `reanalyse.yml` on the replayed 20 s match: 20 games, 5 from
+each stratum (Tilefish lost by 1–50, won by 1–50, lost by 51+, won by 51+; sample seed
+1), every decision of both engines, 485 decisions. Each judge saw only the position the
+mover saw (the CGP in the record: the opponent's rack hidden while the bag has tiles)
+and searched 40 s with 4 threads, 8 times the compute of a 20 s one-thread move. Logs:
+`judge-tilefish-4t-40s.jsonl.gz`, `judge-macondo-4t-40s.jsonl.gz`.
+
+A stronger search is not an oracle, and each judge shares one engine's evaluation. The
+Tilefish judge agrees with Tilefish's own moves 96.3% of the time (all but endgame) and
+with Macondo's 55.8%. That mostly shows that more time rarely changes Tilefish's mind, as
+the profile above found; it says little about who is right. The Macondo judge is the
+informative one for Tilefish's decisions:
+
+| Macondo's judge agrees with… | Opening 61+ | Middle 15–60 | Approach 8–14 | Late 2–7 | Last tile | Endgame | All but endgame |
+|---|---|---|---|---|---|---|---|
+| Tilefish's 20 s moves | 77.9% (68) | 75.9% (108) | 63.2% (19) | **38.9% (18)** | 33.3% (3) | 81.5% (27) | 71.8% (216) |
+| Macondo's own 20 s moves | 69.1% (68) | 60.6% (109) | 66.7% (15) | **76.5% (17)** | 87.5% (8) | 72.0% (25) | 65.9% (217) |
+
+By Macondo's own longer search, Tilefish's opening and middle-game moves are closer to
+right than Macondo's 20 s moves. In the late phase the judge rejected 11 of Tilefish's 18
+decisions:
+- **In 8 of the 11 it preferred a move that Tilefish ranks 37th to 66th by static
+  equity** (ranks 37, 44, 53, 55, 56, 61, 64, 66). Those are outside the cut of 30, so
+  Tilefish could not play them.
+- The other 3 are the same placement with the blank named differently, or moves the
+  judge rates equal.
+- By the judge's own estimates most disagreements are small (0.5 to 4 points of winning
+  chance). One is large: pair 71, bag 3, `15H (D)EI` 49.0% against the played `M12 HE`
+  28.9%, static rank 53 against 7.
+
+This is the clearest evidence for the late-game cut, and it is what `latecands=100`
+tested. Against Tilefish itself the wider list did not pay; against Macondo the signal
+is positive but unconfirmed.
+
+### Four-thread, 60 s pilot: configuration and throughput (4 October 2026)
+
+Engine A at `dd3dd86` (the 2.2 search), Macondo `simming 5`, both with 4 threads, one game
+at a time per runner, 8 pairs (seed 3201). Log: `pilot-4t-v2.2-vs-macondo-simming-60s.jsonl.gz`.
+The score (50.00%, 31.5% to 68.5%, 8 pairs) is not a result.
+
+| Measured | Value |
+|---|---|
+| Runner CPU (`lscpu`) | 4 virtual CPUs = 2 physical cores × 2 hardware threads (AMD EPYC 7763 or 9V74) |
+| Cores used while thinking (CPU s / wall s) | Tilefish 3.98, Macondo 3.97 |
+| Tilefish time a move: all moves / simulated moves | 50.0 s / 58.6 s (median 60.05 s) |
+| Tilefish iterations, most-simulated candidate: median, p90 | 763,611, **1,000,000 (its per-candidate cap in `champion`)** |
+| Tilefish share of iterations to the top two candidates | 99.7% |
+| Macondo time a move | **22.7 s of 60 s** |
+| Macondo iterations a move, bag 15+: median, p90 | 5,250, 5,252 |
+| Game length (both engines thinking) | mean 14.8 min (10.8 to 18.7) |
+
+Two configuration facts follow:
+
+- **Macondo with BestBot's settings stops by itself.** Its 99% stopping rule also ends
+  every simulation after 2,000 + 625 × plies = 5,125 iterations
+  (`montecarlo/stopping_condition.go`, lines 29–30 and 113). With 4 threads it gets
+  there in about 20 s in the middle game. **At 60 s or more on 4 threads, these settings
+  are at full strength already;** a longer budget changes only Tilefish.
+- **Tilefish hits its own cap.** `champion` stops at 1,000,000 iterations per candidate,
+  which binds on at least 10% of moves at 60 s with 4 threads. Longer budgets need a
+  higher `iters`, though the profile suggests the extra iterations would mostly refine
+  the final duel.
+
+**Plan for a larger four-thread match against Macondo**, from these measurements
+(pair-score SD 0.311 from section 1, assumed to carry over): one game takes about 15
+minutes of a runner's time, so a 340-minute job holds 11 pairs.
+
+| Target (80% power, two-sided 5%) | Pairs | Games | Runner-hours | vCPU-hours | Jobs of 11 pairs | Elapsed at 20 runners |
+|---|---|---|---|---|---|---|
+| +30 Elo | 409 | 818 | 202 | 808 | 38 | about 10 h |
+| +20 Elo | 916 | 1,832 | 452 | 1,808 | 84 | about 23 h |
+
+A runner-hour here is one 4-vCPU machine (2 physical cores) for an hour. The match
+should use `simming 5` (inference pilot, above), `iters` raised for Tilefish, and fresh
+seeds from 9100.
+
+## 6. More late candidates against Macondo specifically (registered 4 October 2026, before any game, and before the 60 s results of section 5 were seen)
+
+**Why a new test.** Section 5's promotion test (against frozen Tilefish) failed and stays
+failed. The evidence that remains points at Macondo specifically: on the same 200
+positions, `latecands=100` scored +2.25 percentage points more than the default against
+Macondo (+0.50 to +4.00, a screen); and Macondo's judge preferred a move outside
+Tilefish's top 30 in 8 of the 11 late decisions it rejected. Against an opponent that plays the late
+game like Tilefish's own greedy rollouts, the extra candidates change little. Against
+one that fishes and sets up bingos, the moves that are good in reply (often blocks, which
+score little) may be exactly the ones ranked low by static equity.
+
+**Hypothesis.** Against Macondo `simming 5`, Tilefish with `latecands=100` wins more
+often from the same late-game positions than Tilefish with the default.
+
+**Design.** As in section 5 (static prefix until the bag holds 7 or fewer, 20 s a move,
+one thread, CSW24, engine A built at `aab79c8`), with **fresh seed 9003, 300 pairs**, two
+runs on identical positions: `late-macondo-confirm` (A = `latecands=100`) and
+`late-macondo-confirm-control` (A = `champion`). Primary measure: the difference in A's
+score, candidate − control, paired by deal pair (bootstrap over pairs, 10,000
+resamples). Secondary: the same for points gained after the handover.
+
+**Rule, fixed now.** Played to full size, no interim looks. `latecands=100` becomes the
+default only if the primary measure's 95% interval lies above zero **and** the
+secondary's point estimate is not negative. Otherwise the default stays and the result
+is reported with its numbers. A pass would support only this claim: better late-game
+results against this Macondo configuration, at 20 s.
+
+### Results of sections 5 (60 s) and 6 (4 October 2026): no effect; the default stays
+
+Engine A built at `aab79c8`; Macondo `simming 5`; handover when the bag first holds 7 or
+fewer; one thread each; no illegal moves, crashes or forfeits. Candidate and control
+played identical handover positions in every pair (checked by `tools/handover.py`); the
+candidate used 100 candidates on its late moves (454 in section 6) and the control 30
+(468). Logs: `late-confirm-60s-latecands100-vs-macondo.jsonl.gz`,
+`late-confirm-60s-control-vs-macondo.jsonl.gz`, `late-macondo-confirm-latecands100.jsonl.gz`,
+`late-macondo-confirm-control.jsonl.gz`.
+
+| Run (fresh seeds) | Candidate − control: A's score (95%) | Candidate − control: points after the handover (95%) | Candidate / control: points after the handover |
+|---|---|---|---|
+| Section 5, 60 s, seed 9002, 100 pairs | −1.00 percentage points (−2.50 to 0.00) | +0.43 (−1.97 to +2.91) | +4.64 / +4.21 |
+| **Section 6, 20 s, seed 9003, 300 pairs (primary)** | **+0.00 (−1.17 to +1.17)** | −0.00 (−1.93 to +1.92) | +4.30 / +4.30 |
+
+In section 6 the two runs differ in 202 of 600 games. That the totals agree (303.5 wins
+each; 2,579 and 2,581 points) is coincidence; the logs show different settings and
+different games.
+
+**Decision: section 6 fails its rule (the interval contains zero), so `latecands=100` is
+not adopted, and the +2.25-point screen signal against Macondo did not replicate.** The
+60 s condition of section 5 held on its point estimate, but section 5 had already
+failed at 20 s.
+
+**What the late-game experiments established, together.**
+1. The cut of 30 candidates does bind in the late game. Macondo's judge prefers moves
+   ranked 37 to 66 in 8 of 11 rejected decisions, and with 100 candidates Tilefish picks
+   a move ranked beyond 30 in about one late decision in seven.
+2. Widening the list does not change results, against frozen Tilefish (−0.52, −1.86 to
+   +0.75) or against Macondo (±1.2 percentage points of score at 20 s, 300 pairs). The new
+   moves are chosen by the same late-game evaluation, which section 4 found 14.7 points
+   too optimistic in undecided positions. So the binding constraint is that evaluation
+   (greedy play-outs that never fish or set up a bingo), not the candidate list.
+3. Against Macondo from the same late positions, Tilefish gains about 4 points a game
+   after the handover with either setting (+4.30, 95% +2.4 to +6.2, 300 pairs). The 20 s
+   match's late-game conversion deficit (section 4) therefore probably depends on the
+   positions real games reach (for example, open boards with bingo lanes) more than on
+   late-game skill measured from these static-prefix positions. The prefix positions
+   come from a static player and may not be typical.
+
+**Next hypothesis, not yet tested:** late-game evaluation rather than breadth. Either
+play-outs in which the side to move may fish (keep a bingo-prone leave with a small
+play) when the bag is low, or an exact pre-endgame for 2 tiles in the bag, as Tilefish
+already has for 1. Either should be screened first from real-game late positions
+(sampled from the 20 s audit records), not from static-prefix positions, since point 3
+suggests the two differ.

@@ -30,6 +30,16 @@ still ahead on points. So the earlier 55.0% against BestBot's settings at 20 s d
 reproduce against today's Macondo. Details and raw games:
 [experiments/](experiments/README.md#3-fresh-versioned-baselines-against-current-magpie-and-macondo-registered-3-october-2026-before-any-game).
 
+**Why level on wins at 20 s** (audit of the 20 s Macondo match replayed with every move
+recorded, 4 October 2026): the replay reproduced it (49.75%, +13.8 points a game).
+Tilefish's lead in the opening and middle game shrinks with more time because its
+search settles early. It loses more of the close games, mainly late: its late-game
+winning estimates run about 15 points too high, and Macondo comes back from 41–100
+behind more often. A first fix, keeping 100 late-game candidates instead of 30, was
+screened, then failed its registered confirmation, so the defaults are unchanged.
+Everything, including the failure, is in
+[experiments/](experiments/README.md#4-why-level-on-wins-but-ahead-on-points-against-macondo-at-20-s-registered-4-october-2026-before-any-game).
+
 ## Quick start
 
 **In your browser:** open **[leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**.
