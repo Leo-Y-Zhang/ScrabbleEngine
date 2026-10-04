@@ -16,7 +16,9 @@ in any browser. This download is the full engine: every core, game review, analy
      Windows:        double-click tilefish.exe
      macOS / Linux:  ./tilefish   (or double-click it)
    It uses CSW24 when it finds it here, and ENABLE (a free word list) otherwise.
-   The first lines it prints say which word list it loaded.
+   The first lines it prints say which word list it loaded. For British English in
+   Oxford spelling (a free list that comes with it), type   lexicon OXENDICT.txt
+   at the prompt, or start   tilefish --lexicon OXENDICT.txt
 
 3. Type one of these at the  tilefish>  prompt:
      play                 play a game against it at full strength (about 12 s a move)
@@ -29,7 +31,10 @@ If Windows SmartScreen warns, choose "More info" and then "Run anyway".
 
 README.md is the full manual. Tilefish is free software under the GNU GPL, version 3
 or later (LICENSE). The word lists downloaded in step 1 belong to their publishers.
+OXENDICT.txt is made from the English Speller Database, (c) Kevin Atkinson, and may be
+shared freely under the notice at its top (see LEXICONS.md); it follows the Oxford
+English Dictionary's spelling but is not that dictionary's word list.
 
 Scrabble is a trademark of Hasbro, Inc. in the USA and Canada and of Mattel
 elsewhere. Tilefish is an independent project, not affiliated with or endorsed by
-Hasbro, Mattel, HarperCollins, NASPA or Woogles.
+Hasbro, Mattel, HarperCollins, NASPA, Oxford University Press or Woogles.

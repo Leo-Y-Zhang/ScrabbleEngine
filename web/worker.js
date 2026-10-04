@@ -5,12 +5,13 @@ importScripts("tilefish.js");
 
 // Word lists.  Collins and NWL are copyrighted and not hosted here: like
 // get-lexicon.sh, the page fetches them from the MAGPIE project's public data,
-// pinned to one commit.
+// pinned to one commit.  ENABLE and OXENDICT are free and come with the page.
 const MAGPIE = "https://raw.githubusercontent.com/jvc56/MAGPIE-DATA/adf29316fcb2d7bd78a832e198c1bdfc112efa89/data/lexica/";
 const LISTS = {
   CSW24: { main: "CSW24.kwg", files: [["CSW24.kwg", MAGPIE + "CSW24.kwg"], ["CSW24.klv2", MAGPIE + "CSW24.klv2"], ["CSW24.win", "data/CSW24.win"]] },
   NWL23: { main: "NWL23.kwg", files: [["NWL23.kwg", MAGPIE + "NWL23.kwg"], ["NWL23.klv2", MAGPIE + "NWL23.klv2"], ["NWL23.win", "data/NWL23.win"]] },
   ENABLE: { main: "ENABLE.txt", files: [["ENABLE.txt", "data/ENABLE.txt"], ["ENABLE.klv2", "data/ENABLE.klv2"], ["ENABLE.win", "data/ENABLE.win"]] },
+  OXENDICT: { main: "OXENDICT.txt", files: [["OXENDICT.txt", "data/OXENDICT.txt"], ["OXENDICT.klv2", "data/OXENDICT.klv2"], ["OXENDICT.win", "data/OXENDICT.win"]] },
 };
 
 let engine = null;
@@ -54,7 +55,7 @@ async function load(name, id) {
   if (loaded === name) return "ready";
   // Rough sizes, for a progress bar that moves before the first byte arrives.
   let done = 0;
-  const sizes = { CSW24: 9.7e6, NWL23: 8.4e6, ENABLE: 5.6e6 };
+  const sizes = { CSW24: 9.7e6, NWL23: 8.4e6, ENABLE: 5.6e6, OXENDICT: 5.8e6 };
   const report = (n, total) => {
     done += n;
     postMessage({ id, progress: Math.min(0.97, done / sizes[name]) });

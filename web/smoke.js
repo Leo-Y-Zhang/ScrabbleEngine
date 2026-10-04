@@ -86,5 +86,17 @@ Tilefish().then((m) => {
     const back = ui("import /data/g.gcg");
     check(back.ok && JSON.stringify(back.state.board) === JSON.stringify(s.board) && back.state.moves === s.history.length, "GCG export then import gives the same board and moves");
   }
+  // The Oxford-spelling list loads with its own leave values and win model, and plays.
+  for (const f of ["OXENDICT.txt", "OXENDICT.klv2", "OXENDICT.win"]) m.FS.writeFile("/data/" + f, fs.readFileSync(path.join(data, f)));
+  const ox = run("lexicon /data/OXENDICT.txt");
+  check(/OXENDICT: 188980 words/.test(ox) && /OXENDICT\.klv2/.test(ox) && /OXENDICT\.win/.test(ox), "OXENDICT loads with its leaves and win model");
+  let r = ui("new first 5");
+  for (let k = 0; k < 4 && !r.state.over; k++) {
+    const h = ui("hint 0.2");
+    check(h.ok && ui("move " + h.hint.best).ok, "OXENDICT: hint move is accepted");
+    r = ui("bot sim:time=0.2");
+    check(r.ok, "OXENDICT: engine move: " + r.error);
+  }
+  console.log("OXENDICT: " + r.state.you + "-" + r.state.bot + " after 4 moves each");
   console.log("ok");
 });

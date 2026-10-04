@@ -9,11 +9,13 @@ const N = 15;
 const COLS = "ABCDEFGHIJKLMNO";
 const VALUES = { A: 1, B: 3, C: 3, D: 2, E: 1, F: 4, G: 2, H: 4, I: 1, J: 8, K: 5, L: 1, M: 3, N: 1, O: 1, P: 3, Q: 10, R: 1, S: 1, T: 1, U: 1, V: 4, W: 4, X: 8, Y: 4, Z: 10 };
 const LEVEL_TIME = { casual: 0, strong: 3, champion: 10 };
-const LEX_NAME = { CSW24: "Collins 2024", NWL23: "NWL 2023", ENABLE: "ENABLE" };
+const LEX_NAME = { CSW24: "Collins 2024", NWL23: "NWL 2023", ENABLE: "ENABLE", OXENDICT: "Oxford spelling" };
+const BUNDLED = new Set(["ENABLE", "OXENDICT"]);  // free lists that come with the page
 const NOTES = {
   CSW24: "Collins Scrabble Words, the World Championship list. About 10 MB, downloaded once and kept by this browser.",
   NWL23: "The North American tournament list. About 8 MB, downloaded once and kept by this browser.",
   ENABLE: "A free public-domain list that comes with Tilefish.",
+  OXENDICT: "British English in Oxford spelling (realize, colour), a free list that comes with Tilefish. Built from the English Speller Database: not the Oxford English Dictionary's own list.",
   casual: "Plays at once, from its evaluation of each move, with exact endgames.",
   strong: "Simulates its best candidates for up to 3 seconds a move.",
   champion: "Its full search, up to 10 seconds a move.",
@@ -1379,7 +1381,7 @@ async function withLoading(lex, fn) {
   btn.disabled = true;
   $("loading").hidden = false;
   $("loading-fill").style.width = "4%";
-  $("loading-text").textContent = lex === "ENABLE" ? "Loading the word list" : "Loading " + LEX_NAME[lex] + " (downloaded once)";
+  $("loading-text").textContent = BUNDLED.has(lex) ? "Loading the word list" : "Loading " + LEX_NAME[lex] + " (downloaded once)";
   try {
     if (!worker) startWorker();
     if (loadedLex !== lex) { epoch++; await loadLexicon(lex, (p) => { $("loading-fill").style.width = (100 * p).toFixed(0) + "%"; }); }
@@ -1389,7 +1391,7 @@ async function withLoading(lex, fn) {
     $("start").hidden = true;
   } catch (err) {
     $("loading-fill").style.width = "0";
-    $("loading-text").textContent = capital(err.message) + (lex !== "ENABLE" ? ". ENABLE works without a download." : ".");
+    $("loading-text").textContent = capital(err.message) + (!BUNDLED.has(lex) ? ". ENABLE works without a download." : ".");
   } finally {
     btn.disabled = false;
   }
@@ -1468,6 +1470,7 @@ $("file-in").onchange = async (e) => {
   G = Object.assign(newGameObject(), { mode: "review", gcg: text, clockMin: 0, record: [], over: true });
   const lexLine = text.match(/^#lexicon\s+(\S+)/m);
   if (lexLine && /^(CSW|NWL)/i.test(lexLine[1])) G.lexicon = /^CSW/i.test(lexLine[1]) ? "CSW24" : "NWL23";
+  else if (lexLine && /^OXENDICT/i.test(lexLine[1])) G.lexicon = "OXENDICT";
   resetView();
   await withLoading(G.lexicon, async () => {
     await call({ write: { path: "/data/import.gcg", text } });

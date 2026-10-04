@@ -15,7 +15,7 @@ em++ -O3 -std=c++17 -fexceptions tilefish.cpp -o "$OUT/tilefish.js" \
 cp web/index.html web/style.css web/app.js web/worker.js "$OUT/"
 # The fonts are served from the site itself, never from a third-party font server.
 mkdir -p "$OUT/fonts" && cp web/fonts/* "$OUT/fonts/"
-cp ENABLE.txt ENABLE.win CSW24.win NWL23.win "$OUT/data/"
+cp ENABLE.txt ENABLE.win CSW24.win NWL23.win OXENDICT.txt OXENDICT.klv2 OXENDICT.win "$OUT/data/"
 if [ ! -f "$OUT/data/ENABLE.klv2" ]; then
   CXX=${CXX:-g++}
   $CXX -O2 -std=c++17 -pthread tilefish.cpp -o "$OUT/tilefish-native"

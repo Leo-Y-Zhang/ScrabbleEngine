@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tilefish</title>
-<meta name="description" content="Play, practise and analyse Scrabble against Tilefish, a strong open-source engine, in your browser. Collins, NWL or ENABLE.">
+<meta name="description" content="Play, practise and analyse Scrabble against Tilefish, a strong open-source engine, in your browser. Collins, NWL, ENABLE or British English in Oxford spelling.">
 <link href="fonts/fonts.css" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='5' fill='%23ecd096' stroke='%23b8955a' stroke-width='2'/%3E%3Ctext x='15' y='23' font-family='Arial' font-weight='800' font-size='18' text-anchor='middle' fill='%232a2116'%3ET%3C/text%3E%3C/svg%3E">
@@ -90,8 +90,10 @@
     Collins Scrabble Words &copy; HarperCollins and NWL &copy; NASPA are not hosted here: your browser downloads them from the
     <a href="https://github.com/jvc56/MAGPIE-DATA">MAGPIE project's public data</a>
     (<a href="https://github.com/Leo-Y-Zhang/ScrabbleEngine/blob/main/LEXICONS.md">what that means</a>). ENABLE is public domain.
+    The Oxford-spelling list is built from the English Speller Database, &copy; Kevin Atkinson, free to use and share; it
+    follows the Oxford English Dictionary's spelling but is not that dictionary's word list.
     Scrabble is a trademark of Hasbro in the USA and Canada and of Mattel elsewhere.
-    Tilefish is an independent project, not affiliated with or endorsed by Hasbro, Mattel, HarperCollins, NASPA or Woogles.
+    Tilefish is an independent project, not affiliated with or endorsed by Hasbro, Mattel, HarperCollins, NASPA, Oxford University Press or Woogles.
   </footer>
 </div>
 
@@ -128,6 +130,7 @@
         <button data-v="CSW24">Collins 2024</button>
         <button data-v="NWL23">NWL 2023</button>
         <button data-v="ENABLE">ENABLE</button>
+        <button data-v="OXENDICT">Oxford</button>
       </div>
       <div class="hint-text" id="lex-note"></div>
     </div>
