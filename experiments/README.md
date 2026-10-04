@@ -836,3 +836,28 @@ illegal moves, crashes or forfeits (log `fresh-9200.jsonl.gz`) and gave 400 posi
 `positions-late-powered.jsonl` has 622. The workflow gives every job the same number of
 pairs, so 620 = 20 jobs × 31 pairs are played: the file's first 620 lines; the last two (from
 `fresh-9200`) are not used. Nothing else changes.
+
+### Results of section 8 (4 October 2026): more points, not more wins; not promoted
+
+Engine A built at `df845b8`; 620 deal pairs, identical handover positions and bags in all
+620 (mean 5.1 tiles in the bag); no illegal moves, crashes or forfeits in 2,480 games. Logs:
+`powered-macondo.jsonl.gz`, `powered-control.jsonl.gz`.
+
+| | Points A gains after the handover (95%) | A's score (95%) |
+|---|---|---|
+| `egk=6` vs Macondo `simming 5` | +6.58 (+5.19 to +7.99) | 50.73% (49.72% to 51.73%) |
+| default vs Macondo, same positions and bags | +4.89 (+3.52 to +6.30) | 50.89% (49.88% to 51.90%) |
+| **Candidate − control, paired by deal pair** | **+1.69 (+0.39 to +3.02)** | **−0.16 points (−1.01 to +0.69)** |
+
+**Decision: not promoted; the default stays.** The primary measure's interval lies above
+zero, but the rule also required the score difference not to be negative, and its point
+estimate is −0.16. **What it shows:** the one-move endgame look-ahead reliably gains about
+1.7 points a game from real late-game positions against Macondo at 20 s (consistent with
++1.84 and +1.28 in section 7), but those points do not turn into more wins; the score
+interval rules out a gain of more than about 0.7 percentage points. Tilefish ranks moves by
+winning chance, so a spread gain alone does not justify changing the default. `egk` remains
+an option for analysis.
+
+**Fresh full games (`fresh-9200`, the default against Macondo `simming 5`, 20 s, 200 pairs,
+seed 9200):** 52.25% (47.96% to 56.54%), +16 Elo (−14 to +46), +21.8 points a game (+12.8 to
++30.8): level on wins and ahead on points, as in sections 3 and 4.
