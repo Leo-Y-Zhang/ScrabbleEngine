@@ -32,12 +32,12 @@ jobs:
           python3 -c "src={w.strip().upper() for w in open('ENABLE.txt') if w.strip() and len(w.strip())<=15}; out=[w.strip() for w in open('words.txt')]; assert len(out)==len(set(out))==len(src)==168551 and set(out)==src, (len(out), len(src)); print('savewords: 168551 words, identical')"
       - name: Referee script parses
         if: runner.os == 'Linux'
-        run: python3 -m py_compile tools/referee.py tools/analyze.py tools/positions.py tools/latecheck.py tools/keepfit.py tools/exactpeg.py tools/latebias.py tools/check_history.py
+        run: python3 -m py_compile tools/referee.py tools/analyze.py tools/positions.py tools/latecheck.py tools/keepfit.py tools/exactpeg.py tools/latebias.py tools/check_history.py tools/screen.py
       - name: Recorded start positions (extraction and referee)
         if: runner.os == 'Linux'
         run: |
           python3 -m venv /tmp/venv && /tmp/venv/bin/pip install --quiet pytest
-          /tmp/venv/bin/python -m pytest -q tools/test_positions.py tools/test_exactpeg.py tools/test_latebias.py
+          /tmp/venv/bin/python -m pytest -q tools/test_positions.py tools/test_exactpeg.py tools/test_latebias.py tools/test_screen.py
       - name: Game history reaches the engine (opponent-rack inference in matches)
         if: runner.os == 'Linux'
         run: |

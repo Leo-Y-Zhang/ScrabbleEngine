@@ -43,6 +43,10 @@ pooled log is the run's artifact (named after the run; GitHub keeps artifacts 90
 1. Download the artifacts (`gh run download RUN -n NAME`), gzip them into `experiments/`,
    and run `python3 tools/analyze.py LOG --bootstrap 10000`. For the Macondo screen, also
    pair it by deal with `experiments/fresh-9200.jsonl.gz` (same seed and pair numbers).
+   The screens' registered decisions come straight from `tools/screen.py`:
+   `screen.py deep-screen-frozen.jsonl.gz --min-score 0.5 --strict --min-spread 0` and
+   `screen.py deep-screen-macondo.jsonl.gz --control experiments/fresh-9200.jsonl.gz --min-score 0.5225`
+   (the same two for `infer-screen-*`, section 12). It refuses a control dealt from other tiles.
    For the tournament, also report `python3 tools/latebias.py decided LOG --by either`,
    `convert LOG` and `calib LOG` (descriptive, registered in section 11 before its results;
    section 9's rule is unchanged).
