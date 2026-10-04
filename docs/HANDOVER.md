@@ -31,6 +31,8 @@ pooled log is the run's artifact (named after the run; GitHub keeps artifacts 90
 | [37208427774](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37208427774) `tournament-60s-4t` | default (`iters=100000000`) vs Macondo `simming 5`, 60 s, 4 threads, 416 pairs, seed 9300 | section 9: "ahead"/"behind" only if the 95% score interval is entirely above/below 50%, else "level" |
 | [37209468373](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37209468373) `deep-screen-frozen` | `deep=3,deepplies=4,deepfrac=0.5` vs frozen `v2.2.1`, 20 s, 200 pairs, seed 9400 | section 10: passes if score > 50% and spread > 0 here ... |
 | [37209469683](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37209469683) `deep-screen-macondo` | the same candidate vs Macondo, 20 s, 200 pairs, seed 9200 (the `fresh-9200` deals) | ... and its score here is not below the default's 52.25% on the same deals |
+| [37219855057](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37219855057) `infer-screen-frozen` | Tilefish at `643acf8` with the game's history (inference on) vs frozen `v2.2.1`, 20 s, 200 pairs, seed 9500 | section 12: passes if score > 50% and spread > 0 here ... |
+| [37219857657](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37219857657) `infer-screen-macondo` | the same vs Macondo `simming 5`, 20 s, 200 pairs, seed 9200 (the `fresh-9200` deals) | ... and its score here is not below the default's 52.25% on the same deals |
 
 ## Exact next steps
 0. This file and sections 9–10 live on branch `tournament-match` (PR #22). Its CI was queued
