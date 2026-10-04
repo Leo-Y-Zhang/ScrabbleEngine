@@ -13,6 +13,8 @@ em++ -O3 -std=c++17 -fexceptions tilefish.cpp -o "$OUT/tilefish.js" \
   -sMAXIMUM_MEMORY=2GB -sSTACK_SIZE=8MB -sEXPORTED_FUNCTIONS=_tf_run \
   -sEXPORTED_RUNTIME_METHODS=ccall,FS --no-entry
 cp web/index.html web/style.css web/app.js web/worker.js "$OUT/"
+# The fonts are served from the site itself, never from a third-party font server.
+mkdir -p "$OUT/fonts" && cp web/fonts/* "$OUT/fonts/"
 cp ENABLE.txt ENABLE.win CSW24.win NWL23.win "$OUT/data/"
 if [ ! -f "$OUT/data/ENABLE.klv2" ]; then
   CXX=${CXX:-g++}
