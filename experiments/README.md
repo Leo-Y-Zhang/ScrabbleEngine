@@ -326,8 +326,9 @@ on other deals, so the comparison is indicative.)
 For 41–100 the difference is 10.7 points (1.1 to 20.7; not corrected for the several
 cuts examined). **In all 11 games that Tilefish lost from a 41–100 lead, Macondo made a
 bingo after the bag reached 7 tiles** (for example `.ANGRELS` +83, `.tECHNIC` +104,
-`BUNcHED` +105, `sIR.AMED` +140), often after a small fishing play, and Tilefish had
-rated its position at 0.86 to 1.00 just before.
+`BUNcHED` +105, `sIR.AMED` +140); in 9 of the 11 it had first made a smaller play in
+that phase. Where Tilefish had simulated its last move before the bingo (8 games), its
+estimate of its winning chance was 0.22 to 1.00, and 0.82 or more in four of them.
 
 **Tilefish's estimated winning chances** (its chosen move's simulated win rate against
 the game's result, 20 s): in the 2-ply phase, estimates between 0.1 and 0.9 are 2.3 points
