@@ -3482,6 +3482,9 @@ struct SimParams {
   int playout_bag = 7;        // with this many tiles or fewer in the bag, play out to the end
   int max_candidates = 20;
   int late_candidates = 0;    // with playout_bag tiles or fewer in the bag (0: max_candidates)
+  int deep_k = 0;             // deeper second stage on this many finalists (0: off)
+  int deep_plies = 4;
+  double deep_frac = 0.5;     // share of simulation time spent on the first stage
   int max_iterations = 1000000;  // per candidate (in practice the clock decides)
   double time_limit = 5.0;    // seconds
   int threads = 1;
@@ -5223,6 +5226,9 @@ struct EngineConfig {
       err = "unknown player '" + base + "' (use static, static+, sim or champion)";
       return false;
     }
+    // Option values come from users and GUIs: the experimental options are kept in sensible
+    // ranges (a NaN becomes the lower bound) so no setting can make a move unbounded.
+    auto clampd = [](double x, double lo, double hi) { return x >= lo ? (x <= hi ? x : hi) : lo; };
     for (const auto& kv : parse_kv(opts)) {
       const std::string& k = kv.first;
       const double v = std::atof(kv.second.c_str());
@@ -5236,12 +5242,15 @@ struct EngineConfig {
       else if (k == "playout") c.sim.playout_bag = (int)v;
       else if (k == "cands") c.sim.max_candidates = (int)v;
       else if (k == "latecands") c.sim.late_candidates = (int)v;
+      else if (k == "deep") c.sim.deep_k = (int)clampd(v, 0, 30);
+      else if (k == "deepplies") c.sim.deep_plies = (int)clampd(v, 1, 40);
+      else if (k == "deepfrac") c.sim.deep_frac = clampd(v, 0.05, 0.95);
       else if (k == "threads") c.threads = (int)v;
       else if (k == "z") c.sim.prune_z = v;
       else if (k == "tau") c.sim.shrink_tau = v;
-      else if (k == "keep") c.sim.keep = v;
-      else if (k == "keepbag") c.sim.keep_bag = (int)v;
-      else if (k == "egk") c.sim.eg_k = (int)v;
+      else if (k == "keep") c.sim.keep = clampd(v, 0, 1);
+      else if (k == "keepbag") c.sim.keep_bag = (int)clampd(v, 0, 100);
+      else if (k == "egk") c.sim.eg_k = (int)clampd(v, 0, 64);
       else if (k == "win") c.sim.win_objective = v != 0;
       else if (k == "eg") c.endgame = v != 0;
       else if (k == "egtime") c.endgame_time = v;
@@ -5419,6 +5428,9 @@ class Engine {
         SimParams sp = cfg.sim;
         sp.threads = std::max(sp.threads, cfg.threads);
         sp.time_limit = std::max(0.02, cfg.sim.time_limit - (now_s() - t_start));
+        const bool deep = sp.deep_k >= 2 && P.bag_n > sp.playout_bag && (int)cands.size() > sp.deep_k;
+        const double sim_time = sp.time_limit;
+        if (deep) sp.time_limit *= sp.deep_frac;
         // Telemetry: the ranking at 1/64, 1/32, ... 1/2 of the search, to see how the
         // choice changes with more work (a copy is ranked; the search itself is untouched).
         struct Snap {
@@ -5440,9 +5452,24 @@ class Engine {
           snaps.push_back({el, it, copy.cands[0].move});
         };
         const SimResult sr = sim_.run(P, cands, sp, opp.empty() ? nullptr : &opp, progress);
-        D.move = sr.cands[0].move;
+        SimResult dr;
+        if (deep) {
+          std::vector<Move> finalists;
+          for (int i = 0; i < sp.deep_k; ++i) finalists.push_back(sr.cands[i].move);
+          SimParams dp = sp;
+          dp.plies = sp.deep_plies;
+          dp.time_limit = std::max(0.02, sim_time - (now_s() - t_sim0));
+          dr = sim_.run(P, finalists, dp, opp.empty() ? nullptr : &opp);
+          // Keep the other candidates available to analysis and review, after the finalists.
+          for (size_t i = sp.deep_k; i < sr.cands.size(); ++i) {
+            dr.cands.push_back(sr.cands[i]);
+            dr.cands.back().active = false;
+          }
+        }
+        const SimResult& result = deep ? dr : sr;
+        D.move = result.cands[0].move;
         D.method = "simulation";
-        D.seconds = sr.seconds;
+        D.seconds = sr.seconds + (deep ? dr.seconds : 0);
         {
           // Static rank of each candidate (cands is in static order).
           auto srank = [&](const Move& m) {
@@ -5467,18 +5494,23 @@ class Engine {
             << ",\"inf\":" << (opp.empty() ? -1 : (int)opp.leaves.size())
             << ",\"tau\":" << jnum(sp.shrink_tau * (playout ? 2.5 : 1.0)) << ",\"z\":" << jnum(sp.prune_z)
             << (Simulator::keep_active(P, sp, opp.empty() ? nullptr : &opp) ? ",\"keep\":" + jnum(sp.keep) : std::string())
-            << ",\"best\":{\"w\":" << jnum(sr.cands[0].mean_win()) << ",\"e\":" << jnum(sr.cands[0].mean_eq())
-            << ",\"s\":" << srank(sr.cands[0].move) << "},\"alloc\":[";
+            << ",\"best\":{\"w\":" << jnum(result.cands[0].mean_win()) << ",\"e\":" << jnum(result.cands[0].mean_eq())
+            << ",\"s\":" << srank(result.cands[0].move) << "},\"alloc\":[";
           for (size_t i = 0; i < alloc.size(); ++i) o << (i ? "," : "") << alloc[i];
           o << "],\"top\":[";
-          for (size_t i = 0; i < std::min<size_t>(6, sr.cands.size()); ++i) {
-            const auto& c = sr.cands[i];
+          for (size_t i = 0; i < std::min<size_t>(6, result.cands.size()); ++i) {
+            const auto& c = result.cands[i];
             o << (i ? "," : "") << "{\"m\":\"" << move_str(P.board, c.move) << "\",\"s\":" << srank(c.move)
               << ",\"st\":" << jnum(c.static_eq) << ",\"n\":" << c.n << ",\"pr\":" << (c.active ? 0 : 1)
               << ",\"w\":" << jnum(c.mean_win()) << ",\"e\":" << jnum(c.mean_eq()) << ",\"post\":" << jnum(c.post, 5)
               << ",\"d\":" << jnum(c.sim_diff, 5) << ",\"pw\":" << jnum(c.prior_w) << "}";
           }
           o << "]";
+          if (deep)
+            o << ",\"deep\":{\"k\":" << sp.deep_k << ",\"plies\":" << sp.deep_plies
+              << ",\"t1\":" << jnum(sr.seconds) << ",\"t2\":" << jnum(dr.seconds) << ",\"it2\":" << dr.iterations
+              << ",\"s1\":\"" << move_str(P.board, sr.cands[0].move) << "\",\"same\":"
+              << (sr.cands[0].move.same_as(D.move) ? 1 : 0) << "}";
           if (has_keep) {
             for (size_t i = 0; i < sr.cands.size(); ++i)
               if (sr.cands[i].move.same_as(keep)) {
@@ -5498,7 +5530,7 @@ class Engine {
             << ",\"total\":" << jnum(now_s() - t_start) << "}}";
           D.info = o.str();
         }
-        for (const auto& c : sr.cands) {
+        for (const auto& c : result.cands) {
           DecisionRow row;
           row.move = c.move;
           row.static_eq = c.static_eq;
@@ -5508,9 +5540,10 @@ class Engine {
           row.pruned = !c.active;
           D.rows.push_back(row);
         }
-        D.report.push_back(fmt("simulated %d iterations, %d plies, %.1fs:", sr.iterations, sp.plies, sr.seconds));
-        for (size_t i = 0; i < std::min<size_t>(8, sr.cands.size()); ++i) {
-          const auto& c = sr.cands[i];
+        D.report.push_back(fmt("simulated %d iterations, %d plies, %.1fs:", result.iterations,
+                               deep ? sp.deep_plies : sp.plies, result.seconds));
+        for (size_t i = 0; i < std::min<size_t>(8, result.cands.size()); ++i) {
+          const auto& c = result.cands[i];
           D.report.push_back(fmt("  %-24s static %6.1f  sim %+6.1f  win %5.1f%%  (%d it)%s",
                                  move_str(P.board, c.move).c_str(), c.static_eq, c.mean_eq(), 100 * c.mean_win(), c.n,
                                  c.active ? "" : " pruned"));
@@ -6253,13 +6286,8 @@ struct GcgEvent {
   int total = 0;
 };
 
-inline bool load_gcg(const std::string& path, const Lexicon& lex, int stop_at, Rng& rng, Game& out,
-                     std::vector<GcgEvent>& events, std::string& err) {
-  std::ifstream in(path);
-  if (!in) {
-    err = "cannot open " + path;
-    return false;
-  }
+inline bool load_gcg_stream(std::istream& in, const std::string& path, const Lexicon& lex, int stop_at, Rng& rng,
+                            Game& out, std::vector<GcgEvent>& events, std::string& err) {
   std::map<std::string, int> who;
   std::string line;
   events.clear();
@@ -6376,6 +6404,16 @@ inline bool load_gcg(const std::string& path, const Lexicon& lex, int stop_at, R
   return true;
 }
 
+inline bool load_gcg(const std::string& path, const Lexicon& lex, int stop_at, Rng& rng, Game& out,
+                     std::vector<GcgEvent>& events, std::string& err) {
+  std::ifstream in(path);
+  if (!in) {
+    err = "cannot open " + path;
+    return false;
+  }
+  return load_gcg_stream(in, path, lex, stop_at, rng, out, events, err);
+}
+
 inline std::string gcg_text(const Game& g, const std::string& lexname, const std::string& p1 = "player1",
                             const std::string& p2 = "player2") {
   std::ostringstream o;
@@ -6432,6 +6470,7 @@ struct App {
   Rng rng{time_seed()};
   bool color = false;
   bool quiet = false;  // protocol mode: no board echo after commands
+  std::string pending_history;  // engine protocol: "history <GCG>" for the next position
   int exit_code = 0;   // non-zero after a failed selftest (for scripts and CI)
   std::unique_ptr<Engine> engine;
 
@@ -6552,6 +6591,8 @@ struct App {
                           (json: one machine-readable line, for GUIs and broadcasts)
     position cgp CGP      engine protocol: set a position ...
     go movetime MS        ... and answer "bestmove <move>" (see tools/referee.py)
+    history GCG           (optional, before position) the game so far, GCG lines joined by " | ",
+                          so the engine can infer the opponent's rack from their last play
     ui new|move|bot|hint|state|undo|review ...   a game for a graphical front-end, in JSON (web/)
     auto [N]              let the engine play the next N moves (either side)
     unseen                tiles you cannot see (bag + opponent rack)
@@ -6656,6 +6697,36 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
   }
 
   // Engine protocol: answers "bestmove <move>" (see tools/referee.py).
+  // Engine protocol: after "position cgp", use the referee's history (if one came first) to
+  // record the opponent's last play and the board before it, which is what inference needs.
+  // The history is used only if replaying it reproduces the CGP's board exactly and its last
+  // move is the opponent's play; otherwise the position stands as the CGP alone.
+  void attach_history() {
+    if (pending_history.empty() || game.over) return;
+    Rng scratch(1);  // the replay fills unknown racks; keep the engine's own stream untouched
+    std::vector<GcgEvent> ev;
+    std::string err;
+    Game all;
+    std::istringstream in(pending_history);
+    if (!load_gcg_stream(in, "history", lex, -1, scratch, all, ev, err) || ev.empty()) return;
+    const GcgEvent last = ev.back();
+    if (last.withdrawn || last.move.type != MT_PLACE) return;
+    for (int sq = 0; sq < NSQ; ++sq)
+      if (all.board.sq[sq] != game.board.sq[sq]) return;
+    std::vector<GcgEvent> ev2;
+    Game before;
+    std::istringstream in2(pending_history);
+    if (!load_gcg_stream(in2, "history", lex, (int)ev.size() - 1, scratch, before, ev2, err)) return;
+    game.has_last = true;
+    game.board_before_last = before.board;
+    game.last_move = last.move;
+    GameEvent e;
+    e.player = 1 - game.turn;
+    e.move = last.move;
+    e.score_after = game.score[1 - game.turn];
+    game.events.push_back(e);
+  }
+
   void cmd_go_protocol(double secs, const std::string& include = "") {
     if (!lex.loaded() || game.over) {
       std::cout << "bestmove pass" << std::endl;
@@ -7553,7 +7624,11 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       else if (!from_cgp(trim(rest.substr(rest.find_first_of(" \t") == std::string::npos ? rest.size() : rest.find_first_of(" \t"))),
                          lex, game, rng, err))
         std::cout << "error: " << err << "\n";
-      else show_position();
+      else {
+        attach_history();
+        show_position();
+      }
+      pending_history.clear();
     } else if (cmd == "go" || cmd == "best" || cmd == "analyze" || cmd == "analyse") {
       bool json = false, protocol = false;
       double secs = 0;
@@ -7586,6 +7661,12 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
     } else if (cmd == "unseen") {
       Rack u = unseen_from(game.board, game.rack[game.turn]);
       std::cout << "Unseen (" << u.n << "): " << u.str() << "\n";
+    } else if (cmd == "history" && !args.empty()) {
+      // Engine protocol: the game so far as GCG lines joined by " | ", for the next position.
+      pending_history.clear();
+      size_t a = 0;
+      for (size_t b; (b = rest.find(" | ", a)) != std::string::npos; a = b + 3) pending_history += rest.substr(a, b - a) + "\n";
+      pending_history += rest.substr(a) + "\n";
     } else if (cmd == "history") {
       Board b;
       for (size_t i = 0; i < game.events.size(); ++i) {
@@ -7968,6 +8049,59 @@ inline void App::cmd_selftest(bool quick) {
           worst = std::max(worst, std::fabs(mean[L] / total - (double)RACK_SIZE * pool.c[L] / pool.n));
     }
     check(worst < 0.02, fmt("opponent's-rack prior samples its exact distribution (worst letter mean off by %.4f)", worst));
+  }
+  // 7. Deeper simulations choose a legal move from the first stage's finalists.
+  {
+    EngineConfig ec;
+    std::string err;
+    const bool parsed = EngineConfig::parse("champion:deep=3,deepplies=4,deepfrac=0.5,time=0.3", ec, err);
+    check(parsed && ec.sim.deep_k == 3 && ec.sim.deep_plies == 4 && ec.sim.deep_frac == 0.5,
+          "two-stage simulation options parsed");
+    int tested = 0, wrong = 0;
+    if (parsed) {
+      // Fixed iterations and seed let us reproduce the first-stage ranking exactly,
+      // and keep this check quick even with a large lexicon.
+      ec.inference = false;
+      ec.threads = ec.sim.threads = std::min(2, std::max(1, threads));
+      ec.sim.max_iterations = 16;
+      ec.sim.seed = 99;
+      Rng rr(5);
+      Game g;
+      g.reset(rr);
+      for (int turn = 0; turn < 10 && !g.over; ++turn) {
+        Position P = Position::from_game(g);
+        if (turn >= 5 && turn % 2 == 1 && P.bag_n > ec.sim.playout_bag) {
+          const auto cands = eng().simulator().candidates(P, ec.sim.max_candidates);
+          if ((int)cands.size() > ec.sim.deep_k) {
+            SimParams sp = ec.sim;
+            sp.time_limit *= sp.deep_frac;
+            const SimResult sr = eng().simulator().run(P, cands, sp);
+            const Decision D = eng().choose(P, ec);
+            std::vector<Move> legal;
+            gen.generate_all(P.board, P.rack, Simulator::ctx_for(P), legal);
+            bool found = false, finalist = false;
+            for (const auto& m : legal) found |= m.same_as(D.move);
+            for (int i = 0; i < ec.sim.deep_k; ++i) finalist |= sr.cands[i].move.same_as(D.move);
+            bool rows_ok = D.rows.size() == sr.cands.size();
+            if (rows_ok)
+              for (size_t i = 0; i < D.rows.size(); ++i) {
+                if ((int)i < ec.sim.deep_k) {
+                  bool in = false;
+                  for (int k = 0; k < ec.sim.deep_k; ++k) in |= D.rows[i].move.same_as(sr.cands[k].move);
+                  rows_ok &= in;
+                } else {
+                  rows_ok &= D.rows[i].move.same_as(sr.cands[i].move) && D.rows[i].pruned;
+                }
+              }
+            if (!found || !finalist || !rows_ok || sr.iterations != sp.max_iterations ||
+                D.info.find("\"deep\":{\"k\":3,\"plies\":4") == std::string::npos) ++wrong;
+            ++tested;
+          }
+        }
+        g.apply(lex, gen.generate_best(P.board, P.rack, Simulator::ctx_for(P)), rr);
+      }
+    }
+    check(wrong == 0 && tested == 3, fmt("two-stage simulation: legal finalist chosen, other rows pruned (%d positions)", tested));
   }
   std::cout << (failures ? fmt("SELF-TEST FAILED (%d problem(s))\n", failures) : std::string("All self-tests passed.\n"));
   if (failures) exit_code = 1;

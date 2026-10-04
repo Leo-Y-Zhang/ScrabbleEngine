@@ -861,3 +861,181 @@ an option for analysis.
 **Fresh full games (`fresh-9200`, the default against Macondo `simming 5`, 20 s, 200 pairs,
 seed 9200):** 52.25% (47.96% to 56.54%), +16 Elo (−14 to +46), +21.8 points a game (+12.8 to
 +30.8): level on wins and ahead on points, as in sections 3 and 4.
+
+## 9. The tournament-budget match: four threads, 60 s a move, against BestBot's settings (registered 4 October 2026, before any game)
+
+**Question.** At 20 s a move on one core, Tilefish is level on wins with Macondo using
+BestBot's settings (sections 3, 4 and 8). BestBot plays in production with more time and three
+or four cores. This match measures the two engines at a budget close to that, as planned in
+section 5. It is a measurement, not a test of a change.
+
+**Setup.** Tilefish `main` at `10deb30` with `champion:iters=100000000` (the per-candidate cap
+of 1,000,000 bound on at least 10% of moves in the section 5 pilot; the default search is
+otherwise unchanged) against Macondo `14c080b57608` `simming 5`. CSW24, **60 s a move, 4
+threads each**, one game at a time on each 4-vCPU runner (only the engine on move computes),
+seed 9300 (never used), **416 deal pairs** (52 jobs of 8 pairs; the section 5 plan asked for
+409, and 8 pairs a job keeps each job inside the runners' time limit). No interim looks: the
+match is played to full size and reported whatever the outcome. Recorded as in section 4:
+CPU seconds per move for each engine, game length, Tilefish's iterations.
+
+**Primary measure:** Tilefish's score (draws half) with a 95% interval from a bootstrap over
+deal pairs, and the Elo difference. **Secondary:** points a game. **What may be claimed:**
+"ahead at this budget" only if the score interval lies entirely above 50%, "behind" only if
+entirely below, otherwise "level within the interval". Nothing beyond this opponent, this
+configuration, CSW24 and this budget follows; no claim of the strongest engine follows from
+one match.
+
+## 10. Deeper simulation of the finalists in the middle game (registered 4 October 2026, before any game)
+
+**Why.** Tilefish's lead over Macondo in the opening and middle game falls from +33 points a
+game at 5 s to +5 at 20 s (section 4), and its 2-ply search has settled on its final choice
+by about 1/8 of a 20 s move; the rest of the time refines the duel of the top two candidates
+(96% of iterations). Section 1 found 4-ply simulation of all 30 candidates worse at 20 s,
+because every candidate then gets fewer samples. The candidate spends the settled half of the
+time differently: **2-ply simulation of all candidates for half the move, then 4-ply
+simulation of the top 3 for the rest**, choosing by the second stage. It targets exactly the
+time that more thinking currently wastes.
+
+**Candidate:** `champion:deep=3,deepplies=4,deepfrac=0.5` (new option, off by default; the
+fixed-work checksum is unchanged at 349.2837; a self-test checks that the choice is a legal
+first-stage finalist). Built at the commit that adds this section.
+
+| Run | A | B | Pairs | Seed | Role |
+|---|---|---|---|---|---|
+| `deep-screen-frozen` | candidate | frozen `v2.2.1` `champion` | 200 | 9400 | screen against frozen Tilefish |
+| `deep-screen-macondo` | candidate | Macondo `14c080b57608` `simming 5` | 200 | 9200 | the same deals as `fresh-9200` (section 8), where the default scored 52.25% |
+
+CSW24, 20 s a move, one thread each, full games, played to full size.
+**Screen rule, fixed now:** it passes if against frozen Tilefish the candidate scores above
+50% with a positive spread, **and** against Macondo its score on the `fresh-9200` deals is
+not below the default's 52.25% (point estimates; the paired difference by deal is also
+reported). A pass leads only to a registered confirmation on fresh seeds with more pairs, at
+20 s and at 60 s with four threads; nothing becomes the default from a screen.
+
+## 11. Late estimates, close games and where the points come from: a reanalysis of the logs (4 October 2026)
+
+No new games. Every number below comes from `tools/latebias.py` on the logs already in this
+folder that have move records (95% intervals by bootstrap over deal pairs). It revisits two
+explanations given in sections 4 and 7: that Tilefish's late-game estimates run high, and
+that it loses more of the close games.
+
+**Macondo's own late estimates run as high as Tilefish's** (`latebias.py calib
+experiments/*.jsonl.gz`). Macondo reports a winning chance for the move it plays, so its
+estimates can be set against the results of the same games.
+
+| Estimate minus result, own estimate 0.1–0.9 | Late (2–7 in the bag) | Middle game (8 or more) |
+|---|---|---|
+| Tilefish, the games against Macondo | +12.9 (+11.2 to +14.5), 2,008 decisions | +1.2 (−1.5 to +4.1), 7,744 |
+| Macondo, the same games | **+15.9 (+14.4 to +17.6)**, 2,096 | +4.3 (+1.4 to +7.0), 7,604 |
+
+Each side on move rates its position better than the other side does. After a late Tilefish
+move, its estimate plus the opponent's next estimate exceeds 1 by 26.0 points (24.5 to 27.6;
+932); after a late Macondo move, by 22.5 (21.2 to 24.0; 1,428). The late over-estimate is
+therefore a property both simulators share, not a defect of Tilefish's play-outs, and it
+cannot explain a difference between the two engines. This section does not identify its
+cause.
+
+**The bag-emptying effect was the bag size.** Section 7 found the over-estimate larger when the
+chosen move empties the bag (+18.7 against +10.6). Within the same bag sizes the difference
+goes away for Tilefish: with 2–3 in the bag, +19.9 (+16.5 to +23.2; 493) for moves that empty
+it and +19.9 (+15.6 to +24.2; 291) for moves that do not; with 4–5, +13.9 (+7.5 to +20.3) and
++12.3 (+9.3 to +15.4). Emptying moves are simply most common when the bag is nearly empty,
+where both engines over-rate the most. (Macondo: +24.4 and +19.9 with 2–3; +23.6 and +11.9
+with 4–5.)
+
+**The opponent's rack explains little of it** (`latebias.py racks`). At Tilefish's late
+decisions, the opponent's actual rack ranks at the 54.8th percentile (53.7 to 56.0) of uniform
+seven-tile draws from the unseen tiles, scored by the mean six-tile leave value of
+`ENABLE.leaves`, +1.29 leave points (+0.96 to +1.61) above the uniform average; at Macondo's,
+the 53.9th. By the rack's third among the uniform draws, Tilefish's over-estimate is +1.5,
++9.4 and +23.0 (Macondo's +7.5, +9.9 and +26.7). A calibrated estimate would give thirds
+centred on zero; these are all shifted by about +11, and the excess of strong racks (41.5% of
+decisions in the top third instead of 33.3%) accounts for only one or two of the 13 points.
+This agrees with section 7, where the `keep` prior had no measurable effect.
+
+**Where Tilefish's points come from** (`latebias.py decided --by either` on the two 20 s
+full-game matches with move records, `audit-…-20s` and `fresh-9200`, 800 games). A game counts
+as decided at the first decision where either engine's estimate, read as Tilefish's chance, is
+1% or less or 99% or more.
+
+| 800 games, 20 s, against Macondo `simming 5` | Value |
+|---|---|
+| Tilefish's mean final margin | +17.8 (+11.2 to +24.5) |
+| ...the margin when the game was decided (the final margin if never) | +10.2 (+5.3 to +15.1) |
+| ...points gained after the game was decided | **+7.6 (+4.4 to +10.8)** |
+| Decided for Tilefish: games, its score, points it gained afterwards | 257, 99.2%, +45.0 a game |
+| Decided against Tilefish: games, its score, points it gained afterwards | 245, 1.2%, −22.4 a game |
+| Not decided while tiles remained: games, Tilefish's score, margin | 298, **50.3%**, +2.9 a game |
+
+Once a game is settled, the winner keeps adding points, and Tilefish adds about twice as many
+as Macondo does (+45.0 against +22.4 a game; a game settled earlier also leaves more moves in
+which to add them). That pushes Tilefish's wins out of the moderate margins into the large
+ones more than it does its losses, which is the pattern section 4 read as losing more of the
+close games: its share of decisive games is 43.0% at margins of 11–25, 37.0% at 26–50 and
+62.0% above 100 in these 800 games. In the games still open while tiles remained, the two
+engines are level. The split depends on whose estimate decides a game, because each engine's
+late estimates run high in its own favour: by Tilefish's estimate alone, +19.4 points come
+after the decision and Tilefish scores 40.3% in the open games; by Macondo's alone, −6.3 and
+62.5%. Requiring either engine's estimate is the symmetric choice and is the one reported.
+
+**Section 4's late conversion gap does not replicate on fresh games** (`latebias.py convert`;
+the lead when the bag first holds 7 or fewer; Macondo's conversion minus Tilefish's, points).
+
+| Lead | `audit-…-20s` (section 4) | `fresh-9200` (section 8, not examined before) | Both, 800 games |
+|---|---|---|---|
+| 1–40 | +5.4 (−10.8 to +21.6) | +6.3 (−9.9 to +23.3) | +5.9 (−6.2 to +17.5) |
+| 41–100 | +10.8 (+1.0 to +20.9) | +3.0 (−6.2 to +12.4) | +6.7 (−0.2 to +13.7) |
+| 101+ | −0.9 (−6.0 to +3.5) | 0.0 | −0.5 (−3.4 to +1.9) |
+
+Section 4 marked the 41–100 cut as not corrected for the several cuts examined; on new games
+it shrinks from +10.8 to +3.0. Macondo converts a little more in both lower bands in both
+matches, so a small late-game difference remains possible, but none of these intervals
+excludes zero on the fresh games.
+
+**What this changes.** (1) The late over-estimate is shared with Macondo, so it is not
+evidence of a Tilefish weakness; from real late positions Tilefish gains points with a level score (section
+8's control: +4.89 points, 50.89%). (2) At 20 s, Tilefish's lead in points a game is not
+evidence of an edge in winning: part of it is added after the result is settled, and the
+games still open are level. Points a game remain a secondary measure everywhere in this
+file; this is why. (3) Section 4's account of the close games is superseded by this section.
+
+**Added to section 9 before any of its results are seen:** the tournament log will also be
+reported with `latebias.py decided --by either`, `convert` and `calib`, as descriptive
+analyses. Section 9's rule (the score interval) is unchanged and is the only basis for its
+claim.
+
+## 12. Opponent-rack inference in matches (registered 4 October 2026, before any game)
+
+**Why.** Tilefish infers the opponent's rack from their last play: each possible leave is
+weighted by how close the play was to the best one that leave allowed (`InferenceParams`:
+regret scale 4 points, a floor of 0.10 on every leave, at most 1 s or a quarter of the
+move). It does this whenever it knows the opponent's last move: in the terminal game, the
+review and the browser version, which track the game. **Under the referee it never has.**
+Engines receive only a CGP, so every match in this file measured Tilefish without inference
+(section 4 noted this for both engines). Macondo's inference was piloted in section 4 and
+did not help Macondo at 20 s. Tilefish's has never been measured.
+
+**Change.** The engine protocol now accepts the referee's `history <GCG>` (sent with
+`--a-history`) before `position cgp`. Tilefish replays it and uses it only if the replay
+reproduces the CGP's board exactly and its last move is the opponent's play; otherwise the
+position stands as the CGP alone. No search code changes: the fixed-work checksum is still
+349.2837. A self-test checks that a matching history switches inference on, a mismatched
+one is ignored, and in a refereed match engine A infers at every decision where it can and
+at no other, while engine B (no history) never does.
+
+**Candidate:** Tilefish `champion` built at the commit that adds this section, with the
+game's history (`history=a`). Everything else as in sections 8 and 10.
+
+| Run | A | B | Pairs | Seed | Role |
+|---|---|---|---|---|---|
+| `infer-screen-frozen` | candidate, with history | frozen `v2.2.1` `champion` | 200 | 9500 | screen against frozen Tilefish |
+| `infer-screen-macondo` | candidate, with history | Macondo `14c080b57608` `simming 5` | 200 | 9200 | the `fresh-9200` deals (section 8), where the default without history scored 52.25% |
+
+CSW24, 20 s a move, one thread each, full games, played to full size.
+**Screen rule, fixed now:** it passes if against frozen Tilefish the candidate scores above
+50% with a positive spread, **and** against Macondo its score on the `fresh-9200` deals is
+not below the default's 52.25% (point estimates; the paired difference by deal is also
+reported). A pass leads only to a registered confirmation on fresh seeds (about 400 pairs
+at 20 s, then 60 s with four threads); only then would the strength figures in `README.md`
+be re-measured with history. A failure is reported with its numbers, and inference stays as
+it is in interactive play.

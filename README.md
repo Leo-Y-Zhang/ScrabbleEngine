@@ -34,12 +34,14 @@ reproduce against today's Macondo. Details and raw games:
 **Why level on wins at 20 s** (audit of the 20 s Macondo match replayed with every move
 recorded, 4 October 2026): the replay reproduced it (49.75%, +13.8 points a game).
 Tilefish's lead in the opening and middle game shrinks with more time because its
-search settles early. It loses more of the close games, mainly late: its late-game
-winning estimates run about 15 points too high, and Macondo comes back from 41–100
-behind more often. A first fix, keeping 100 late-game candidates instead of 30, was
+search settles early. It seemed to lose more of the close games, mainly late, but a
+reanalysis of every logged game (section 11) found otherwise: its extra points come partly
+after a game is already settled, games still open late are level (50.3% of 298), Macondo's
+own late-game estimates run as high as Tilefish's, and the 41–100 conversion gap shrank
+from 10.8 to 3.0 points on fresh games. Before that, a first fix, keeping 100 late-game candidates instead of 30, was
 screened, then failed its registered confirmation, so the defaults are unchanged.
 A second diagnosis found the late estimates run about as high against Tilefish itself, most
-when the chosen move empties the bag, and are not a sampling effect. A one-move endgame
+when few tiles remain, and are not a sampling effect. A one-move endgame
 look-ahead inside the play-outs (`egk=6`) then passed its screen and pointed the same way in
 its confirmation, and a 620-pair test then confirmed it gains about 1.7 points a game
 against Macondo from real late positions, but not more wins, so it stays an option, off by default.
@@ -248,6 +250,11 @@ position cgp 15/15/15/15/15/15/15/5CAT7/15/15/15/15/15/15/15 AEINRST/ 5/0 0
 go movetime 1000
 bestmove E5 ANESTRI
 ```
+
+Before `position`, an engine may also be sent `history <GCG>`: the game so far as the
+mover knows it (GCG lines joined by ` | `; the referee sends it with `--a-history`). Tilefish
+replays it and, if the replay reproduces the position's board, infers the opponent's rack
+from their last play, as it does in its own games.
 
 `tools/referee.py` uses it to run matches between any two engines that speak it. The
 referee deals the tiles, checks every move against the word list, scores it itself and
