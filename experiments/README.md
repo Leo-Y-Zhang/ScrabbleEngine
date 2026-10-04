@@ -807,3 +807,26 @@ real-game late positions never used before (the 222 of `positions-late-val.jsonl
 in points after the handover against Macondo `simming 5` at 20 s (candidate − control), promoted
 only if its 95% interval lies above zero and the score difference is not negative; then 60 s,
 four threads and MAGPIE before any wider claim.
+
+## 8. A powered test of the endgame look-ahead (registered 4 October 2026, before any game)
+
+The next step of section 7, with its details fixed now. **Positions:** the 222 unused positions
+of `positions-late-val.jsonl`, plus the late positions (`tools/positions.py`, first decision
+with 7 or fewer in the bag, every game) of a fresh full-game match, `fresh-9200`: Tilefish
+`main` at `df845b8` (`champion`, the default) against Macondo `14c080b57608` `simming 5`,
+CSW24, 20 s a move, one thread, 200 deal pairs, seed 9200. That match is also reported as a
+replication of section 3's 20 s result. The combined file, `positions-late-powered.jsonl`
+(val first, then fresh-9200 in file order), is used once.
+
+| Run | A | B | Seed | Role |
+|---|---|---|---|---|
+| `powered-macondo` | `champion:egk=6` (built at `df845b8`) | Macondo `simming 5` | 9201 | candidate |
+| `powered-control` | `champion` (built at `df845b8`) | Macondo `simming 5` | 9201 | control: the same positions and bags |
+
+CSW24, 20 s a move, one thread each, every pair of the file, no interim looks.
+**Primary measure:** points A gains after the handover, candidate − control, paired by deal
+pair (bootstrap over pairs, 10,000 resamples). **Secondary:** the same for A's score.
+**Rule:** `egk=6` becomes the default only if the primary measure's 95% interval lies above
+zero **and** the secondary point estimate is not negative; otherwise the default stays and
+the result is reported with its numbers. Expected precision from section 7 (pair SD about 13
+points): about ±1.0 points a game with 600 pairs.
