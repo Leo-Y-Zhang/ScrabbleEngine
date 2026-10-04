@@ -32,12 +32,31 @@ jobs:
           python3 -c "src={w.strip().upper() for w in open('ENABLE.txt') if w.strip() and len(w.strip())<=15}; out=[w.strip() for w in open('words.txt')]; assert len(out)==len(set(out))==len(src)==168551 and set(out)==src, (len(out), len(src)); print('savewords: 168551 words, identical')"
       - name: Referee script parses
         if: runner.os == 'Linux'
-        run: python3 -m py_compile tools/referee.py tools/analyze.py tools/positions.py tools/latecheck.py tools/keepfit.py tools/exactpeg.py tools/latebias.py
+        run: python3 -m py_compile tools/referee.py tools/analyze.py tools/positions.py tools/latecheck.py tools/keepfit.py tools/exactpeg.py tools/latebias.py tools/check_history.py
       - name: Recorded start positions (extraction and referee)
         if: runner.os == 'Linux'
         run: |
           python3 -m venv /tmp/venv && /tmp/venv/bin/pip install --quiet pytest
           /tmp/venv/bin/python -m pytest -q tools/test_positions.py tools/test_exactpeg.py tools/test_latebias.py
+      - name: Game history reaches the engine (opponent-rack inference in matches)
+        if: runner.os == 'Linux'
+        run: |
+          # The opponent opened CAT at 8H. A matching history must switch inference on; one
+          # that does not reproduce the board (CAT at 8G) must be ignored.
+          CGP="15/15/15/15/15/15/15/7CAT5/15/15/15/15/15/15/15 EIOURST/ 0/10 0"
+          inf() {
+            printf '%s\n' "player champion" "history #player1 p1 p1 | #player2 p2 p2 | >p2: ACT $1 CAT +10 10 | #rack1 EIOURST" \
+              "position cgp $CGP" "go movetime 300" "quit" | ./tilefish --quiet --threads 1 --lexicon ENABLE.txt |
+              grep -o '"inf":-\?[0-9]*' | head -1 | cut -d: -f2
+          }
+          a=$(inf 8H); b=$(inf 8G)
+          echo "inferred leaves with a matching history: $a; with a mismatched one: $b"
+          test "$a" -gt 0
+          test "$b" = -1
+          python3 tools/referee.py --lexicon ENABLE.txt --games 2 --movetime 300 --parallel 2 --seed 77 --a-history \
+            --a "proto:./tilefish --quiet --threads 1" --a-init "player champion" --a-name a \
+            --b "proto:./tilefish --quiet --threads 1" --b-init "player champion" --b-name b --log hist.jsonl
+          python3 tools/check_history.py hist.jsonl
       - name: Refereed match, raw log and its analysis
         if: runner.os == 'Linux'
         run: |

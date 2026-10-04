@@ -6286,13 +6286,8 @@ struct GcgEvent {
   int total = 0;
 };
 
-inline bool load_gcg(const std::string& path, const Lexicon& lex, int stop_at, Rng& rng, Game& out,
-                     std::vector<GcgEvent>& events, std::string& err) {
-  std::ifstream in(path);
-  if (!in) {
-    err = "cannot open " + path;
-    return false;
-  }
+inline bool load_gcg_stream(std::istream& in, const std::string& path, const Lexicon& lex, int stop_at, Rng& rng,
+                            Game& out, std::vector<GcgEvent>& events, std::string& err) {
   std::map<std::string, int> who;
   std::string line;
   events.clear();
@@ -6409,6 +6404,16 @@ inline bool load_gcg(const std::string& path, const Lexicon& lex, int stop_at, R
   return true;
 }
 
+inline bool load_gcg(const std::string& path, const Lexicon& lex, int stop_at, Rng& rng, Game& out,
+                     std::vector<GcgEvent>& events, std::string& err) {
+  std::ifstream in(path);
+  if (!in) {
+    err = "cannot open " + path;
+    return false;
+  }
+  return load_gcg_stream(in, path, lex, stop_at, rng, out, events, err);
+}
+
 inline std::string gcg_text(const Game& g, const std::string& lexname, const std::string& p1 = "player1",
                             const std::string& p2 = "player2") {
   std::ostringstream o;
@@ -6465,6 +6470,7 @@ struct App {
   Rng rng{time_seed()};
   bool color = false;
   bool quiet = false;  // protocol mode: no board echo after commands
+  std::string pending_history;  // engine protocol: "history <GCG>" for the next position
   int exit_code = 0;   // non-zero after a failed selftest (for scripts and CI)
   std::unique_ptr<Engine> engine;
 
@@ -6689,6 +6695,36 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
   }
 
   // Engine protocol: answers "bestmove <move>" (see tools/referee.py).
+  // Engine protocol: after "position cgp", use the referee's history (if one came first) to
+  // record the opponent's last play and the board before it, which is what inference needs.
+  // The history is used only if replaying it reproduces the CGP's board exactly and its last
+  // move is the opponent's play; otherwise the position stands as the CGP alone.
+  void attach_history() {
+    if (pending_history.empty() || game.over) return;
+    Rng scratch(1);  // the replay fills unknown racks; keep the engine's own stream untouched
+    std::vector<GcgEvent> ev;
+    std::string err;
+    Game all;
+    std::istringstream in(pending_history);
+    if (!load_gcg_stream(in, "history", lex, -1, scratch, all, ev, err) || ev.empty()) return;
+    const GcgEvent last = ev.back();
+    if (last.withdrawn || last.move.type != MT_PLACE) return;
+    for (int sq = 0; sq < NSQ; ++sq)
+      if (all.board.sq[sq] != game.board.sq[sq]) return;
+    std::vector<GcgEvent> ev2;
+    Game before;
+    std::istringstream in2(pending_history);
+    if (!load_gcg_stream(in2, "history", lex, (int)ev.size() - 1, scratch, before, ev2, err)) return;
+    game.has_last = true;
+    game.board_before_last = before.board;
+    game.last_move = last.move;
+    GameEvent e;
+    e.player = 1 - game.turn;
+    e.move = last.move;
+    e.score_after = game.score[1 - game.turn];
+    game.events.push_back(e);
+  }
+
   void cmd_go_protocol(double secs, const std::string& include = "") {
     if (!lex.loaded() || game.over) {
       std::cout << "bestmove pass" << std::endl;
@@ -7586,7 +7622,11 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       else if (!from_cgp(trim(rest.substr(rest.find_first_of(" \t") == std::string::npos ? rest.size() : rest.find_first_of(" \t"))),
                          lex, game, rng, err))
         std::cout << "error: " << err << "\n";
-      else show_position();
+      else {
+        attach_history();
+        show_position();
+      }
+      pending_history.clear();
     } else if (cmd == "go" || cmd == "best" || cmd == "analyze" || cmd == "analyse") {
       bool json = false, protocol = false;
       double secs = 0;
@@ -7619,6 +7659,12 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
     } else if (cmd == "unseen") {
       Rack u = unseen_from(game.board, game.rack[game.turn]);
       std::cout << "Unseen (" << u.n << "): " << u.str() << "\n";
+    } else if (cmd == "history" && !args.empty()) {
+      // Engine protocol: the game so far as GCG lines joined by " | ", for the next position.
+      pending_history.clear();
+      size_t a = 0;
+      for (size_t b; (b = rest.find(" | ", a)) != std::string::npos; a = b + 3) pending_history += rest.substr(a, b - a) + "\n";
+      pending_history += rest.substr(a) + "\n";
     } else if (cmd == "history") {
       Board b;
       for (size_t i = 0; i < game.events.size(); ++i) {

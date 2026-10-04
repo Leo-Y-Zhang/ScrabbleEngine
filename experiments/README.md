@@ -1003,3 +1003,39 @@ file; this is why. (3) Section 4's account of the close games is superseded by t
 reported with `latebias.py decided --by either`, `convert` and `calib`, as descriptive
 analyses. Section 9's rule (the score interval) is unchanged and is the only basis for its
 claim.
+
+## 12. Opponent-rack inference in matches (registered 4 October 2026, before any game)
+
+**Why.** Tilefish infers the opponent's rack from their last play: each possible leave is
+weighted by how close the play was to the best one that leave allowed (`InferenceParams`:
+regret scale 4 points, a floor of 0.10 on every leave, at most 1 s or a quarter of the
+move). It does this whenever it knows the opponent's last move: in the terminal game, the
+review and the browser version, which track the game. **Under the referee it never has.**
+Engines receive only a CGP, so every match in this file measured Tilefish without inference
+(section 4 noted this for both engines). Macondo's inference was piloted in section 4 and
+did not help Macondo at 20 s. Tilefish's has never been measured.
+
+**Change.** The engine protocol now accepts the referee's `history <GCG>` (sent with
+`--a-history`) before `position cgp`. Tilefish replays it and uses it only if the replay
+reproduces the CGP's board exactly and its last move is the opponent's play; otherwise the
+position stands as the CGP alone. No search code changes: the fixed-work checksum is still
+349.2837. A self-test checks that a matching history switches inference on, a mismatched
+one is ignored, and in a refereed match engine A infers at every decision where it can and
+at no other, while engine B (no history) never does.
+
+**Candidate:** Tilefish `champion` built at the commit that adds this section, with the
+game's history (`history=a`). Everything else as in sections 8 and 10.
+
+| Run | A | B | Pairs | Seed | Role |
+|---|---|---|---|---|---|
+| `infer-screen-frozen` | candidate, with history | frozen `v2.2.1` `champion` | 200 | 9500 | screen against frozen Tilefish |
+| `infer-screen-macondo` | candidate, with history | Macondo `14c080b57608` `simming 5` | 200 | 9200 | the `fresh-9200` deals (section 8), where the default without history scored 52.25% |
+
+CSW24, 20 s a move, one thread each, full games, played to full size.
+**Screen rule, fixed now:** it passes if against frozen Tilefish the candidate scores above
+50% with a positive spread, **and** against Macondo its score on the `fresh-9200` deals is
+not below the default's 52.25% (point estimates; the paired difference by deal is also
+reported). A pass leads only to a registered confirmation on fresh seeds (about 400 pairs
+at 20 s, then 60 s with four threads); only then would the strength figures in `README.md`
+be re-measured with history. A failure is reported with its numbers, and inference stays as
+it is in interactive play.

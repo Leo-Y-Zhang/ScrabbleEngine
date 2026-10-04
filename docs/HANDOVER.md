@@ -12,6 +12,10 @@ established. README notices were also tightened (not affiliated with Hasbro, Mat
 HarperCollins, NASPA or Woogles; the stale 55.0% headline replaced by the current
 level result; PRs #23 and #24 put those notices and self-hosted web fonts on main).
 
+**Added later still (section 12):** Tilefish now accepts the referee's game history, so its
+opponent-rack inference can run in matches for the first time (every earlier match measured
+it without inference). Two screens were dispatched; see the table below and section 12.
+
 ## Defaults
 The engine's default search is unchanged since v2.2.1 (fixed-work checksum `349.2837`). The
 live app (GitHub Pages) plays the default. Options added and tested, all off by default:
