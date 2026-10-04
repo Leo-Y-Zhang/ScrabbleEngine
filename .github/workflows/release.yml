@@ -131,6 +131,10 @@ jobs:
           silicon and Intel Macs (macOS 11 or later). The Linux build runs on any
           64-bit x86 Linux. Building from source with `build.sh` gives the fastest
           program for your own processor.
+
+          Scrabble is a trademark of Hasbro, Inc. in the USA and Canada and of Mattel
+          elsewhere. Tilefish is an independent project, not affiliated with or endorsed
+          by Hasbro, Mattel, HarperCollins, NASPA or Woogles.
           EOF
           gh release create "${{ inputs.tag }}" dist/*.zip --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" --title "Tilefish ${{ inputs.tag }}" --notes-file notes.md
