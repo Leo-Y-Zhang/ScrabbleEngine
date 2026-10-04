@@ -16,8 +16,9 @@ brute force. Under a neutral referee it has played both of the Woogles team's en
 **MAGPIE**, their open-source C engine, and **Macondo** with the settings of BestBot,
 which Woogles calls the best crossword-game engine it knows of. On one core at 1 to 20
 seconds a move, Tilefish won 57.1% of 760 CSW24 games against MAGPIE's full search, and
-68.5% of 100 NWL23 games. Against BestBot's settings at 20 seconds a move it won
-55.0% of 100 games, ahead but not yet by a proven margin. With four threads each at
+68.5% of 100 NWL23 games. Against Macondo with BestBot's settings at 20 seconds a move
+it is level on wins: 49.9% of 400 games and then 52.3% of 400 more on fresh deals, neither
+different from 50% (an earlier 55.0% of 100 games did not reproduce). With four threads each at
 5 seconds a move it won 51.5% of 200 games against MAGPIE, averaging +16.7 points a
 game. What that does and does not prove is set out in
 [How strong is it?](#how-strong-is-it).
@@ -33,12 +34,14 @@ reproduce against today's Macondo. Details and raw games:
 **Why level on wins at 20 s** (audit of the 20 s Macondo match replayed with every move
 recorded, 4 October 2026): the replay reproduced it (49.75%, +13.8 points a game).
 Tilefish's lead in the opening and middle game shrinks with more time because its
-search settles early. It loses more of the close games, mainly late: its late-game
-winning estimates run about 15 points too high, and Macondo comes back from 41–100
-behind more often. A first fix, keeping 100 late-game candidates instead of 30, was
+search settles early. It seemed to lose more of the close games, mainly late, but a
+reanalysis of every logged game (section 11) found otherwise: its extra points come partly
+after a game is already settled, games still open late are level (50.3% of 298), Macondo's
+own late-game estimates run as high as Tilefish's, and the 41–100 conversion gap shrank
+from 10.8 to 3.0 points on fresh games. Before that, a first fix, keeping 100 late-game candidates instead of 30, was
 screened, then failed its registered confirmation, so the defaults are unchanged.
 A second diagnosis found the late estimates run about as high against Tilefish itself, most
-when the chosen move empties the bag, and are not a sampling effect. A one-move endgame
+when few tiles remain, and are not a sampling effect. A one-move endgame
 look-ahead inside the play-outs (`egk=6`) then passed its screen and pointed the same way in
 its confirmation, and a 620-pair test then confirmed it gains about 1.7 points a game
 against Macondo from real late positions, but not more wins, so it stays an option, off by default.
@@ -497,7 +500,10 @@ referee, word list and leave values as the MAGPIE matches.
 | Tilefish 2.1 vs Macondo with BestBot's settings, 20 s a move, one thread each | 100 | 55.0% ± 8.0 | +14.8 ± 15.6 |
 | Tilefish 2.1 vs MAGPIE and BestBot's settings together, 20 s a move | 200 | 54.5% ± 5.8 | **+17.8 ± 11.0** |
 
-Tilefish is ahead, but 100 games cannot prove a margin of this size. As against MAGPIE,
+Tilefish is ahead, but 100 games cannot prove a margin of this size. **Superseded:** in
+October 2026, against Macondo pinned at `14c080b` with the same settings, Tilefish scored
+49.9% of 400 games at 20 s and then 52.3% of 400 more on fresh deals, level on wins (see
+[experiments/](experiments/README.md), sections 3 and 8). As against MAGPIE,
 its wins were larger than its losses (82 against 68 points on average). Against both
 engines together at 20 s a move the lead in points is significant and the lead in wins
 is not.
@@ -582,7 +588,7 @@ Here is where Tilefish stands on each requirement:
 | Standard formats | GCG game records (read, write, review), CGP positions, KLV/KLV2 leave files. |
 | Machine interface for broadcasts and GUIs | `--quiet` mode with one-line JSON analyses (win %, spread, every candidate). |
 | Post-game analysis | `review`: every move vs the engine, with win % lost and a win-probability timeline. |
-| Proven playing strength | **Partly.** Against MAGPIE: 57.1% ± 3.1 on one core at 1–20 s a move (760 CSW24 games), 68.5% ± 8.9 on NWL23 (100 games), 51.5% ± 6.4 with four threads each at 5 s a move (200 games). Against Macondo with BestBot's settings: 55.0% ± 8.0 at 20 s a move (100 games). Not yet measured at tournament length. |
+| Proven playing strength | **Partly.** Against MAGPIE: 57.1% ± 3.1 on one core at 1–20 s a move (760 CSW24 games), 68.5% ± 8.9 on NWL23 (100 games), 51.5% ± 6.4 with four threads each at 5 s a move (200 games). Against Macondo with BestBot's settings at 20 s a move: level on wins, 49.9% of 400 games and 52.3% of 400 more (October 2026; an earlier 55.0% of 100 games did not reproduce). Not yet measured at tournament length. |
 
 The last row is the whole job. The plan, in order of expected payoff:
 
@@ -749,6 +755,12 @@ options are `time`, `iters`, `plies`, `cands`, `threads`, `win` (0 = rank by spr
 `tau` (trust in the static evaluation), `playout`, `eg`, `egtime`, `peg`, `pegtime`,
 `inf`, `leaves=FILE`, `winmodel=FILE`.
 
+## How it was made
+
+Tilefish is AI-assisted: much of its code was written with Anthropic's Claude, and the
+commit history shows which commits. Every strength figure in this README comes from logged
+matches in [experiments/](experiments/README.md) that anyone can re-run.
+
 ## License
 
 Tilefish is free software: you can redistribute it and/or modify it under the terms of
@@ -760,4 +772,6 @@ Tilefish.
 
 ---
 Scrabble is a trademark of Hasbro, Inc. in the USA and Canada and of Mattel elsewhere.
+Tilefish is an independent project. It is not affiliated with or endorsed by Hasbro, Mattel,
+HarperCollins, NASPA or Woogles.
 ENABLE (Enhanced North American Benchmark Lexicon) is in the public domain.

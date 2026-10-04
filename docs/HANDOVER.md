@@ -1,6 +1,16 @@
 # Handover (state at 4 October 2026, 15:30 BST)
 
-Read this first in a new session, then `experiments/README.md` sections 7–10.
+Read this first in a new session, then `experiments/README.md` sections 7–11.
+
+**Added later on 4 October (section 11, no new games):** a reanalysis with the new
+`tools/latebias.py` found that Macondo's own late-game estimates run as high as
+Tilefish's (+15.9 against +12.9 points), that the "empties the bag" effect was the bag
+size, that Tilefish's extra points against Macondo come partly after a game is settled
+(games still open late are level, 50.3%), and that section 4's 41–100 conversion gap
+shrinks from 10.8 to 3.0 points on fresh games. No late-game deficit against Macondo is
+established. README notices were also tightened (not affiliated with Hasbro, Mattel,
+HarperCollins, NASPA or Woogles; AI assistance stated; the stale 55.0% headline
+replaced by the current level result).
 
 ## Defaults
 The engine's default search is unchanged since v2.2.1 (fixed-work checksum `349.2837`). The
@@ -27,6 +37,9 @@ pooled log is the run's artifact (named after the run; GitHub keeps artifacts 90
 1. Download the artifacts (`gh run download RUN -n NAME`), gzip them into `experiments/`,
    and run `python3 tools/analyze.py LOG --bootstrap 10000`. For the Macondo screen, also
    pair it by deal with `experiments/fresh-9200.jsonl.gz` (same seed and pair numbers).
+   For the tournament, also report `python3 tools/latebias.py decided LOG --by either`,
+   `convert LOG` and `calib LOG` (descriptive, registered in section 11 before its results;
+   section 9's rule is unchanged).
 2. Append the results under sections 9 and 10 of `experiments/README.md` with the decision
    each rule gives, and update the summary paragraph near the top of `README.md`.
 3. If section 10's screen passes: register a confirmation (fresh seeds, about 400 pairs at

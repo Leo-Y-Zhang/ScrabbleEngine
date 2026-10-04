@@ -29,3 +29,7 @@ If Windows SmartScreen warns, choose "More info" and then "Run anyway".
 
 README.md is the full manual. Tilefish is free software under the GNU GPL, version 3
 or later (LICENSE). The word lists downloaded in step 1 belong to their publishers.
+
+Scrabble is a trademark of Hasbro, Inc. in the USA and Canada and of Mattel
+elsewhere. Tilefish is an independent project, not affiliated with or endorsed by
+Hasbro, Mattel, HarperCollins, NASPA or Woogles.
