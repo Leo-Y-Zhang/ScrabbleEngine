@@ -1292,3 +1292,20 @@ experiments/infer-screen-frozen.jsonl.gz: seed 9500, 200 deal pairs
 
 This leg's condition under section 12's screen rule: **not met**. The screen's decision needs the other leg too; it is added when that run is recorded.
 
+
+### Recorded automatically: `infer-screen-macondo` (section 12)
+
+Run 37219857657, recorded 2026-10-04 by `tools/report.py`; log `experiments/infer-screen-macondo.jsonl.gz`; 200 of 200 registered deal pairs; run conclusion: success.
+
+```text
+experiments/infer-screen-macondo.jsonl.gz: seed 9200, 200 deal pairs
+  A's score   49.88% (45.12% to 54.75%)
+  A's spread   +18.0 a game (+8.5 to +28.0)
+  control on the same 200 deal pairs (400 first positions checked identical): score 52.25%
+  paired difference, candidate - control: score -2.38 points (-8.38 to +3.75); spread -3.8 (-16.8 to +9.2)
+  rule: score >= 52.25%: NOT met
+  decision: FAILS (point estimates, as registered)
+```
+
+This leg's condition under section 12's screen rule: **not met**. The other leg (`infer-screen-frozen`, recorded earlier) was not met, so **the screen FAILS**. The default stays.
+
