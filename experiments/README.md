@@ -1039,3 +1039,24 @@ reported). A pass leads only to a registered confirmation on fresh seeds (about 
 at 20 s, then 60 s with four threads); only then would the strength figures in `README.md`
 be re-measured with history. A failure is reported with its numbers, and inference stays as
 it is in interactive play.
+
+## Results recorded automatically
+
+Each run below was recorded by .github/workflows/report.yml when it finished: its pooled
+log and the verdict of the rule registered for it before any game. Prose comes later, by hand.
+
+### Recorded automatically: `deep-screen-frozen` (section 10)
+
+Run 37209468373, recorded 2026-10-04 by `tools/report.py`; log `experiments/deep-screen-frozen.jsonl.gz`; 200 of 200 registered deal pairs; run conclusion: success.
+
+```text
+experiments/deep-screen-frozen.jsonl.gz: seed 9400, 200 deal pairs
+  A's score   51.38% (48.00% to 54.87%)
+  A's spread    +5.3 a game (-1.1 to +11.7)
+  rule: score > 50.00%: met
+  rule: spread > +0.0: met
+  decision: PASSES (point estimates, as registered)
+```
+
+This leg's condition under section 10's screen rule: **met**. The screen's decision needs the other leg too; it is added when that run is recorded.
+
