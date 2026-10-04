@@ -25,6 +25,7 @@ on:
       lexicon: { description: "word list: ENABLE, CSW24 or NWL23", default: "ENABLE" }
       history: { description: "send the game's history (for inference) to: none, a, b or both", default: "none" }
       prefix_until_bag: { description: "if set: a static Tilefish plays both seats until the bag holds this many tiles", default: "" }
+      positions: { description: "recorded start positions: path in the repository (cannot combine with prefix_until_bag)", default: "" }
 permissions:
   contents: read
 jobs:
@@ -58,6 +59,7 @@ jobs:
       LEX: ${{ inputs.lexicon }}
       HISTORY: ${{ inputs.history }}
       PREFIX_BAG: ${{ inputs.prefix_until_bag }}
+      POSITIONS: ${{ inputs.positions }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,9 +123,15 @@ jobs:
       - name: Play
         run: |
           case "$HISTORY" in a) H="--a-history" ;; b) H="--b-history" ;; both) H="--a-history --b-history" ;; *) H="" ;; esac
+          if [ -n "$POSITIONS" ] && [ -n "$PREFIX_BAG" ]; then
+            echo "positions and prefix_until_bag cannot be combined" >&2
+            exit 1
+          fi
           if [ -n "$PREFIX_BAG" ]; then
             # The prefix player: engine A's build playing "static" (deterministic), one thread.
             P=(--prefix "proto:./tf_a --lexicon $LEXFILE --threads 1 --quiet" --prefix-init "player static" --prefix-until-bag "$PREFIX_BAG")
+          elif [ -n "$POSITIONS" ]; then
+            P=(--positions "$POSITIONS")
           else
             P=()
           fi

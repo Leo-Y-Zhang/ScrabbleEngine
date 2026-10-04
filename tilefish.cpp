@@ -3491,8 +3491,71 @@ struct SimParams {
   int min_iterations = 96;        // before any pruning
   int batch = 48;                 // iterations between pruning checks
   double shrink_tau = 4.0;        // prior: static equity is right to within ~this many points
+  // The opponent's rack, when inference has nothing: a draw from the unseen tiles in which
+  // each tile kept counts with odds exp(keep * its one-tile leave value), so good tiles are
+  // likelier on the rack than in the bag (0: a uniform draw).  Applied with 1..keep_bag
+  // tiles in the bag.
+  double keep = 0.0;
+  int keep_bag = 7;
+  // Play-outs to the end: once the bag is empty, each side picks among its eg_k best static
+  // moves the one that does best when both sides then play greedily to the end, instead
+  // of the static best (0: static play to the end).
+  int eg_k = 0;
   u64 seed = 0;                   // 0 = random
   bool verbose = false;
+};
+
+// Fisher's noncentral hypergeometric distribution over racks: the weight of a rack is the
+// product, over its tiles, of their letters' odds (times the number of ways to pick them
+// from the unseen tiles).  build() tabulates the partial sums once per search; sample()
+// then draws a rack exactly, letter by letter.
+struct RackPrior {
+  int n = 0;
+  int cnt[NLET] = {0};
+  double w[NLET] = {0};
+  double g[NLET + 1][RACK_SIZE + 1] = {{0}};  // g[i][k]: weight of all k-tile picks from letters i..
+  static double choose(int a, int b) {
+    if (b < 0 || b > a) return 0;
+    double r = 1;
+    for (int i = 1; i <= b; ++i) r = r * (a - b + i) / i;
+    return r;
+  }
+  void build(const Rack& unseen, int rack_n, const double* odds) {
+    n = std::min(rack_n, unseen.n);
+    for (int L = 0; L < NLET; ++L) {
+      cnt[L] = unseen.c[L];
+      w[L] = odds[L];
+    }
+    for (int k = 0; k <= RACK_SIZE; ++k) g[NLET][k] = k == 0 ? 1.0 : 0.0;
+    for (int L = NLET - 1; L >= 0; --L)
+      for (int k = 0; k <= RACK_SIZE; ++k) {
+        double s = 0, wj = 1;
+        for (int j = 0; j <= std::min(cnt[L], k); ++j, wj *= w[L]) s += choose(cnt[L], j) * wj * g[L + 1][k - j];
+        g[L][k] = s;
+      }
+  }
+  void sample(Rng& rng, Rack& out) const {
+    out.clear();
+    int k = n;
+    for (int L = 0; L < NLET && k > 0; ++L) {
+      const double u = rng.uniform() * g[L][k];
+      double acc = 0, wj = 1;
+      int pick = -1, last = 0;  // last: the largest feasible count, if rounding leaves u unmatched
+      for (int j = 0; j <= std::min(cnt[L], k); ++j, wj *= w[L]) {
+        const double t = choose(cnt[L], j) * wj * g[L + 1][k - j];
+        if (t <= 0) continue;
+        last = j;
+        acc += t;
+        if (u < acc) {
+          pick = j;
+          break;
+        }
+      }
+      if (pick < 0) pick = last;
+      out.add(L, pick);
+      k -= pick;
+    }
+  }
 };
 
 struct SimCandidate {
@@ -3601,6 +3664,13 @@ class Simulator {
     const int nthreads = std::max(1, sp.threads);
     // Near the end the game is decided by who goes out and who gets stuck: play it out.
     const int plies = P.bag_n <= sp.playout_bag ? std::max(sp.plies, 40) : sp.plies;
+    const int egk = P.bag_n <= sp.playout_bag ? sp.eg_k : 0;
+    RackPrior prior;
+    const RackPrior* kp = nullptr;
+    if (keep_active(P, sp, opp)) {
+      prior.build(P.unseen, P.opp_n, keep_odds(sp.keep).data());
+      kp = &prior;
+    }
     std::vector<std::unique_ptr<MoveGen>> gens;
     for (int t = 0; t < nthreads; ++t) gens.emplace_back(new MoveGen(lex_, lt_));
     // Each candidate's board after it is played, set up once for all iterations.
@@ -3640,12 +3710,12 @@ class Simulator {
           const int k = next.fetch_add(1);
           if (k >= it1) break;
           Deal deal;
-          make_deal(P, seed, k, opp, deal);
+          make_deal(P, seed, k, opp, kp, deal);
           for (auto& c : R.cands) {
             if (!c.active) continue;
             float e, w;
             const int done = simulate(P, starts[&c - R.cands.data()], deal, c.move, gen, plies,
-                                      seed ^ (u64)k * 0x9E3779B97F4A7C15ULL, e, w);
+                                      seed ^ (u64)k * 0x9E3779B97F4A7C15ULL, e, w, egk);
             c.eq[k] = e;
             c.win[k] = w;
             positions.fetch_add(done, std::memory_order_relaxed);
@@ -3685,6 +3755,23 @@ class Simulator {
     rank(R, rp);
   }
 
+  // Whether the opponent's rack is drawn from the keep prior in this position.
+  static bool keep_active(const Position& P, const SimParams& sp, const OppModel* opp) {
+    return sp.keep > 0 && P.bag_n > 0 && P.bag_n <= sp.keep_bag && P.opp_n > 0 && (!opp || opp->empty());
+  }
+
+  // Odds of each letter in the keep prior: exp(keep * one-tile leave value).
+  std::array<double, NLET> keep_odds(double keep) const {
+    std::array<double, NLET> w;
+    for (int L = 0; L < NLET; ++L) {
+      Rack one;
+      one.add(L);
+      const double v = lt_ ? (double)lt_->value(one) : 0.0;
+      w[L] = std::exp(std::max(-8.0, std::min(8.0, keep * v)));
+    }
+    return w;
+  }
+
  private:
   const Lexicon* lex_;
   const LeaveTable* lt_;
@@ -3697,11 +3784,17 @@ class Simulator {
     int bag_n = 0;
   };
 
-  static void make_deal(const Position& P, u64 seed, int k, const OppModel* opp, Deal& D) {
+  static void make_deal(const Position& P, u64 seed, int k, const OppModel* opp, const RackPrior* rp, Deal& D) {
     Rng rng(mix64(seed + (u64)k * 0xD1B54A32D192ED03ULL));
     Rack pool = P.unseen;
     D.opp_n = 0;
-    if (opp && !opp->empty() && P.bag_n > 0) {
+    if (rp) {
+      Rack r;
+      rp->sample(rng, r);
+      for (int L = 0; L < NLET; ++L)
+        for (int j = 0; j < r.c[L]; ++j) D.opp[D.opp_n++] = (u8)L;
+      pool.sub_all(r);
+    } else if (opp && !opp->empty() && P.bag_n > 0) {
       const Rack& leave = opp->sample(rng);
       if (pool.contains(leave) && leave.n <= P.opp_n) {
         for (int L = 0; L < NLET; ++L)
@@ -3723,7 +3816,7 @@ class Simulator {
   // Returns the number of plies played (including the candidate).
   // `start` is P.board with the candidate already placed on it.
   int simulate(const Position& P, const Board& start, const Deal& D, const Move& cand, MoveGen& gen, int plies, u64 salt,
-               float& out_eq, float& out_win) const {
+               float& out_eq, float& out_win, int egk = 0) const {
     Board b = start;
     Rack rk[2];
     rk[0] = P.rack;
@@ -3785,7 +3878,8 @@ class Simulator {
       ctx.bag = bn - bp;
       ctx.opp_face = rk[1 - side].face();
       ctx.allow_exchange = ctx.bag >= RACK_SIZE;
-      const Move m = gen.generate_best(b, rk[side], ctx);
+      const Move m = egk > 0 && ctx.bag == 0 ? endgame_pick(b, rk[side], rk[1 - side], zeros, gen, egk)
+                                             : gen.generate_best(b, rk[side], ctx);
       play(side, m, ply + 1 < plies);
       side = 1 - side;
     }
@@ -3802,6 +3896,68 @@ class Simulator {
     const float w = wm_->win(s_side, unseen_for_side);
     out_win = side == 0 ? w : 1.f - w;
     return played;
+  }
+
+  // The endgame in a play-out (bag empty, both racks known), spread for the side to move
+  // when both sides play their static best (a play that goes out first) to the end.
+  int greedy_finish(Board b, const Rack& me, const Rack& opp, int zeros, MoveGen& gen) const {
+    Rack r[2] = {me, opp};
+    int side = 0, spread = 0;
+    for (int turn = 0; turn < 30; ++turn) {
+      EvalCtx ctx;
+      ctx.bag = 0;
+      ctx.opp_face = r[1 - side].face();
+      ctx.allow_exchange = false;
+      const Move m = gen.generate_best(b, r[side], ctx);
+      const int sign = side == 0 ? 1 : -1;
+      if (m.type == MT_PLACE) {
+        b.place(*lex_, m);
+        r[side].sub_all(m.used());
+        spread += sign * m.score;
+        if (r[side].n == 0) return spread + sign * 2 * r[1 - side].face();
+      }
+      zeros = (m.type == MT_PLACE && m.score != 0) ? 0 : zeros + 1;
+      if (zeros >= 6) break;
+      side = 1 - side;
+    }
+    return spread - r[0].face() + r[1].face();
+  }
+
+  // With the bag empty: of the side's k best moves by static equity, the one that leaves it
+  // best off when both sides then play greedily to the end.  This sees one move ahead of
+  // the static player: setting up an out in two, or blocking the opponent's out.
+  Move endgame_pick(const Board& b, const Rack& me, const Rack& opp, int zeros, MoveGen& gen, int k) const {
+    thread_local std::vector<Move> all;
+    all.clear();
+    EvalCtx ctx;
+    ctx.bag = 0;
+    ctx.opp_face = opp.face();
+    ctx.allow_exchange = false;
+    gen.generate_all(b, me, ctx, all);
+    if (all.empty()) return Move();
+    const int n = std::min<int>(k, (int)all.size());
+    std::partial_sort(all.begin(), all.begin() + n, all.end(),
+                      [](const Move& x, const Move& y) { return x.equity > y.equity; });
+    int best = 0, best_v = -1000000;
+    for (int i = 0; i < n; ++i) {
+      const Move& m = all[i];
+      int v;
+      if (m.type == MT_PLACE) {
+        Board nb = b;
+        nb.place(*lex_, m);
+        Rack left = me;
+        left.sub_all(m.used());
+        v = left.n == 0 ? m.score + 2 * opp.face()
+                        : m.score - greedy_finish(nb, opp, left, m.score != 0 ? 0 : zeros + 1, gen);
+      } else {
+        v = zeros + 1 >= 6 ? opp.face() - me.face() : -greedy_finish(b, opp, me, zeros + 1, gen);
+      }
+      if (v > best_v) {
+        best_v = v;
+        best = i;
+      }
+    }
+    return all[best];
   }
 
   // Final ranking.  The simulation measures each candidate's advantage over the most
@@ -5083,6 +5239,9 @@ struct EngineConfig {
       else if (k == "threads") c.threads = (int)v;
       else if (k == "z") c.sim.prune_z = v;
       else if (k == "tau") c.sim.shrink_tau = v;
+      else if (k == "keep") c.sim.keep = v;
+      else if (k == "keepbag") c.sim.keep_bag = (int)v;
+      else if (k == "egk") c.sim.eg_k = (int)v;
       else if (k == "win") c.sim.win_objective = v != 0;
       else if (k == "eg") c.endgame = v != 0;
       else if (k == "egtime") c.endgame_time = v;
@@ -5307,6 +5466,7 @@ class Engine {
             << ",\"pos\":" << sr.positions << ",\"pruned\":" << pruned
             << ",\"inf\":" << (opp.empty() ? -1 : (int)opp.leaves.size())
             << ",\"tau\":" << jnum(sp.shrink_tau * (playout ? 2.5 : 1.0)) << ",\"z\":" << jnum(sp.prune_z)
+            << (Simulator::keep_active(P, sp, opp.empty() ? nullptr : &opp) ? ",\"keep\":" + jnum(sp.keep) : std::string())
             << ",\"best\":{\"w\":" << jnum(sr.cands[0].mean_win()) << ",\"e\":" << jnum(sr.cands[0].mean_eq())
             << ",\"s\":" << srank(sr.cands[0].move) << "},\"alloc\":[";
           for (size_t i = 0; i < alloc.size(); ++i) o << (i ? "," : "") << alloc[i];
@@ -7753,6 +7913,61 @@ inline void App::cmd_selftest(bool quick) {
     check(cmd_verifybest(np, true) == 0, fmt("fast best-move search == full generation on %d random positions", np));
     const int ne = quick ? 6 : 20;
     check(cmd_verifyendgame(ne, true) == 0, fmt("endgame move source == full generation, values == minimax (%d endgames)", ne));
+  }
+  // 6. The opponent's-rack prior draws racks with the probabilities it defines: exact
+  //    letter means by enumeration of every rack, against the sampler's means.
+  {
+    Rack pool;
+    for (char ch : std::string("??AEEIQSSUV")) pool.add(ch == '?' ? BLANK : ch - 'A' + 1);
+    double odds[NLET];
+    for (int L = 0; L < NLET; ++L) odds[L] = 1.0;
+    odds[BLANK] = 1.6;
+    odds['S' - 'A' + 1] = 1.2;
+    odds['Q' - 'A' + 1] = 0.7;
+    double worst = 0;
+    for (int pass = 0; pass < 2; ++pass) {
+      const double* w = pass == 0 ? odds : nullptr;
+      double ones[NLET];
+      for (int L = 0; L < NLET; ++L) ones[L] = 1.0;
+      RackPrior rp;
+      rp.build(pool, RACK_SIZE, w ? w : ones);
+      // exact means: enumerate racks letter by letter
+      double total = 0, mean[NLET] = {0};
+      std::vector<int> letters;
+      for (int L = 0; L < NLET; ++L)
+        if (pool.c[L]) letters.push_back(L);
+      std::function<void(size_t, int, double, std::array<int, NLET>&)> walk = [&](size_t i, int left, double wt,
+                                                                                    std::array<int, NLET>& r) {
+        if (i == letters.size()) {
+          if (left) return;
+          total += wt;
+          for (int L = 0; L < NLET; ++L) mean[L] += wt * r[L];
+          return;
+        }
+        const int L = letters[i];
+        for (int j = 0; j <= std::min<int>(pool.c[L], left); ++j) {
+          r[L] = j;
+          walk(i + 1, left - j, wt * RackPrior::choose(pool.c[L], j) * std::pow(w ? w[L] : 1.0, j), r);
+        }
+        r[L] = 0;
+      };
+      std::array<int, NLET> r{};
+      walk(0, RACK_SIZE, 1.0, r);
+      Rng rr(7 + pass);
+      const int ns = quick ? 40000 : 200000;
+      double got[NLET] = {0};
+      for (int s = 0; s < ns; ++s) {
+        Rack x;
+        rp.sample(rr, x);
+        if (x.n != RACK_SIZE || !pool.contains(x)) worst = 1e9;
+        for (int L = 0; L < NLET; ++L) got[L] += x.c[L];
+      }
+      for (int L = 0; L < NLET; ++L) worst = std::max(worst, std::fabs(got[L] / ns - mean[L] / total));
+      if (!w)  // with equal odds the draw is uniform: mean = 7 * count / pool size
+        for (int L = 0; L < NLET; ++L)
+          worst = std::max(worst, std::fabs(mean[L] / total - (double)RACK_SIZE * pool.c[L] / pool.n));
+    }
+    check(worst < 0.02, fmt("opponent's-rack prior samples its exact distribution (worst letter mean off by %.4f)", worst));
   }
   std::cout << (failures ? fmt("SELF-TEST FAILED (%d problem(s))\n", failures) : std::string("All self-tests passed.\n"));
   if (failures) exit_code = 1;

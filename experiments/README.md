@@ -652,3 +652,83 @@ play) when the bag is low, or an exact pre-endgame for 2 tiles in the bag, as Ti
 already has for 1. Either should be screened first from real-game late positions
 (sampled from the 20 s audit records), not from static-prefix positions, since point 3
 suggests the two differ.
+
+## 7. Why the late-game estimates run high, and endgame look-ahead in the play-outs (registered 4 October 2026, before any game)
+
+**Diagnosis, from the existing logs** (`tools/latecheck.py`, `tools/keepfit.py` and the scripts
+quoted below; "late" means 2 to 7 tiles in the bag before the move, the phase that plays
+out to the end; intervals are 95%, bootstrap over deal pairs, since moves of one game share
+its result).
+
+| Tilefish's chosen-move estimate minus the result, estimates 0.1–0.9 | Over-estimate (95%) | Moves, pairs |
+|---|---|---|
+| Real games against Macondo, 20 s (`audit-…-20s`) | +14.7 points (+7.0 to +22.6) | 112, 93 |
+| Static-prefix handovers against Macondo, 20 s (seeds 4002, 9003) | +17.5 (+12.0 to +23.1); +10.7 (+5.4 to +15.7) | 88, 64; 159, 119 |
+| Static-prefix handovers, **Tilefish against Tilefish**, both sides (seeds 4001, 9001) | +12.8 (+6.0 to +19.5); +13.4 (+7.4 to +19.1) | 95, 75; 157, 119 |
+| All five logs: the chosen move empties the bag | **+18.7 (+14.0 to +23.6)** | 212, 210 |
+| All five logs: the chosen move leaves tiles in the bag | +10.6 (+6.7 to +14.4) | 399, 343 |
+| All five logs, by tiles in the bag: 2 / 3 / 4 / 5 / 6 / 7 | +21.8 / +17.0 / +11.7 / +11.8 / +5.5 / +13.3 | 108 / 101 / 76 / 101 / 120 / 105 |
+
+- **The bias is not specific to Macondo.** Tilefish over-rates its own late moves by the same
+  amount against itself, where both sides' estimates cannot be right at once.
+- **It is not sampling error.** In the 20 s audit, the chosen late move had a median of 48,171
+  play-outs (standard error of its estimate: median 0.0009); only 20 of 325 late choices had
+  fewer than 1,000. A move's estimate converges, so more time does not remove the bias, which
+  explains most of "search settles early": the leader at 1/16, 1/4 and 1/2 of a late search
+  is replaced in 14.8%, 4.3% and 2.8% of moves. Every late search runs to its clock (the
+  closest challenger is never pruned); 28 of 30 candidates are pruned after a median of 98
+  play-outs, and the prior is a large share of the posterior only for those.
+- **It is largest where the play-outs' endgame matters most**: when the move empties the bag
+  (the opponent then moves first in a perfect-information endgame) and with 2 or 3 tiles in
+  the bag. The play-outs play every endgame with the static evaluator; in real games both
+  engines solve endgames exactly. The chosen move is the best of about 30 by a play-out
+  model with errors of its own, so its estimate inherits the most favourable error (the
+  optimiser's curse); a monotonic correction of all estimates would not change any choice.
+- **The opponent's rack is not uniform, but that is not the cause.** At Tilefish's decisions
+  with 1–7 tiles in the bag, opponents held blanks 1.13–1.18 times and S 1.06–1.12 times as
+  often as a uniform draw from the unseen tiles assumes (more in the middle game: 1.32 and
+  1.24 for Macondo). A one-parameter model (each tile's odds exp(0.015 × its one-tile leave
+  value); fitted on the development third of the deals, better than uniform on validation:
+  −4.3935 against −4.4093 nats a decision; 27 free letter odds overfit) is now the option
+  `keep`. On 139 development positions at 20 s it moved the chosen move's estimate by −0.6
+  points (−0.9 to −0.3) and chose the control's move in 91.4% of positions, against 87.1%
+  between two runs of the control itself. No measurable effect, so it goes no further.
+
+**Candidate.** `champion:egk=6` (new option, off by default; the default is unchanged and
+the fixed-work checksum is still 349.2837). In late play-outs, once the bag is empty, each
+side plays the best of its 6 best moves by static equity, judged by playing each out
+greedily (both sides) to the end, instead of the static best. This sees one move ahead in
+the endgame: two-move outs and blocks of the opponent's out. On the same 139 development
+positions it chose a different move from the control in 36.7% of positions (control against
+itself: 12.9%), with an average estimate change of −0.1 points (−0.8 to +0.4). It costs
+samples: the chosen move received a median of 320–1,108 play-outs by bag size instead of
+9,527–24,822. Whether better endgames in the play-outs are worth 20 times fewer of them is
+what the matches decide.
+
+**Design.** Matches start from the late positions of real games (`tools/positions.py`: the
+first decision with 7 or fewer tiles in the bag in each game of the six real-game logs with
+move records, with both racks as they were and the bag reshuffled per deal pair by the
+referee's seed; the actual draw order is never used). The 640 positions are split by deal
+(sha256 of "seed:pair" mod 3) into `positions-late-dev.jsonl` (222), `-val` (222) and
+`-test` (196). CSW24, 20 s a move, one thread each, Macondo `14c080b57608` `simming 5`,
+frozen Tilefish `v2.2.1`.
+
+| Run | A | B | Positions | Seed | Role |
+|---|---|---|---|---|---|
+| `egk-screen-macondo` | `champion:egk=6` | Macondo `simming 5` | dev, 222 pairs | 4101 | screen |
+| `egk-screen-control` | `champion` | Macondo `simming 5` | dev, 222 pairs | 4101 | the same positions and bags with the default |
+| `egk-screen-frozen` | `champion:egk=6` | `v2.2.1` `champion` | dev, 222 pairs | 4102 | screen against frozen Tilefish |
+| `egk-confirm-macondo`, `-control`, `-frozen` | as above | as above | test, 196 pairs | 9101, 9101, 9102 | confirmation, only if the screen passes |
+
+**Rules, fixed now.** Every run is played to full size and reported. Primary measure: A's
+score from the handover, candidate minus control against Macondo, paired by deal pair
+(bootstrap, 10,000 resamples); secondary: points gained after the handover, likewise.
+- *The screen passes* if the primary point estimate is above zero, the secondary is not
+  negative, and against frozen `v2.2.1` the candidate scores at least 50% and gains points
+  after the handover (point estimates).
+- *Promotion to the default* requires, in the confirmation, the primary measure's 95%
+  interval above zero, the secondary point estimate not negative, and a score of at least
+  50% against frozen `v2.2.1`. Otherwise the default stays and the result is reported with
+  its numbers. A pass supports only this claim: better results from real late-game positions
+  against this Macondo configuration at 20 s on one thread; longer budgets, four threads and
+  MAGPIE would follow before any wider claim.
