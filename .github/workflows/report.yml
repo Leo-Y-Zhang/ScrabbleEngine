@@ -3,6 +3,9 @@ name: report
 # appended to experiments/README.md, the numbers from tools/report.py with the verdict of the
 # rule registered for that run before any game (sections 9, 10 and 12). Runs without a
 # registered rule in tools/report.py are left alone. Mechanical only: prose comes later.
+# The log is pooled here from the match jobs' own logs (shard-N), from whichever attempt
+# played them, so a run completed with "Re-run failed jobs" is recorded whole; a run is
+# recorded again only if its pooled log has changed.
 on:
   workflow_run:
     workflows: [experiment]
@@ -28,17 +31,29 @@ jobs:
         run: |
           set -eu
           conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" --jq .conclusion)
-          name=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/artifacts" --jq '[.artifacts[].name | select(startswith("shard-") | not)][0] // ""')
-          echo "run $RUN: artifact '$name', conclusion $conclusion"
+          name=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/artifacts?per_page=100" --jq '[.artifacts[].name | select(startswith("shard-") | not)][0] // ""')
+          # Every match job's latest attempt finished, so every pair was played, even if a later
+          # step (the summary's upload on a re-run, say) failed.
+          matches=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/jobs" -f filter=latest -f per_page=100 \
+            --jq '[.jobs[] | select(.name | startswith("match")) | .conclusion] | if length > 0 and all(. == "success") then "success" else "" end')
+          if [ "$matches" = success ]; then conclusion=success; fi
+          echo "run $RUN: name '$name', conclusion $conclusion"
           if [ -z "$name" ]; then echo "no pooled log; nothing to record"; exit 0; fi
-          gh run download "$RUN" -n "$name" -D "$RUNNER_TEMP/dl"
-          gzip -9 -n -c "$RUNNER_TEMP/dl/$name.jsonl" > "$RUNNER_TEMP/$name.jsonl.gz"
+          gh run download "$RUN" -p 'shard-*' -D "$RUNNER_TEMP/dl"
+          find "$RUNNER_TEMP/dl" -type f -name 'shard-*.jsonl' | LC_ALL=C sort | xargs cat > "$RUNNER_TEMP/$name.jsonl"
+          test -s "$RUNNER_TEMP/$name.jsonl"
+          gzip -9 -n -c "$RUNNER_TEMP/$name.jsonl" > "$RUNNER_TEMP/$name.jsonl.gz"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Several runs can finish together: start again from the newest main until the push lands.
           for i in 1 2 3 4 5 6; do
             git fetch -q origin main && git reset -q --hard origin/main
-            if [ -e "experiments/$name.jsonl.gz" ]; then echo "already recorded"; exit 0; fi
+            # The same games in any order (an earlier record pooled them in its own order).
+            if [ -e "experiments/$name.jsonl.gz" ] &&
+              cmp -s <(gunzip -c "experiments/$name.jsonl.gz" | LC_ALL=C sort) <(LC_ALL=C sort "$RUNNER_TEMP/$name.jsonl"); then
+              echo "already recorded"
+              exit 0
+            fi
             cp "$RUNNER_TEMP/$name.jsonl.gz" experiments/
             rc=0
             python3 tools/report.py "$name" "experiments/$name.jsonl.gz" --run "$RUN" --conclusion "$conclusion" > "$RUNNER_TEMP/record.md" || rc=$?

@@ -44,6 +44,14 @@ jobs:
       - name: Referee script parses
         if: runner.os == 'Linux'
         run: python3 -m py_compile tools/referee.py tools/analyze.py tools/positions.py tools/latecheck.py tools/keepfit.py tools/exactpeg.py tools/latebias.py tools/check_history.py tools/screen.py tools/report.py tools/make_oxendict.py
+      - name: Allocation study tool builds and replays (experiments section 13)
+        if: runner.os == 'Linux'
+        run: |
+          g++ -O2 -std=c++17 -pthread -Wall -Werror tools/allocstudy.cpp -o allocstudy
+          mkdir -p alloc && ./allocstudy gen ENABLE.txt alloc 1 200 1 threads 2
+          ./allocstudy replay alloc 1 1500 | tee alloc.txt
+          grep -q '^1 positions (2-ply phase' alloc.txt
+          grep -q 'engine (z 2.4)' alloc.txt
       - name: Recorded start positions (extraction and referee)
         if: runner.os == 'Linux'
         run: |
@@ -82,6 +90,18 @@ jobs:
           grep -q 'bootstrap over pairs (200 resamples)' analysis.txt
           # The same deterministic engine in both seats of every deal pair must come out level.
           grep -q 'match score 2.0 / 4' analysis.txt
+  sanitizers:
+    # The quick self-test under AddressSanitizer and UndefinedBehaviorSanitizer (leaks
+    # included): any memory error or undefined behaviour fails the job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with ASan and UBSan
+        run: g++ -O1 -g -std=c++17 -pthread -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer tilefish.cpp -o tilefish_san
+      - name: Self-test (quick) under the sanitizers
+        env:
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ./tilefish_san --threads 2 "selftest quick"
   windows-lexicon:
     # get-lexicon.bat started from a PowerShell 7 prompt (docs/windows.md).  cmd.exe passes
     # PowerShell 7's PSModulePath on to Windows PowerShell 5.1, which then loads
