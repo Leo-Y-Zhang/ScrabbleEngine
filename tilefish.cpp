@@ -1957,7 +1957,6 @@ struct EvalCtx {
 
 // Tunable static-evaluation constants.
 struct StaticParams {
-  float peg[16] = {0};         // bonus by tiles left in the bag after the move (pre-endgame)
   float not_out_const = 10.f;  // endgame: penalty for a play that does not go out ...
   float not_out_mult = 2.f;    // ... plus this many times the face value kept
   float pass_penalty = 20.f;   // passing while tiles remain in the bag
@@ -2011,17 +2010,12 @@ class MoveGen {
   float equity_of(const Move& m, const Rack& rack, const EvalCtx& ctx) const {
     Rack leave = rack;
     if (m.type != MT_PASS) leave.sub_all(m.used());
-    const int tp = (m.type == MT_PLACE) ? m.ntiles : 0;
     if (m.type == MT_PASS) {
       if (ctx.bag > 0) return (leave.n <= 6 && ctx.use_leaves ? leave_value(leave) : 0.f) - STATIC_PARAMS.pass_penalty;
       return -(STATIC_PARAMS.not_out_mult * (float)leave.face() + STATIC_PARAMS.not_out_const);
     }
     if (m.type == MT_EXCHANGE) return ctx.use_leaves ? leave_value(leave) : 0.f;
-    if (ctx.bag > 0) {
-      int after = ctx.bag - tp;
-      if (after < 0) after = 0;
-      return (float)m.score + (ctx.use_leaves ? leave_value(leave) : 0.f) + (after < 16 ? STATIC_PARAMS.peg[after] : 0.f);
-    }
+    if (ctx.bag > 0) return (float)m.score + (ctx.use_leaves ? leave_value(leave) : 0.f);
     if (leave.n == 0) return (float)(m.score + 2 * ctx.opp_face);
     return (float)m.score - STATIC_PARAMS.not_out_mult * (float)leave.face() - STATIC_PARAMS.not_out_const;
   }
@@ -2177,12 +2171,8 @@ class MoveGen {
     return lv_[m];
   }
 
-  inline float equity(int score, int tp, u32 m) {
-    if (ctx_.bag > 0) {
-      int after = ctx_.bag - tp;
-      if (after < 0) after = 0;
-      return (float)score + leave_val(m) + (after < 16 ? STATIC_PARAMS.peg[after] : 0.f);
-    }
+  inline float equity(int score, u32 m) {
+    if (ctx_.bag > 0) return (float)score + leave_val(m);
     if (m == 0) return (float)(score + 2 * ctx_.opp_face);
     leave_val(m);
     return (float)score - STATIC_PARAMS.not_out_mult * (float)lf_[m] - STATIC_PARAMS.not_out_const;
@@ -2435,9 +2425,7 @@ class MoveGen {
       if (played > 0) {
         float rest;
         if (ctx_.bag > 0) {
-          int after = ctx_.bag - played;
-          if (after < 0) after = 0;
-          rest = leave_val(m) + (after < 16 ? STATIC_PARAMS.peg[after] : 0.f);
+          rest = leave_val(m);
         } else if (m == 0) {
           rest = (float)(2 * ctx_.opp_face);
         } else {
@@ -3232,7 +3220,7 @@ class MoveGen {
         }
     }
     const int score = lsum * wmul + xsum + (tp == RACK_SIZE ? BINGO_BONUS : 0);
-    const float eq = equity(score, tp, mask_);
+    const float eq = equity(score, mask_);
     if (mode_ == GEN_BEST) {
       if (eq <= best_eq_) return;
       best_eq_ = eq;
