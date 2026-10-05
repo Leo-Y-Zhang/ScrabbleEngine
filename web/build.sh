@@ -26,6 +26,9 @@ if stale ENABLE.klv2 ENABLE.leaves || stale ENABLE.kwg ENABLE.txt || stale OXEND
   "$OUT/tilefish-native" --threads 1 --lexicon OXENDICT.txt "savekwg $OUT/data/OXENDICT.kwg"
   rm -f "$OUT/tilefish-native"
 fi
+# Gzipped copies, a quarter smaller, for browsers that can unpack them (DecompressionStream);
+# GitHub Pages does not compress binary files itself.
+for f in ENABLE.kwg ENABLE.klv2 OXENDICT.kwg OXENDICT.klv2; do gzip -9 -n -c "$OUT/data/$f" > "$OUT/data/$f.gz"; done
 # Versions on every file the page loads (GitHub Pages lets browsers keep a file for ten
 # minutes, so without them a browser could mix files from two releases): CODE changes
 # with the engine or the page, DATA with the files the site serves.
