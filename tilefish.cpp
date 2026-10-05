@@ -8096,9 +8096,12 @@ inline void App::cmd_selftest(bool quick) {
     int tested = 0, wrong = 0;
     if (parsed) {
       // Fixed iterations and seed let us reproduce the first-stage ranking exactly,
-      // and keep this check quick even with a large lexicon.
+      // and keep this check quick even with a large lexicon.  The iteration cap, not the
+      // clock, must end both stages: with 0.3 s a slow build (a sanitizer's, say) stopped
+      // the first stage early and failed the check.
       ec.inference = false;
       ec.threads = ec.sim.threads = std::min(2, std::max(1, threads));
+      ec.sim.time_limit = 600;
       ec.sim.max_iterations = 16;
       ec.sim.seed = 99;
       Rng rr(5);

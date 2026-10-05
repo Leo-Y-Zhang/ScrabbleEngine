@@ -90,6 +90,18 @@ jobs:
           grep -q 'bootstrap over pairs (200 resamples)' analysis.txt
           # The same deterministic engine in both seats of every deal pair must come out level.
           grep -q 'match score 2.0 / 4' analysis.txt
+  sanitizers:
+    # The quick self-test under AddressSanitizer and UndefinedBehaviorSanitizer (leaks
+    # included): any memory error or undefined behaviour fails the job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with ASan and UBSan
+        run: g++ -O1 -g -std=c++17 -pthread -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer tilefish.cpp -o tilefish_san
+      - name: Self-test (quick) under the sanitizers
+        env:
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ./tilefish_san --threads 2 "selftest quick"
   windows-lexicon:
     # get-lexicon.bat started from a PowerShell 7 prompt (docs/windows.md).  cmd.exe passes
     # PowerShell 7's PSModulePath on to Windows PowerShell 5.1, which then loads
