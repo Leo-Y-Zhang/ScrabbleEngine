@@ -44,6 +44,14 @@ jobs:
       - name: Referee script parses
         if: runner.os == 'Linux'
         run: python3 -m py_compile tools/referee.py tools/analyze.py tools/positions.py tools/latecheck.py tools/keepfit.py tools/exactpeg.py tools/latebias.py tools/check_history.py tools/screen.py tools/report.py tools/make_oxendict.py
+      - name: Allocation study tool builds and replays (experiments section 13)
+        if: runner.os == 'Linux'
+        run: |
+          g++ -O2 -std=c++17 -pthread -Wall -Werror tools/allocstudy.cpp -o allocstudy
+          mkdir -p alloc && ./allocstudy gen ENABLE.txt alloc 1 200 1 threads 2
+          ./allocstudy replay alloc 1 1500 | tee alloc.txt
+          grep -q '^1 positions (2-ply phase' alloc.txt
+          grep -q 'engine (z 2.4)' alloc.txt
       - name: Recorded start positions (extraction and referee)
         if: runner.os == 'Linux'
         run: |

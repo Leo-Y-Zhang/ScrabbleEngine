@@ -1040,6 +1040,125 @@ at 20 s, then 60 s with four threads); only then would the strength figures in `
 be re-measured with history. A failure is reported with its numbers, and inference stays as
 it is in interactive play.
 
+## 13. How the simulation spends its time: a replay study (5 October 2026)
+
+No new games, and no change to the default search. Sections 4 and 10 found that the 2-ply
+search settles early and that the rest of a move refines the duel of its last two candidates.
+This section asks what the match logs cannot answer: does pruning 28 of the 30 candidates after
+about 100 iterations drop moves that more iterations would have preferred, and would another
+way of sharing out the iterations choose better with the same work?
+
+**What the 60 s tournament log shows** (`python3 tools/profile.py
+experiments/tournament-60s-4t.jsonl.gz`; 7,534 2-ply decisions, four threads). By the end,
+28.0 of 30 candidates are pruned and the top two have 99.7% of all iterations: the most
+simulated a median of 825,933 iterations, the others a median of 104. The leader at 1/64 of
+the search differs from the final choice in 3.2% of moves, at 1/16 in 1.6%, at 1/4 in 0.8%.
+The last 15/16 of a 60 s move change the move about once in 60 decisions.
+
+**Method** (`tools/allocstudy.cpp`, which includes the engine's source and calls its
+simulator). Positions come from self-play by the static player on ENABLE with its trained
+leaves and win model; CSW24 could not be downloaded where this ran. In each, the top 30
+candidates by static equity were simulated a fixed number of iterations with no pruning, and
+every result was kept: 60 middle-game positions (bag 20–70, 2 plies, 20,000 iterations each)
+and 40 late ones (bag 2–7, played out to the end, 4,000 each). Iterations use common random
+numbers, so iteration k deals every candidate the same tiles. Each policy is replayed on the
+first half of the iterations with a budget of candidate-iterations and ranks at the end as
+`Simulator::rank` does (prior tau 4; 10 in the play-out phase). Its choice is scored on the
+second half, which it has not seen: the objective (win + 0.0008 × equity, the engine's) of the
+second half's best candidate minus that of the choice, in win %. On this machine one thread
+does about 8,600 candidate-iterations a second in the 2-ply phase (`benchsim`), so 12,000 is
+about 1.4 s; a play-out to the end costs more per iteration.
+
+The policies: the engine (one thread's batches, pruning at z 2.4 after each batch from 96
+iterations on, keeping the closest challenger); z 3.2; no pruning before 10, 25 or 50% of the
+budget; at least four survivors kept; uniform (every candidate the same iterations); sequential
+halving (ceil(log2 30) = 5 rounds, the better half by simulated mean going on).
+
+**Middle game** (60 positions; mean loss in win %, and in brackets the share of positions
+where the choice is the second half's best):
+
+| Budget (candidate-iterations) | 3,000 | 6,000 | 12,000 | 20,000 |
+|---|---|---|---|---|
+| About this long on one thread | 0.35 s | 0.7 s | 1.4 s | 2.3 s |
+| Engine; no pruning before 10% or 25% (identical) | 0.118 (81.7%) | 0.018 (96.7%) | **0.000 (100%)** | **0.000 (100%)** |
+| z 3.2 | 0.132 | 0.022 | 0.000 | 0.000 |
+| No pruning before 50% | 0.118 | 0.029 | 0.004 | 0.000 |
+| At least four survivors | 0.120 | 0.022 | 0.000 | 0.004 |
+| Uniform | 0.154 | 0.081 | 0.058 | 0.005 |
+| Sequential halving | **0.040 (90.0%)** | 0.007 | 0.000 | 0.000 |
+| Pruned early by the engine, rated above its choice by the second half | none pruned yet | 0 of 1,649 | 0 of 1,671 | 0 of 1,679 |
+
+Paired by position, halving against the engine at 3,000: +0.078 win % (s.e. 0.035); at 6,000:
++0.011 (0.018).
+
+**Late game** (40 positions, play-outs to the end; the dumps hold 2,000 iterations a half, which
+limits the budgets):
+
+| Budget (candidate-iterations) | 1,500 | 3,000 | 6,000 |
+|---|---|---|---|
+| Engine; no pruning before 10% or 25% (identical) | 0.378 (75.0%) | 0.242 (77.5%) | 0.150 (85.0%) |
+| z 3.2 | 0.378 | 0.242 | 0.096 (87.5%) |
+| At least four survivors | 0.378 | 0.242 | 0.150 (82.5%) |
+| No pruning before 50% | 0.378 | 0.242 | 0.241 |
+| Uniform | 0.378 | 0.244 | 0.124 |
+| Sequential halving | 0.500 | 0.506 | 0.148 |
+| Pruned early by the engine, rated above its choice | none pruned yet | none pruned yet | 1 of 1,053 |
+
+Every difference from the engine is within two standard errors (z 3.2 at 6,000: +0.053, s.e.
+0.053). The second half's 2,000 iterations are themselves noisy, which lowers every row's share
+of best choices; the comparison between rows is still fair.
+
+**Candidates ranked 31 to 60** (`allocstudy gen ... cands 60`, then `allocstudy wide`; 30 more
+middle-game positions, 60 candidates, 6,000 iterations each). In each position the best of the
+top 30 and the best of ranks 31–60 were picked on the first half and compared on the second.
+In **all 30** the best of 31–60 was worse, by 1.0 to 29.5 win % (median 8.9), each time by more
+than 2 standard errors (the closest: 0.99, s.e. 0.023). The best of the top 30 was the static
+#1 in 23 of the 30 (in the 60 s CSW24 log the chosen move is the static #1 in 65.3% of 2-ply
+moves, so these positions are probably easier than real games).
+
+**What this shows.**
+1. **The early pruning is safe.** In the middle game no candidate it dropped was better by the
+   second half's measure (0 of about 1,670 at each budget); in the late phase, 1 of 1,053.
+2. **The middle-game choice is settled within a second or two.** From 12,000
+   candidate-iterations (about 1.4 s on one thread here) the engine picks the move a much longer
+   2-ply search prefers in all 60 positions. Beyond that no way of sharing out the iterations
+   can improve the 2-ply choice, which agrees with the 60 s log. The time Tilefish adds at 20 or
+   60 s is not misallocated: it goes to a question that has already been answered, which fits
+   its lead shrinking with time (sections 3 and 4).
+3. **Only very short searches would gain from another policy.** Below about half a second,
+   sequential halving loses less (+0.078 win % a decision at 3,000). The browser's Strong level
+   and every match in this file think longer, so no change is proposed.
+4. **The late phase is harder** (0.15 win % lost at 6,000), and no policy is clearly better at
+   the budgets this data allows.
+5. **Thirty middle-game candidates are enough.** No candidate below the static cut came close
+   in 30 positions, which agrees with section 2 (`cands=15` leaned negative) and section 5
+   (100 late candidates did not help).
+
+**Limits.** ENABLE, not CSW24. Positions from static self-play may be easier than those of real
+games; the 60 s log, where 1.6% of CSW24 moves still change after 1/16 of the search, says
+real decisions are settled almost but not quite as early. The second half measures the 2-ply
+roll-out value, the quantity the search estimates, so this shows whether the search finds what
+it is looking for, not whether that is the best move in the game; sections 1 and 10 test that.
+
+**What follows (proposals; none registered).** In the middle game, neither more 2-ply samples
+nor more candidates change the choice after the first second or two, so a gain at 20–60 s has to
+come from spending the settled time on a different question. Each of these needs a registered
+screen as in sections 8–12:
+- a different evaluation of the finalists. Section 10's 4-ply second stage was one; it passed
+  against frozen Tilefish (51.4%) and failed against Macondo (50.1% against the control's
+  52.25%);
+- under a game clock (the browser, `play`), stopping once the leader has held for a while and
+  keeping the time for harder moves. Fixed-time matches cannot measure this.
+
+**Also fixed on 5 October (no effect on any result here).** Opponent-rack inference enumerates
+the possible leaves exactly when there are at most 3,000 of them. It weighed them in letter
+order, so a clock that cut it short kept the leaves early in the alphabet: after TRAIN at 8D, at
+0.03 s a move, the A was on the opponent's rack 51% of the time instead of 25%. It now weighs
+them in a random order and keeps every leave's prior weight; a complete pass gives the same
+model as before, and a self-test covers it. Section 12's runs were not affected: in their
+5,678 decisions with inference, the longest took 0.611 s of the 1 s it was allowed, so no
+enumeration was cut short.
+
 ## Results recorded automatically
 
 Each run below was recorded by .github/workflows/report.yml when it finished: its pooled

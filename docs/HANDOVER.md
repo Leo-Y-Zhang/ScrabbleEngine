@@ -16,6 +16,19 @@ level result; PRs #23 and #24 put those notices and self-hosted web fonts on mai
 opponent-rack inference can run in matches for the first time (every earlier match measured
 it without inference). Two screens were dispatched; see the table below and section 12.
 
+**Added on 5 October (section 13, no new games):** a replay study (`tools/allocstudy.cpp`)
+found that the middle-game search already picks the move a much longer 2-ply search would
+pick from about 1.5 s on one thread (ENABLE, 60 positions), that its early pruning dropped no
+better move there (1 of 1,053 in the late phase), and that no candidate ranked 31–60 beat the
+top 30 (30 positions). So more samples or more candidates cannot improve the middle-game
+choice after that; a gain at 20–60 s has to come from spending the time on a different
+question (section 13 lists two; none is registered yet). Also fixed:
+opponent-rack inference cut short by the clock weighed the first leaves in letter order
+(mostly blanks and A's), and now weighs a fair random sample; a self-test checks it. A
+complete pass gives the same model as before, and matches without history never infer, so
+the default search is unchanged (an always-zero term was also removed from the static
+evaluation; the fixed-work checksums are identical).
+
 ## Defaults
 The engine's default search is unchanged since v2.2.1 (fixed-work checksum `349.2837`). The
 live app (GitHub Pages) plays the default. Options added and tested, all off by default:
