@@ -129,6 +129,9 @@ async function load(name, id) {
   const at = (file) => "/data/" + file;
   // The word list first, on its own (leave values and win model of an earlier load of
   // this list must not be picked up with it), then the leave values, then the win model.
+  // From here the engine no longer holds the old list, so if a step below fails, asking
+  // for the old list again must load it, not answer "ready".
+  loaded = "";
   for (const [file] of files) rm(at(file));
   const [main, leaves, win] = files;
   engine.FS.writeFile(at(main[0]), main[1]);
