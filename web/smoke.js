@@ -16,10 +16,11 @@ function check(cond, what) {
 Tilefish().then((m) => {
   const data = path.join(__dirname, "dist", "data");
   m.FS.mkdir("/data");
-  for (const f of ["ENABLE.txt", "ENABLE.klv2", "ENABLE.win"]) m.FS.writeFile("/data/" + f, fs.readFileSync(path.join(data, f)));
+  // The files the page loads: the free lists compiled to .kwg by web/build.sh.
+  for (const f of ["ENABLE.kwg", "ENABLE.klv2", "ENABLE.win"]) m.FS.writeFile("/data/" + f, fs.readFileSync(path.join(data, f)));
   const run = (c) => m.ccall("tf_run", "string", ["string"], [c]);
   const ui = (c) => JSON.parse(run("ui " + c).trim().split("\n").pop());
-  check(/168551 words/.test(run("lexicon /data/ENABLE.txt")), "ENABLE loads");
+  check(/ENABLE: 168551 words/.test(run("lexicon /data/ENABLE.kwg")), "ENABLE loads");
   // The one-tile pre-endgame searches on the calling thread in this single-threaded
   // build.  A deterministic static player plays both sides until one tile is left.
   run("player static");
@@ -87,8 +88,8 @@ Tilefish().then((m) => {
     check(back.ok && JSON.stringify(back.state.board) === JSON.stringify(s.board) && back.state.moves === s.history.length, "GCG export then import gives the same board and moves");
   }
   // The Oxford-spelling list loads with its own leave values and win model, and plays.
-  for (const f of ["OXENDICT.txt", "OXENDICT.klv2", "OXENDICT.win"]) m.FS.writeFile("/data/" + f, fs.readFileSync(path.join(data, f)));
-  const ox = run("lexicon /data/OXENDICT.txt");
+  for (const f of ["OXENDICT.kwg", "OXENDICT.klv2", "OXENDICT.win"]) m.FS.writeFile("/data/" + f, fs.readFileSync(path.join(data, f)));
+  const ox = run("lexicon /data/OXENDICT.kwg");
   check(/OXENDICT: 188980 words/.test(ox) && /OXENDICT\.klv2/.test(ox) && /OXENDICT\.win/.test(ox), "OXENDICT loads with its leaves and win model");
   let r = ui("new first 5");
   for (let k = 0; k < 4 && !r.state.over; k++) {

@@ -691,6 +691,28 @@ class Lexicon {
     return true;
   }
 
+  // Writes the graph as a KWG file, which load_kwg reads far faster than a word list is
+  // built.  A graph built here keeps index 0 as the null list, so its arcs move up one
+  // slot behind the two root arcs; a graph loaded from a KWG is written as it is.
+  bool save_kwg(const std::string& path) const {
+    if (nodes.empty() || nodes.size() + 1 > CHILD_MASK) return false;
+    std::vector<u32> out;
+    if (nodes[0] == 0) {
+      out.reserve(nodes.size() + 1);
+      out.push_back(END_BIT | (dawg_root + 1));
+      out.push_back(END_BIT | (gaddag_root + 1));
+      for (size_t i = 1; i < nodes.size(); ++i) out.push_back(child(nodes[i]) ? nodes[i] + 1 : nodes[i]);
+    } else {
+      out = nodes;
+    }
+    std::ofstream f(path, std::ios::binary);
+    for (u32 x : out) {
+      const unsigned char b[4] = {(unsigned char)x, (unsigned char)(x >> 8), (unsigned char)(x >> 16), (unsigned char)(x >> 24)};
+      f.write((const char*)b, 4);
+    }
+    return (bool)f;
+  }
+
   static std::string base_name(std::string base) {
     const size_t slash = base.find_last_of("/\\");
     if (slash != std::string::npos) base = base.substr(slash + 1);
@@ -6567,7 +6589,8 @@ struct App {
     lexicon FILE          load a word list or a .kwg lexicon (also loads FILE.leaves or
                           FILE.klv2, and FILE.win, if present)
     savewords FILE        write the word list as text, one word a line (e.g. from a .kwg)
-    leaves FILE           load leave values        saveleaves FILE   save them
+    savekwg FILE          write the compiled lexicon as a .kwg (much faster to load)
+    leaves FILE          load leave values        saveleaves FILE   save them
                           (text "LEAVE value" lines, or binary .klv/.klv2 as used by wolges/Macondo)
     win FILE              load win model           savewin FILE      save it
     threads N             worker threads (now )" << threads << R"()
@@ -7534,6 +7557,10 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
           ++n;
         });
       std::cout << (f ? fmt("saved %zu words\n", n) : std::string("error: cannot write\n"));
+    } else if (cmd == "savekwg") {
+      // The compiled graph as a .kwg, which loads much faster than a word list is built.
+      if (!need_lex()) return true;
+      std::cout << (lex.save_kwg(rest) ? "saved\n" : "error: cannot write\n");
     } else if (cmd == "saveleaves") {
       const std::string low = to_lower(rest);
       const bool klv = low.size() > 5 && low.compare(low.size() - 5, 5, ".klv2") == 0;
