@@ -81,7 +81,8 @@ jobs:
           else
             cp tilefish get-lexicon.sh "$PKG/"
           fi
-          cp ENABLE.txt ENABLE.leaves ENABLE.win CSW24.win NWL23.win README.md LICENSE tools/release/QUICKSTART.txt "$PKG/"
+          cp ENABLE.txt ENABLE.leaves ENABLE.win CSW24.win NWL23.win OXENDICT.txt OXENDICT.klv2 OXENDICT.win README.md LEXICONS.md LICENSE \
+            tools/release/QUICKSTART.txt "$PKG/"
           if [ "$RUNNER_OS" = Windows ]; then 7z a -tzip "$PKG.zip" "$PKG" > /dev/null; else zip -qr "$PKG.zip" "$PKG"; fi
       - name: The CSW24 download works, and the engine picks it up
         shell: bash
@@ -134,7 +135,7 @@ jobs:
 
           Scrabble is a trademark of Hasbro, Inc. in the USA and Canada and of Mattel
           elsewhere. Tilefish is an independent project, not affiliated with or endorsed
-          by Hasbro, Mattel, HarperCollins, NASPA or Woogles.
+          by Hasbro, Mattel, HarperCollins, NASPA, Oxford University Press or Woogles.
           EOF
           gh release create "${{ inputs.tag }}" dist/*.zip --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" --title "Tilefish ${{ inputs.tag }}" --notes-file notes.md

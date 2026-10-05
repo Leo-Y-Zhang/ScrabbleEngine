@@ -51,7 +51,8 @@ Everything, including the failures, is in
 ## Quick start
 
 **In your browser:** open **[leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**.
-Nothing to install. Choose a mode, a word list (Collins 2024, NWL 2023 or ENABLE) and a clock:
+Nothing to install. Choose a mode, a word list (Collins 2024, NWL 2023, ENABLE, or Oxford:
+British English in Oxford spelling) and a clock:
 
 - **Play** against Tilefish (Casual, Strong or Champion) with no help.
 - **Practice** with hints (Tilefish's best moves, with what each keeps and an estimated winning
@@ -83,7 +84,10 @@ command-line analysis. Which word lists are used, and on what terms: [LEXICONS.m
 It prints the word list it loaded when it starts: CSW24 when the files from step 2 are
 next to it, otherwise ENABLE, a free list that comes with it. For North American play,
 `get-lexicon.bat NWL23` or `sh get-lexicon.sh NWL23` fetches NWL23 instead, used with
-`tilefish --lexicon NWL23.kwg`. The ready-made programs run on any recent computer.
+`tilefish --lexicon NWL23.kwg`. For British English in Oxford spelling, start
+`tilefish --lexicon OXENDICT.txt` or type `lexicon OXENDICT.txt` at the prompt; that list
+comes with Tilefish ([below](#british-english-in-oxford-spelling-oxendict)). The ready-made
+programs run on any recent computer.
 
 **Windows and unsigned programs.** The downloads are not code-signed yet. SmartScreen's
 warning has a "Run anyway" button (under "More info"). **Smart App Control** (Windows 11,
@@ -107,11 +111,14 @@ Building from source (below) gives one tuned to your processor, which is somewha
 | `ENABLE.leaves` | Leave values Tilefish learned for ENABLE by playing itself (400,000 self-play games). |
 | `ENABLE.win` | Win-probability model learned from the same games. |
 | `CSW24.win`, `NWL23.win` | Win-probability models for CSW24 and NWL23, each fitted on 100,000 self-play games (the word lists themselves are not included). |
+| `OXENDICT.txt` | British English in Oxford spelling (188,980 words), a free list built from the English Speller Database by `tools/make_oxendict.py`. |
+| `OXENDICT.klv2`, `OXENDICT.win` | Leave values and win model Tilefish learned for it by playing itself (800,000 self-play games). |
 | `build.sh`, `build.bat` | One-line builds for Linux/macOS and Windows. |
 | `get-lexicon.sh`, `get-lexicon.bat`, `get-lexicon.ps1` | Download CSW24 (or NWL23) and its leave values, checked against known checksums. |
 | `LICENSE` | The GNU General Public License, version 3. |
 | `web/` | The browser version: the page, the worker that runs the engine (compiled to WebAssembly), `build.sh` and a test that plays whole games through it. |
 | `experiments/` | Every engine change screened against the frozen 2.1: hypothesis, setup, result, decision and raw logs, failures included. |
+| `tools/make_oxendict.py` | Rebuilds `OXENDICT.txt` from a pinned version of the English Speller Database. |
 | `tools/referee.py` | Neutral referee for engine-vs-engine matches (its own rules code, paired games, parallel play). |
 | `tools/analyze.py` | Statistics for the referee's raw logs: wins, draws, losses, Elo and spread with intervals over deal pairs, and match lengths. |
 | `tools/magpie_bot.c`, `tools/build_magpie_bot.sh` | Lets MAGPIE play through the same protocol, for head-to-head matches. |
@@ -365,6 +372,38 @@ Some combinations (synergy and duplication matter as much as the tiles themselve
 Note how Z and X (10 and 8 points on their face) are worth only about +2 to keep, the
 Q costs over 10 points (in ENABLE `QI` is not a word; in CSW/NWL it is, which is exactly
 why you must retrain for your lexicon), and a blank is worth 25 points.
+
+### British English in Oxford spelling (OXENDICT)
+
+`OXENDICT.txt` comes with Tilefish: British English in Oxford spelling (realize, colour,
+analyse), with the -ise forms and other accepted variants too, so REALISE and REALIZE are
+both good. It is built from size 80 of Kevin Atkinson's English Speller Database (ESDB,
+formerly SCOWL), the size that holds "the strange and unusual words people like to use in
+word games", keeping plain words of 2 to 15 letters and leaving out proper nouns,
+abbreviations, contractions and racial slurs. `tools/make_oxendict.py` rebuilds it from a
+pinned ESDB version. It has 188,980 words (ENABLE has 168,551 playable ones, CSW24 about
+280,000) and 98 two-letter words, QI, ZA, XI and JO among them. It follows the Oxford
+English Dictionary's spelling but is not that dictionary's word list, and Oxford University
+Press has nothing to do with it. ESDB's licence lets anyone use and share it;
+[LEXICONS.md](LEXICONS.md) has the terms.
+
+```sh
+./tilefish --lexicon OXENDICT.txt     # loads OXENDICT.klv2 / OXENDICT.win from the same folder
+```
+
+Its leave values and win model were learned for this list by self-play: starting from
+ENABLE's leave values, `train games=100000 gens=8`, 800,000 games. Measured in matches of
+the static player on this list (95% intervals):
+
+| Leave values, A vs B | Games | A's win rate | A's spread per game |
+|---|---|---|---|
+| OXENDICT's vs the built-in values (what a list without its own gets) | 40,000 | 51.9% ± 0.5 | +4.5 ± 1.0 |
+| OXENDICT's vs ENABLE's | 40,000 | 50.1% ± 0.5 | +0.4 ± 1.0 |
+| OXENDICT's vs the same training started from nothing | 80,000 | 50.0% ± 0.3 | -0.1 ± 0.7 |
+
+Training from ENABLE's values and from nothing ended level, so 800,000 games are enough
+for this list; ENABLE's leaves turn out to be as good here, being an English list of
+much the same words.
 
 ## How strong is it?
 
@@ -767,10 +806,12 @@ the GNU General Public License as published by the Free Software Foundation, ver
 or (at your option) any later version. See `LICENSE`. It is the license Stockfish uses,
 and MAGPIE and Macondo too. The word lists that `get-lexicon` downloads belong to their
 publishers (Collins Scrabble Words: HarperCollins; NWL: NASPA) and are not part of
-Tilefish.
+Tilefish. `OXENDICT.txt` is made from the English Speller Database, copyright 2000-2026 by
+Kevin Atkinson, under its permissive licence (the notice is at the top of the file and in
+[LEXICONS.md](LEXICONS.md)).
 
 ---
 Scrabble is a trademark of Hasbro, Inc. in the USA and Canada and of Mattel elsewhere.
 Tilefish is an independent project. It is not affiliated with or endorsed by Hasbro, Mattel,
-HarperCollins, NASPA or Woogles.
+HarperCollins, NASPA, Oxford University Press or Woogles.
 ENABLE (Enhanced North American Benchmark Lexicon) is in the public domain.
