@@ -154,7 +154,10 @@ the current folder or in its own. Type `help` to list the commands, and run
 
 **Browser version**: `sh web/build.sh` (needs [Emscripten](https://emscripten.org)) builds
 `web/dist`; `python3 -m http.server -d web/dist` serves it at http://localhost:8000.
-`node web/smoke.js` plays whole games through the build. The page drives the engine with
+`node web/smoke.js` plays whole games through the build. The free word lists are served
+compiled to `.kwg` (`savekwg FILE`), which the browser loads several times faster than it
+builds them from text, and every file the page loads carries a version, so a browser never
+mixes files from two releases. The page drives the engine with
 the `ui` commands (`ui new`, `ui move 8D WORD`, `ui bot`, `ui hint`, `ui state`), which
 answer in JSON, so any other front-end can use them too.
 

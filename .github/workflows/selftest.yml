@@ -38,6 +38,9 @@ jobs:
         run: |
           ./tilefish "savewords words.txt"
           python3 -c "src={w.strip().upper() for w in open('ENABLE.txt') if w.strip() and len(w.strip())<=15}; out=[w.strip() for w in open('words.txt')]; assert len(out)==len(set(out))==len(src)==168551 and set(out)==src, (len(out), len(src)); print('savewords: 168551 words, identical')"
+          # A compiled .kwg (what the browser version loads) holds exactly the same words.
+          ./tilefish "savekwg e.kwg" && ./tilefish --lexicon e.kwg "savewords kwgwords.txt"
+          cmp words.txt kwgwords.txt && echo "savekwg: the .kwg holds the same 168551 words"
       - name: Referee script parses
         if: runner.os == 'Linux'
         run: python3 -m py_compile tools/referee.py tools/analyze.py tools/positions.py tools/latecheck.py tools/keepfit.py tools/exactpeg.py tools/latebias.py tools/check_history.py tools/screen.py tools/report.py tools/make_oxendict.py

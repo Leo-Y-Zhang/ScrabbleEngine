@@ -68,9 +68,10 @@ function applyTheme() {
 applyTheme();
 
 // ---------- engine ----------
+const VERSION = "";  // web/build.sh sets "?v=CODE&d=DATA", passed on to the worker's files
 let worker = null, nextId = 1, waiting = new Map(), loadedLex = null, epoch = 0;
 function startWorker() {
-  worker = new Worker("worker.js");
+  worker = new Worker("worker.js" + VERSION);
   worker.onmessage = (e) => {
     const m = e.data, w = waiting.get(m.id);
     if (!w) return;
@@ -96,9 +97,28 @@ async function ui(cmd) {
   const out = await call({ run: "ui " + cmd });
   return JSON.parse(out.trim().split("\n").pop());
 }
+// A load that stops moving (a stalled download, or an engine the browser stopped without
+// a word) ends with a message after this long, and the next try starts a fresh engine.
+const STALL_MS = 45000;
 async function loadLexicon(lex, progress) {
   if (loadedLex === lex) return;
-  await call({ load: lex }, progress);
+  let timer = 0;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      for (const w of waiting.values()) w.reject(new Error("the word list stopped loading; check the connection and try again"));
+      waiting.clear();
+      worker.terminate();
+      startWorker();
+      loadedLex = null;
+    }, STALL_MS);
+  };
+  arm();
+  try {
+    await call({ load: lex }, (p) => { arm(); if (progress) progress(p); });
+  } finally {
+    clearTimeout(timer);
+  }
   loadedLex = lex;
 }
 // Throw away the running search (if any) and rebuild the engine's game from the record.
