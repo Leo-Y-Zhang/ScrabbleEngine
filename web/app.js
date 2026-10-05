@@ -68,14 +68,16 @@ function applyTheme() {
 applyTheme();
 
 // ---------- engine ----------
+const ENGINE_OK = typeof WebAssembly === "object" && typeof Worker === "function";
 const VERSION = "";  // web/build.sh sets "?v=CODE&d=DATA", passed on to the worker's files
 let worker = null, nextId = 1, waiting = new Map(), loadedLex = null, epoch = 0;
 function startWorker() {
+  if (!ENGINE_OK) throw new Error("this browser cannot run the engine (it needs WebAssembly); please update it or try another browser");
   worker = new Worker("worker.js" + VERSION);
   worker.onmessage = (e) => {
     const m = e.data, w = waiting.get(m.id);
     if (!w) return;
-    if (m.progress != null) { if (w.progress) w.progress(m.progress); return; }
+    if (m.progress != null) { if (w.progress) w.progress(m.progress, m); return; }
     waiting.delete(m.id);
     if (m.error) w.reject(new Error(m.error)); else w.resolve(m.out);
   };
@@ -115,11 +117,19 @@ async function loadLexicon(lex, progress) {
   };
   arm();
   try {
-    await call({ load: lex }, (p) => { arm(); if (progress) progress(p); });
+    await call({ load: lex }, (p, m) => { arm(); if (progress) progress(p, m); });
   } finally {
     clearTimeout(timer);
   }
   loadedLex = lex;
+}
+// Downloads a word list into the browser's cache in the background (the engine is not
+// touched), so that Start finds it there.  A list needs a click on it, or an earlier
+// game with it, before its download starts.
+function prefetch(lex) {
+  if (!ENGINE_OK) return;
+  if (!worker) startWorker();
+  worker.postMessage({ prefetch: lex });
 }
 // Throw away the running search (if any) and rebuild the engine's game from the record.
 async function restartEngine() {
@@ -136,6 +146,15 @@ async function restartEngine() {
   const st = await replay();
   if (my !== epoch) return null;
   return st;
+}
+// Rebuilds the game in the engine: an idle engine (as on a page just opened, which
+// started its engine and word list early) is kept; one still searching is restarted.
+async function resumeEngine() {
+  if (busy) return restartEngine();
+  const my = ++epoch;
+  await loadLexicon(G.lexicon);
+  const st = await replay();
+  return my === epoch ? st : null;
 }
 async function replay() {
   let r;
@@ -1297,13 +1316,14 @@ $("btn-rematch").onclick = () => {
   settings.mode = G.mode === "review" || G.mode === "analysis" ? "practice" : G.mode;
   startGame();
 };
+// Focus lasts for this visit only; a page opened later always shows the side panel.
 $("btn-focus").onclick = () => {
   const on = !$("app").classList.contains("focus");
   $("app").classList.toggle("focus", on);
   $("btn-focus").setAttribute("aria-pressed", on);
-  store.set("focus", on ? "1" : "0");
+  $("btn-focus").textContent = on ? "Exit focus" : "Focus";
 };
-if (store.get("focus", "0") === "1") { $("app").classList.add("focus"); $("btn-focus").setAttribute("aria-pressed", "true"); }
+store.del("focus");  // earlier versions kept Focus on from one visit to the next
 $("btn-help").onclick = () => { $("help").hidden = false; $("btn-help-close").focus(); };
 $("btn-help-close").onclick = () => { $("help").hidden = true; };
 $("btn-games").onclick = openGames;
@@ -1389,6 +1409,7 @@ document.querySelectorAll(".seg").forEach((seg) => {
     settings[seg.dataset.name] = b.dataset.v;
     store.set(seg.dataset.name, b.dataset.v);
     if (seg.dataset.name === "theme") applyTheme();
+    if (seg.dataset.name === "lexicon") prefetch(b.dataset.v);
     syncStart();
   });
 });
@@ -1396,23 +1417,51 @@ $("custom-min").onchange = () => { settings.customMin = $("custom-min").value; s
 $("think").onchange = () => { settings.think = $("think").value; store.set("think", settings.think); syncStart(); };
 $("sound").onchange = () => { settings.sound = $("sound").checked ? "1" : "0"; store.set("sound", settings.sound); if (settings.sound === "1") beep(); };
 
+// The bar follows the download byte by byte; for the stages that run inside the engine
+// it glides towards the stage's end over the time that stage usually takes, so it
+// keeps moving until the engine reports back.
+function setBar(p, glideMs) {
+  const fill = $("loading-fill");
+  fill.style.transition = glideMs ? "width " + glideMs + "ms cubic-bezier(.25,.6,.35,1)" : "";
+  fill.style.width = (100 * p).toFixed(1) + "%";
+}
+const mb = (n) => (n / 1e6).toFixed(1);
+function showLoadStage(lex, p, m) {
+  const name = LEX_NAME[lex] || lex;
+  const text = {
+    download: m.got >= m.size ? "Getting " + name + " ready" : "Downloading " + name + ": " + mb(m.got) + " of " + mb(m.size) + " MB" + (BUNDLED.has(lex) ? "" : " (once)"),
+    engine: "Starting the engine",
+    words: "Reading the word list",
+    leaves: "Reading the leave values",
+    ready: "Ready",
+  }[m.stage];
+  if (text) $("loading-text").textContent = text;
+  if (m.next) {
+    setBar(p);
+    requestAnimationFrame(() => requestAnimationFrame(() => setBar(p + 0.85 * (m.next - p), m.ms)));
+  } else {
+    setBar(p);
+  }
+}
 async function withLoading(lex, fn) {
   const btn = $("btn-start");
   btn.disabled = true;
   $("loading").hidden = false;
-  $("loading-fill").style.width = "4%";
-  $("loading-text").textContent = BUNDLED.has(lex) ? "Loading the word list" : "Loading " + LEX_NAME[lex] + " (downloaded once)";
+  $("loading").classList.add("busy");
+  setBar(0.02);
+  $("loading-text").textContent = "Getting " + (LEX_NAME[lex] || lex) + " ready";
   try {
     if (!worker) startWorker();
-    if (loadedLex !== lex) { epoch++; await loadLexicon(lex, (p) => { $("loading-fill").style.width = (100 * p).toFixed(0) + "%"; }); }
-    $("loading-fill").style.width = "100%";
+    if (loadedLex !== lex) { epoch++; await loadLexicon(lex, (p, m) => showLoadStage(lex, p, m)); }
+    setBar(1);
     await fn();
     $("loading").hidden = true;
     $("start").hidden = true;
   } catch (err) {
-    $("loading-fill").style.width = "0";
-    $("loading-text").textContent = capital(err.message) + (!BUNDLED.has(lex) ? ". ENABLE works without a download." : ".");
+    setBar(0);
+    $("loading-text").textContent = capital(err.message) + (ENGINE_OK && !BUNDLED.has(lex) ? ". ENABLE works without a download." : ".");
   } finally {
+    $("loading").classList.remove("busy");
     btn.disabled = false;
   }
 }
@@ -1447,7 +1496,7 @@ async function openSaved(g, review) {
   G = Object.assign({ verdicts: {} }, g);
   resetView();
   await withLoading(G.lexicon, async () => {
-    const st = await restartEngine();
+    const st = await resumeEngine();
     if (!st) return;
     S = null;
     showState(st, null);
@@ -1506,3 +1555,9 @@ $("btn-start").onclick = startGame;
 buildBoard();
 openStart();
 render();
+// The engine starts compiling at once, and the word list chosen last time (or one that
+// comes with the page) starts downloading, so Start has little left to wait for.
+if (ENGINE_OK) {
+  startWorker();
+  if (store.get("lexicon", null) || BUNDLED.has(settings.lexicon)) prefetch(settings.lexicon);
+}

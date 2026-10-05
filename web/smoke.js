@@ -16,6 +16,9 @@ function check(cond, what) {
 Tilefish().then((m) => {
   const data = path.join(__dirname, "dist", "data");
   m.FS.mkdir("/data");
+  // The gzipped copies the page downloads unpack to exactly the files themselves.
+  for (const f of ["ENABLE.kwg", "ENABLE.klv2", "OXENDICT.kwg", "OXENDICT.klv2"])
+    check(Buffer.compare(require("zlib").gunzipSync(fs.readFileSync(path.join(data, f + ".gz"))), fs.readFileSync(path.join(data, f))) === 0, f + ".gz unpacks to " + f);
   // The files the page loads: the free lists compiled to .kwg by web/build.sh.
   for (const f of ["ENABLE.kwg", "ENABLE.klv2", "ENABLE.win"]) m.FS.writeFile("/data/" + f, fs.readFileSync(path.join(data, f)));
   const run = (c) => m.ccall("tf_run", "string", ["string"], [c]);
