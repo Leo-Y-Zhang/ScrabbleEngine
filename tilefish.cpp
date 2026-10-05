@@ -5070,6 +5070,7 @@ struct InferenceParams {
   int max_samples = 3000;
   double tau = 4.0;     // points of regret that divide the likelihood by e
   double floor = 0.10;  // keep some weight on every leave (the opponent is not us)
+  int max_evals = 0;    // test hook: stop after this many leaves, as the clock would (0: no limit)
 };
 
 class Inference {
@@ -5127,21 +5128,40 @@ class Inference {
       rec(0, leave_n);
     }
     double total = 0;
+    bool cut = false;  // the clock stopped the exact enumeration before its end
     if (!too_many) {
-      for (const Rack& leave : exact) {
-        if (now_s() - t0 > ip.time_limit) break;
+      // The leaves are weighed in a random order, so a clock that stops the loop early
+      // leaves a uniform sample of them (each still weighted by its prior), not the first
+      // ones in letter order, which hold mostly blanks and A's.  They are kept in letter
+      // order, so a complete pass gives the same model as before.
+      std::vector<int> order(exact.size());
+      for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
+      Rng shuffle(mix64(om.hash() ^ (u64)exact.size()));
+      for (int i = (int)order.size() - 1; i > 0; --i) std::swap(order[i], order[shuffle.below((u32)i + 1)]);
+      std::vector<double> weight(exact.size(), -1.0);  // -1: not weighed
+      int weighed = 0;
+      for (int i : order) {
+        if (now_s() - t0 > ip.time_limit || (ip.max_evals > 0 && weighed >= ip.max_evals)) {
+          cut = true;
+          break;
+        }
+        const Rack& leave = exact[i];
         double prior = 1;
         for (int L = 0; L < NLET; ++L)
           for (int k = 0; k < leave.c[L]; ++k) prior *= (double)(avail.c[L] - k) / (double)(k + 1);
-        const double w = prior * likelihood(leave);
-        M.leaves.push_back(leave);
-        total += w;
-        M.cum.push_back(total);
+        weight[i] = prior * likelihood(leave);
+        ++weighed;
       }
+      for (size_t i = 0; i < exact.size(); ++i)
+        if (weight[i] >= 0) {
+          M.leaves.push_back(exact[i]);
+          total += weight[i];
+          M.cum.push_back(total);
+        }
     } else {
       Rng rng(time_seed());
       for (int s = 0; s < ip.max_samples; ++s) {
-        if (now_s() - t0 > ip.time_limit) break;
+        if (now_s() - t0 > ip.time_limit || (ip.max_evals > 0 && s >= ip.max_evals)) break;
         Rack pool = avail, leave;
         for (int k = 0; k < leave_n; ++k) leave.add(draw_tile(pool, rng));
         const double w = likelihood(leave);
@@ -5151,7 +5171,7 @@ class Inference {
       }
     }
     // Need a reasonable coverage before trusting it.
-    if (M.leaves.size() < 30 && too_many) M = OppModel();
+    if (M.leaves.size() < 30 && (too_many || cut)) M = OppModel();
     if (note && !M.empty()) {
       // Report the most likely kept tiles.
       std::map<int, double> tile_w;
@@ -5166,7 +5186,8 @@ class Inference {
       for (auto& kv : tile_w) v.push_back({kv.second / total, kv.first});
       std::sort(v.rbegin(), v.rend());
       std::ostringstream o;
-      o << "inferred opponent leave (" << M.leaves.size() << (too_many ? " sampled" : " exact") << "): P(holds)";
+      o << "inferred opponent leave (" << M.leaves.size()
+        << (too_many ? " sampled" : cut ? " of " + std::to_string(exact.size()) + ", out of time" : " exact") << "): P(holds)";
       for (size_t i = 0; i < std::min<size_t>(6, v.size()); ++i)
         o << ' ' << rack_char(v[i].second) << '=' << std::fixed << std::setprecision(0) << 100 * v[i].first << '%';
       *note = o.str();
@@ -8117,6 +8138,51 @@ inline void App::cmd_selftest(bool quick) {
       }
     }
     check(wrong == 0 && tested == 3, fmt("two-stage simulation: legal finalist chosen, other rows pruned (%d positions)", tested));
+  }
+  // 8. Inference cut short by the clock weighs a fair sample of the opponent's possible
+  //    leaves, not the first ones in letter order (which hold mostly blanks and A's).
+  {
+    Position P;
+    Move om;
+    std::string err;
+    const bool parsed = parse_move(P.board, "8D TRAIN", om, err) && Rack::parse("EIOURST", P.rack);
+    double worst = 1e9;
+    size_t full_n = 0, cut_n = 0;
+    bool tiny_empty = false;
+    if (parsed) {
+      om.score = score_move(P.board, om);
+      P.board_before_opp = P.board;
+      P.board.place(lex, om);
+      P.opp_score = om.score;
+      P.has_opp_last = true;
+      P.opp_last = om;
+      P.derive();
+      // Share of the leaves weighed that hold each letter.  It depends only on which leaves
+      // were weighed, not on their weights, so the check is the same for every lexicon.
+      auto holds = [](const OppModel& M) {
+        std::array<double, NLET> h{};
+        for (const Rack& r : M.leaves)
+          for (int L = 0; L < NLET; ++L)
+            if (r.c[L]) h[L] += 1.0 / M.leaves.size();
+        return h;
+      };
+      InferenceParams ip;
+      ip.time_limit = 1e9;
+      const OppModel full = eng().inference().infer(P, ip);
+      full_n = full.leaves.size();
+      ip.max_evals = (int)(full_n * 2 / 5);
+      const OppModel cut = eng().inference().infer(P, ip);
+      cut_n = cut.leaves.size();
+      if (!full.empty() && !cut.empty()) {
+        const auto a = holds(full), b = holds(cut);
+        worst = 0;
+        for (int L = 0; L < NLET; ++L) worst = std::max(worst, std::fabs(a[L] - b[L]));
+      }
+      ip.max_evals = 10;  // too few leaves weighed to trust: no model
+      tiny_empty = eng().inference().infer(P, ip).empty();
+    }
+    check(parsed && full_n > 100 && cut_n == full_n * 2 / 5 && worst < 0.06 && tiny_empty,
+          fmt("inference cut short weighs a fair sample (%zu of %zu leaves; worst letter off by %.3f)", cut_n, full_n, worst));
   }
   std::cout << (failures ? fmt("SELF-TEST FAILED (%d problem(s))\n", failures) : std::string("All self-tests passed.\n"));
   if (failures) exit_code = 1;
