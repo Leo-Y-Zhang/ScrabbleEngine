@@ -45,7 +45,11 @@ when few tiles remain, and are not a sampling effect. A one-move endgame
 look-ahead inside the play-outs (`egk=6`) then passed its screen and pointed the same way in
 its confirmation, and a 620-pair test then confirmed it gains about 1.7 points a game
 against Macondo from real late positions, but not more wins, so it stays an option, off by default.
-Everything, including the failures, is in
+Two more ideas then failed their 20 s screens: a 4-ply second look at the three finalists, and
+inferring the opponent's rack from the game's history. A replay study (5 October) found why
+more time adds little: the middle-game choice is settled within a second or two of one core,
+and neither more samples nor more candidates change it, so the time beyond that needs a
+different use. Everything, including the failures, is in
 [experiments/](experiments/README.md#4-why-level-on-wins-but-ahead-on-points-against-macondo-at-20-s-registered-4-october-2026-before-any-game).
 
 ## Quick start

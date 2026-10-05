@@ -885,6 +885,14 @@ entirely below, otherwise "level within the interval". Nothing beyond this oppon
 configuration, CSW24 and this budget follows; no claim of the strongest engine follows from
 one match.
 
+**Status (5 October 2026): incomplete, being completed.** The run played 408 of the 416
+registered pairs: 51 of its 52 jobs finished, and job 36 (pairs 288–295) lost its runner three
+hours into play and uploaded nothing. Under the rule above, 408 pairs are not a result (the
+record under "Results recorded automatically" says so). Only that job is being re-run ("Re-run
+failed jobs" replays the same deals with the same builds); `report.yml` now pools every job's
+log itself and records a run again when its log changes, so the completed run is recorded
+with the rule's verdict when it finishes.
+
 ## 10. Deeper simulation of the finalists in the middle game (registered 4 October 2026, before any game)
 
 **Why.** Tilefish's lead over Macondo in the opening and middle game falls from +33 points a
@@ -911,6 +919,23 @@ CSW24, 20 s a move, one thread each, full games, played to full size.
 not below the default's 52.25% (point estimates; the paired difference by deal is also
 reported). A pass leads only to a registered confirmation on fresh seeds with more pairs, at
 20 s and at 60 s with four threads; nothing becomes the default from a screen.
+
+### Results of section 10 (4 October 2026): the screen fails; the default stays
+
+Both runs played their 200 registered pairs (records under "Results recorded automatically";
+logs `deep-screen-frozen.jsonl.gz`, `deep-screen-macondo.jsonl.gz`; `tools/screen.py`).
+
+| Run, 200 deal pairs | Candidate's score (95%) | Spread a game (95%) | Rule |
+|---|---|---|---|
+| against frozen `v2.2.1` | 51.38% (48.00% to 54.87%) | +5.3 (−1.1 to +11.7) | met (score > 50%, spread > 0) |
+| against Macondo, `fresh-9200` deals | 50.12% (45.62% to 54.62%) | +13.1 (+4.8 to +21.4) | **not met** (needs ≥ 52.25%) |
+| candidate − default on the same Macondo deals | −2.12 points (−8.12 to +4.00) | −8.7 (−20.6 to +3.1) | |
+
+**Decision: the screen fails and the default stays,** as the rule fixed beforehand requires.
+The 4-ply second stage changed the first stage's choice in 12.0% of 2-ply moves against frozen
+Tilefish and 12.9% against Macondo, so it acted; against Macondo the changes did not help, and
+the paired difference leans the other way on both measures. Section 13 later found why more
+2-ply time is wasted; it does not rescue this candidate. `deep` stays an option.
 
 ## 11. Late estimates, close games and where the points come from: a reanalysis of the logs (4 October 2026)
 
@@ -1039,6 +1064,28 @@ reported). A pass leads only to a registered confirmation on fresh seeds (about 
 at 20 s, then 60 s with four threads); only then would the strength figures in `README.md`
 be re-measured with history. A failure is reported with its numbers, and inference stays as
 it is in interactive play.
+
+### Results of section 12 (4 October 2026): the screen fails; matches stay without history
+
+Both runs played their 200 registered pairs (logs `infer-screen-frozen.jsonl.gz`,
+`infer-screen-macondo.jsonl.gz`). The history reached the engine: inference ran at 71.3% of
+the candidate's simulated decisions in both runs (the rest came after an exchange, a pass or a
+bingo by the opponent, which leave nothing to infer, or opened the game), with a median of
+0.11 s (frozen) and 0.13 s (Macondo) of the move.
+
+| Run, 200 deal pairs | Candidate's score (95%) | Spread a game (95%) | Rule |
+|---|---|---|---|
+| against frozen `v2.2.1` | 49.12% (45.75% to 52.50%) | +1.5 (−4.5 to +7.7) | **not met** (needs > 50%) |
+| against Macondo, `fresh-9200` deals | 49.88% (45.12% to 54.75%) | +18.0 (+8.5 to +28.0) | **not met** (needs ≥ 52.25%) |
+| candidate − default on the same Macondo deals | −2.38 points (−8.38 to +3.75) | −3.8 (−16.8 to +9.2) | |
+
+**Decision: the screen fails.** Inference is not measured to help in matches, so the strength
+figures in `README.md` stay as measured without history, and inference stays as it is in
+interactive play. Neither leg comes close: no gain against frozen Tilefish, and on the
+Macondo deals the score is a little below the default's. This agrees with section 4's pilot of
+Macondo's own inference, which did not help Macondo at 20 s. Section 13 later found a defect
+in inference cut short by the clock; no move of these runs was affected (the longest inference
+took 0.611 s of the 1 s allowed).
 
 ## 13. How the simulation spends its time: a replay study (5 October 2026)
 
