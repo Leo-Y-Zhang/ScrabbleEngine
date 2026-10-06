@@ -6,6 +6,9 @@
   --accent: #2e4a42; --accent-ink: #f3eee4; --warn: #a8432c; --you: #2e4a42; --bot: #8a5a2b;
   --label-dark: rgba(34,29,23,.62); --focus: #1f6feb;
   --rt: clamp(34px, 10.5vw, 46px);
+  /* move classes in a game review (the same in both themes: they sit on their own discs) */
+  --c-brilliant: #1a9f9a; --c-great: #4a7fb5; --c-best: #3f9a36; --c-excellent: #6f9f2e; --c-good: #7d8f66;
+  --c-inaccuracy: #d29a12; --c-mistake: #e0742a; --c-blunder: #cf3a2a;
   --bw: min(720px, calc(100svh - 300px));
   color-scheme: light;
 }
@@ -88,7 +91,9 @@ kbd { font: 600 11px/1 "IBM Plex Sans", system-ui, sans-serif; padding: 2px 5px;
 .sq.cursor.down::after { right: auto; left: 50%; top: auto; bottom: 7%; transform: translateX(-50%); border: 17cqw solid transparent; border-top-color: var(--accent); border-bottom-width: 0; }
 .sq.drop { outline: 2px dashed var(--accent); outline-offset: -2px; }
 .sq > .tile { width: 92%; height: 92%; }
-.review-badge { position: absolute; left: 50%; top: -2px; transform: translate(-50%, -100%); font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+/* the last move: its squares tinted in the mover's colour around the tiles */
+.sq.lastsq { background: color-mix(in srgb, var(--bot) 55%, var(--sq)); }
+.sq.lastsq.mine { background: color-mix(in srgb, var(--you) 55%, var(--sq)); }
 
 /* ---------- tiles (one look everywhere: board, rack, drag, picker) ---------- */
 .tile {
@@ -105,7 +110,9 @@ kbd { font: 600 11px/1 "IBM Plex Sans", system-ui, sans-serif; padding: 2px 5px;
 .tile.last { background: linear-gradient(180deg, #fbeec9, #f0d389); }
 .tile.last::before { content: ""; position: absolute; left: 9%; top: 9%; width: 14%; height: 14%; border-radius: 50%; background: var(--bot); }
 .tile.last.mine::before { background: var(--you); }
+.tile.last:not(.mine) { box-shadow: inset 0 -0.09em 0 var(--tile-edge), 0 0 0 2px var(--bot), 0 1px 1.5px rgba(0,0,0,.25); }
 .tile.fresh { animation: drop .32s cubic-bezier(.2,.8,.3,1.2) both; }
+.sq:nth-child(2n) > .tile.fresh { animation-delay: .03s; } .sq:nth-child(3n) > .tile.fresh { animation-delay: .05s; }
 @keyframes drop { from { transform: translateY(-14%) scale(1.08); opacity: 0; } to { transform: none; opacity: 1; } }
 
 /* ---------- rack ---------- */
@@ -247,3 +254,119 @@ textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---------- game review ---------- */
+.cls { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; flex: none; vertical-align: -6px;
+  background: var(--c-best); color: #fff; font: 800 11.5px/1 Archivo, system-ui, sans-serif; letter-spacing: -.04em;
+  box-shadow: 0 1px 2px rgba(0,0,0,.25), inset 0 -1px 0 rgba(0,0,0,.15); text-shadow: 0 1px 0 rgba(0,0,0,.18); }
+.cls svg { width: 64%; height: 64%; fill: currentColor; }
+.cls.sm { width: 16px; height: 16px; font-size: 9px; vertical-align: -3px; margin-right: 6px; }
+.cls.lg { width: 34px; height: 34px; font-size: 16px; }
+.cls.brilliant { background: var(--c-brilliant); } .cls.great { background: var(--c-great); } .cls.best { background: var(--c-best); }
+.cls.excellent { background: var(--c-excellent); } .cls.good { background: var(--c-good); } .cls.inaccuracy { background: var(--c-inaccuracy); }
+.cls.mistake { background: var(--c-mistake); } .cls.blunder { background: var(--c-blunder); }
+.cls-legend .cls { width: 17px; height: 17px; font-size: 9px; vertical-align: -3px; }
+
+/* on the board: the move played, outlined in its class's colour with its badge; the better
+   move dashed in green with its coordinate and an arrow for its direction */
+.board { position: relative; }
+.rv-span { position: absolute; inset: -3px; border-radius: 7px; pointer-events: none; z-index: 3; --c: var(--c-best);
+  animation: rv-in .22s ease-out both; }
+.rv-span.played { border: 3px solid var(--c); box-shadow: 0 0 0 1px rgba(0,0,0,.12), 0 0 12px -2px var(--c); }
+.rv-span.played.ghost { border-style: dashed; box-shadow: none; opacity: .75; }
+.rv-span.best { border: 3px dashed var(--c-best); background: color-mix(in srgb, var(--c-best) 13%, transparent); animation-delay: .12s; }
+.rv-span.best.preview { border-style: solid; background: color-mix(in srgb, var(--c-best) 9%, transparent); animation-delay: 0s; }
+.rv-span.best::after { content: ""; position: absolute; border: calc(var(--sqw, 40px) * .17) solid transparent; }
+.rv-span.best.across::after { left: 100%; top: 50%; margin-left: 3px; transform: translateY(-50%); border-left-color: var(--c-best); border-right-width: 0; }
+.rv-span.best.down::after { top: 100%; left: 50%; margin-top: 3px; transform: translateX(-50%); border-top-color: var(--c-best); border-bottom-width: 0; }
+.rv-tag { position: absolute; padding: 2px 6px; border-radius: 5px; background: var(--c-best); color: #fff; white-space: nowrap;
+  font: 700 clamp(9.5px, calc(var(--sqw, 40px) * .27), 12px)/1.15 "IBM Plex Sans", system-ui, sans-serif; box-shadow: 0 2px 6px -2px rgba(0,0,0,.4); }
+.rv-tag.above { left: -3px; bottom: 100%; margin-bottom: 4px; }
+.rv-tag.below { left: -3px; top: 100%; margin-top: 4px; }
+.rv-tag.left { right: 100%; top: -3px; margin-right: 4px; }
+.rv-tag.right { left: 100%; top: -3px; margin-left: 4px; }
+.rv-badge { position: absolute; right: calc(var(--sqw, 40px) * -.34); top: calc(var(--sqw, 40px) * -.34); animation: pop .34s cubic-bezier(.2,.9,.3,1.35) .08s both; }
+.rv-badge .cls { width: calc(var(--sqw, 40px) * .62); height: calc(var(--sqw, 40px) * .62); min-width: 18px; min-height: 18px; font-size: max(9px, calc(var(--sqw, 40px) * .28)); vertical-align: 0; box-shadow: 0 2px 5px rgba(0,0,0,.35); }
+.tile.suggest { background: linear-gradient(180deg, color-mix(in srgb, var(--c-best) 16%, var(--tile-hi)), color-mix(in srgb, var(--c-best) 24%, var(--tile)));
+  box-shadow: inset 0 -0.09em 0 var(--tile-edge), 0 0 0 2px var(--c-best); animation: rv-in .2s ease-out both; }
+.tile.suggest.faint { opacity: .62; box-shadow: inset 0 -0.09em 0 var(--tile-edge); animation-delay: .12s; }
+.coords-top span, .coords-left span { border-radius: 4px; transition: background .15s, color .15s; }
+.coords-top span.hl, .coords-left span.hl { color: #fff; font-weight: 700; background: var(--c, var(--c-best)); }
+.coords-top span.hl.best, .coords-left span.hl.best { background: var(--c-best); }
+@keyframes rv-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes pop { from { opacity: 0; transform: scale(.3); } to { opacity: 1; transform: none; } }
+
+/* the rack in review: the tiles the move used, and those kept */
+.rack.review .tile { cursor: default; transition: opacity .15s, transform .15s; }
+.rack.review .tile.spent { transform: translateY(-10%); box-shadow: inset 0 -0.09em 0 var(--tile-edge), 0 0 0 2px var(--accent-ink), 0 5px 9px -4px rgba(0,0,0,.5); }
+.rack.review .tile.spent.alt { box-shadow: inset 0 -0.09em 0 var(--tile-edge), 0 0 0 2px var(--c-best), 0 5px 9px -4px rgba(0,0,0,.5); }
+.rack.review .tile.kept { opacity: .8; }
+
+/* the winning-chance bar beside the board */
+.board-frame { position: relative; }
+.evalbar { position: absolute; left: -15px; top: 18px; bottom: 0; width: 10px; border-radius: 6px; overflow: hidden; background: var(--bot); box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.evalbar-fill { position: absolute; left: 0; right: 0; bottom: 0; background: var(--you); transition: height .45s cubic-bezier(.3,.7,.3,1); }
+.evalbar-label { display: none; }
+@media (min-width: 901px) {
+  .evalbar { left: -24px; width: 16px; }
+  .evalbar-label { display: block; position: absolute; left: 0; right: 0; text-align: center; font: 700 8.5px/1 "IBM Plex Sans", system-ui, sans-serif; letter-spacing: -.04em; color: #fff; }
+  .evalbar-label.lo { bottom: 4px; } .evalbar-label.hi { top: 4px; }
+}
+@media (max-width: 480px) { .evalbar { left: -12px; width: 8px; } }
+
+/* the review panel */
+.review-body { gap: 10px; }
+.rv-intro { margin: 0; color: var(--ink-2); }
+.rv-start { display: flex; gap: 8px; align-items: center; }
+.rv-start .seg { flex: 1; }
+.rv-start .seg button { padding: 6px 4px; font-size: 12.5px; }
+.rv-progress-row { display: flex; justify-content: space-between; margin-top: 5px; font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.rv-progress .loading-fill { transition: width .3s ease; background-image: linear-gradient(100deg, transparent 0 35%, rgba(255,255,255,.45) 50%, transparent 65% 100%); background-size: 200% 100%; animation: sheen 1.2s linear infinite; }
+.coach { display: flex; flex-direction: column; gap: 6px; padding: 10px 11px; border-radius: 8px; background: var(--paper); border-left: 4px solid var(--c, var(--line)); animation: rv-in .18s ease-out both; }
+.coach.pending { color: var(--ink-3); border-left-color: var(--line); }
+.coach.brilliant { --c: var(--c-brilliant); } .coach.great { --c: var(--c-great); } .coach.best { --c: var(--c-best); } .coach.excellent { --c: var(--c-excellent); }
+.coach.good { --c: var(--c-good); } .coach.inaccuracy { --c: var(--c-inaccuracy); } .coach.mistake { --c: var(--c-mistake); } .coach.blunder { --c: var(--c-blunder); }
+.coach-head { display: flex; gap: 10px; align-items: center; font-size: 15px; }
+.coach-head b { color: var(--c); }
+.coach-sub { font-size: 12px; color: var(--ink-3); margin-top: 1px; }
+.coach-text, .coach-chance { margin: 0; color: var(--ink-2); }
+.coach-text b { color: var(--ink); }
+.coach-chance { font-size: 12.5px; color: var(--ink-3); }
+.alts2 { list-style: none; margin: 2px -6px 0; padding: 0; }
+.alts2 button { display: grid; grid-template-columns: auto 1fr auto 3.2em; gap: 0 8px; align-items: baseline; width: 100%; padding: 4px 6px; border: 0; border-radius: 6px; background: none; text-align: left; font-size: 13.5px; }
+.alts2 button:hover, .alts2 li.on button { background: color-mix(in srgb, var(--c-best) 13%, var(--paper-2)); }
+.alts2 .cls { align-self: center; margin-right: 0; }
+.alts2 .mv { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alts2 li.played .mv { font-weight: 700; }
+.alts2 li.extra { border-top: 1px dashed var(--line); margin-top: 3px; padding-top: 3px; }
+.alts2 .sc, .alts2 .wp { color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; }
+.alts2 .sub { grid-column: 2 / 5; font-size: 11.5px; color: var(--ink-3); }
+.coach-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.coach-acts .ctl { padding: 6px 10px; font-size: 13px; }
+.coach-acts .ctl-gap { flex: 1; width: auto; }
+.keynav { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.keynav .ctl { padding: 5px 10px; }
+.wgraph-wrap { cursor: pointer; border-radius: 6px; overflow: hidden; line-height: 0; box-shadow: inset 0 0 0 1px var(--line); }
+.wgraph { display: block; width: 100%; height: auto; }
+.wg-b { fill: color-mix(in srgb, var(--bot) 30%, var(--paper)); }
+.wg-a { fill: color-mix(in srgb, var(--you) 62%, var(--paper)); }
+.wg-line { fill: none; stroke: var(--ink); stroke-width: 1.3; stroke-linejoin: round; opacity: .55; }
+.wg-mid { stroke: var(--ink-3); stroke-dasharray: 3 3; stroke-width: 1; opacity: .7; }
+.wg-at { stroke: var(--ink); stroke-width: 1.5; }
+.wg-dot { stroke: var(--paper); stroke-width: 1.5; }
+.acc-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.acc { display: flex; flex-direction: column; padding: 8px 10px; border-radius: 8px; background: var(--paper); border-top: 3px solid var(--you); }
+.acc.b { border-top-color: var(--bot); }
+.acc .who { font-size: 12.5px; color: var(--ink-2); }
+.acc-n { font: 650 28px/1.1 Fraunces, Georgia, serif; font-variant-numeric: tabular-nums; }
+.acc-sub { font-size: 11.5px; color: var(--ink-3); }
+.classes > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--ink-2); list-style: none; }
+.classes > summary::before { content: "▸ "; } .classes[open] > summary::before { content: "▾ "; }
+.cls-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 13px; }
+.cls-table td, .cls-table th { padding: 2px 4px; }
+.cls-table th { font-size: 11.5px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.cls-table .cname { white-space: nowrap; }
+.cls-table .cnt { width: 2.6em; font-variant-numeric: tabular-nums; font-weight: 600; }
+.cls-table .cnt.l { text-align: right; } .cls-table .cnt.r { text-align: left; }
+.cls-table .zero { color: var(--ink-3); font-weight: 400; opacity: .6; }
+.log li button .cls.sm { margin-right: 5px; }

@@ -192,6 +192,9 @@ function viewSeat(state) {
   return G.human;
 }
 const humanTurn = () => S && !S.over && !G.over && reviewAt < 0 && (G.mode === "duo" || S.turn === G.human);
+// Tiles can be set out while Tilefish thinks, as a plan for your next move; they are
+// checked, and can be played, once its move is on the board.
+const canArrange = () => S && !S.over && !G.over && reviewAt < 0 && !concealed && (G.mode === "duo" ? humanTurn() : true);
 const assistAllowed = () => G && (G.mode === "practice" || G.mode === "analysis");
 function sideName(side) {
   if (!G) return "";
@@ -368,11 +371,16 @@ const filled = (s) => at(s) !== ".";
 const occupied = (s) => filled(s) || pending.has(s);
 
 function renderBoard(fresh) {
+  if (!fresh && rvFresh && reviewAt >= 0) fresh = rvFresh;
+  rvFresh = null;
+  const marks = reviewAt >= 0 ? reviewMarks() : null;
   for (let s = 0; s < N * N; s++) {
     const d = squares[s];
     d.textContent = "";
-    d.classList.toggle("cursor", !!cursor && cursor.sq === s && !occupied(s) && humanTurn());
+    d.classList.toggle("cursor", !!cursor && cursor.sq === s && !occupied(s) && canArrange());
     d.classList.toggle("down", !!cursor && cursor.down);
+    d.classList.toggle("lastsq", last.has(s) && filled(s) && !(marks && preview));
+    d.classList.toggle("mine", lastMine);
     if (filled(s)) {
       let cls = last.has(s) ? "last" + (lastMine ? " mine" : "") : "";
       if (fresh && fresh.has(s)) cls += " fresh";
@@ -386,14 +394,27 @@ function renderBoard(fresh) {
       d.appendChild(l);
     }
   }
+  drawReviewMarks(marks);
 }
 function renderRack() {
   rackEl.textContent = "";
   rackEl.classList.toggle("concealed", concealed);
+  rackEl.classList.toggle("review", reviewAt >= 0);
+  if (reviewAt >= 0) {
+    const v = shownVerdict(), left = v ? v.rack.split("") : [];
+    const spent = tilesOf(preview ? preview.move : v ? v.played : "").split("");
+    for (let i = 0; i < Math.max(7, left.length); i++) {
+      if (!left[i]) { const e = document.createElement("div"); e.className = "slot"; rackEl.appendChild(e); continue; }
+      const j = spent.indexOf(left[i]);
+      if (j >= 0) spent.splice(j, 1);
+      rackEl.appendChild(tileEl(left[i], j >= 0 ? (preview ? "spent alt" : "spent") : "kept"));
+    }
+    return;
+  }
   const n = Math.max(7, rack.length);
   for (let i = 0; i < n; i++) {
     const r = rack[i];
-    if (!r || reviewAt >= 0) {
+    if (!r) {
       const e = document.createElement("div");
       e.className = "slot";
       rackEl.appendChild(e);
@@ -438,7 +459,8 @@ function renderSide() {
     const side = h.who === "you" ? S.seat : 1 - S.seat;
     li.className = "s" + (G.mode === "duo" ? side : side === G.human ? 0 : 1) + (reviewAt === k + 1 ? " at" : "");
     const b = document.createElement("button");
-    b.textContent = h.type === "pass" ? "Pass" : h.type === "exchange" ? "Exchange " + h.move.replace(/^exch\s*/i, "") : h.move;
+    const cls = classify(verdictAt(k));
+    b.innerHTML = (cls ? badge(cls, "sm") : "") + esc(h.type === "pass" ? "Pass" : h.type === "exchange" ? "Exchange " + h.move.replace(/^exch\s*/i, "") : h.move);
     b.title = "Show the board after this move";
     b.onclick = () => enterReview(k + 1);
     const sc = document.createElement("span");
@@ -470,7 +492,7 @@ function renderControls() {
   $("controls").hidden = reviewing;
   $("review-nav").hidden = !reviewing;
   $("btn-shuffle").disabled = !S || reviewing;
-  $("btn-recall").disabled = !mine || !pending.size;
+  $("btn-recall").disabled = !canArrange() || concealed || !pending.size;
   $("btn-exchange").disabled = !mine || S.bag < 7;
   $("btn-exchange").textContent = exchanging ? "Cancel" : "Exchange";
   $("btn-pass").disabled = !mine || exchanging;
@@ -513,12 +535,20 @@ function statusForTurn() {
   if (!humanTurn()) return setStatus("&nbsp;");
   if (exchanging) return setStatus("Pick the tiles to put back in the bag.");
   const who = G.mode === "duo" ? sideName(S.turn) + " to move." : "Your move.";
-  if (!pending.size) return setStatus(who);
+  if (!pending.size) return setStatus(who + lastMoveNote());
   const mv = buildMove();
   if (mv && mv.error) return setStatus('<span class="bad">' + esc(mv.error) + "</span>");
   if (!checked || !mv || checked.text !== mv.text) return setStatus("&nbsp;");
   if (checked.ok) return setStatus("<b>" + esc(pretty(mv.text)) + "</b> scores " + checked.score + ".");
   setStatus('<span class="bad">' + esc(capital(checked.error)) + "</span>");
+}
+// The opponent's last move, in words, under the board until you start your own.
+function lastMoveNote() {
+  const h = S.history[S.history.length - 1];
+  if (!h || h.who === "you" && G.mode !== "duo") return "";
+  const name = G.mode === "duo" ? sideName(1 - S.turn) : "Tilefish";
+  return ' <span class="dim">' + esc(name) + " " + (h.type === "play" ? "played <b>" + esc(pretty(h.move)) + "</b> for " + h.score
+    : h.type === "exchange" ? "exchanged " + esc(h.move.replace(/^exch\s*/i, "")) + " tiles" : "passed") + ".</span>";
 }
 let toastTimer = 0;
 function toast(text, ok) {
@@ -606,7 +636,7 @@ function pickBlank() {
   });
 }
 async function place(slot, sq, letter) {
-  if (!humanTurn() || busy || exchanging || concealed || occupied(sq) || !rack[slot] || rack[slot].used) return false;
+  if (!canArrange() || (exchanging && humanTurn()) || occupied(sq) || !rack[slot] || rack[slot].used) return false;
   let ch = rack[slot].ch;
   if (ch === "?") {
     ch = letter ? letter.toLowerCase() : await pickBlank();
@@ -642,7 +672,7 @@ function advanceCursor() {
   cursor.sq = s;
 }
 async function typeLetter(key) {
-  if (!cursor || !humanTurn() || busy || exchanging) return;
+  if (!cursor || !canArrange() || exchanging) return;
   advanceCursor();
   if (!cursor) return;
   const L = key.toUpperCase();
@@ -672,12 +702,22 @@ function showState(state, mover) {
   const fresh = new Set();
   if (before) for (let s = 0; s < N * N; s++) if (before[Math.floor(s / N)][s % N] === "." && state.board[Math.floor(s / N)][s % N] !== ".") fresh.add(s);
   const sameView = S && S.seat === state.seat;
-  const kept = sameView ? rack.filter((r, i) => r && !r.used && !xsel.has(i)) : [];
+  // A plan made during the opponent's turn stays where its squares are still free.
+  const plan = sameView && mover != null && !humanSide(mover) && !state.over && pending.size ? [...pending.entries()] : [];
+  const kept = sameView ? rack.filter((r, i) => r && (plan.length || !r.used) && !xsel.has(i)) : [];
   S = state;
   shownBoard = state.board;
-  rack = rackFrom(state, kept);
+  rack = rackFrom(state, kept.map((r) => ({ ch: r.ch })));
   pending = new Map();
   order = [];
+  for (const [sq, p] of plan) {
+    if (filled(sq)) continue;
+    const slot = rack.findIndex((r) => r && !r.used && r.ch === (p.ch === p.ch.toLowerCase() ? "?" : p.ch));
+    if (slot < 0) continue;
+    rack[slot].used = true;
+    pending.set(sq, { ch: p.ch, slot });
+    order.push(sq);
+  }
   checked = null;
   selected = -1;
   exchanging = false;
@@ -685,6 +725,7 @@ function showState(state, mover) {
   if (fresh.size) { last = fresh; lastMine = mover != null && humanSide(mover) && G.mode !== "duo" ? true : mover === 0; }
   if (cursor && occupied(cursor.sq)) cursor = null;
   render(fresh.size && mover != null && !humanSide(mover) ? fresh : null);
+  if (pending.size) checkPending();
 }
 // A move was accepted: record it exactly, charge and switch the clocks, save.
 async function committed(state, mover) {
@@ -950,138 +991,550 @@ $("btn-resign").onclick = () => {
 };
 
 // ---------- review ----------
-async function enterReview(n) {
-  if (!S || busy) return;
-  if (!G.over && G.mode !== "review" && !assistAllowed()) { toast("Moves can be reviewed when the game is over."); return; }
-  reviewAt = Math.max(0, Math.min(n, S.history.length));
-  recall();
-  cursor = null;
-  const r = await ui("at " + reviewAt);
-  if (!r.ok) return;
-  shownBoard = r.board;
-  last = new Set();
-  if (reviewAt > 0) {
-    const prev = reviewAt > 1 ? (await ui("at " + (reviewAt - 1))).board : null;
-    for (let s = 0; s < N * N; s++) if (shownBoard[Math.floor(s / N)][s % N] !== "." && (!prev || prev[Math.floor(s / N)][s % N] === ".")) last.add(s);
-    const h = S.history[reviewAt - 1];
-    lastMine = h.who === "you";
+// A game review in the manner of a chess site's: every move is judged with only what its
+// player could see (`ui review`), by the winning chance it gave up against Tilefish's
+// choice.  From that come a class for each move, an accuracy for each player, a graph of
+// the winning chances, and the better move drawn on the board where it should have gone.
+// The boards of every position are fetched once, so stepping through a game never waits
+// for the engine, even while it is still analysing.
+const CLASS_INFO = {
+  brilliant: { name: "Brilliant", sym: "!!", say: "brilliant", tip: "The best move, and it gave up 12 or more points of score for a clearly better game." },
+  great: { name: "Great", sym: "!", say: "a great move", tip: "The only strong move: every other choice gave up 5% or more." },
+  best: { name: "Best", sym: "star", say: "the best move", tip: "Tilefish's own choice." },
+  excellent: { name: "Excellent", sym: "thumb", say: "excellent", tip: "Within 1% of the best move's winning chance." },
+  good: { name: "Good", sym: "check", say: "good", tip: "Gave up less than 3% winning chance." },
+  inaccuracy: { name: "Inaccuracy", sym: "?!", say: "an inaccuracy", tip: "Gave up 3% to 6% winning chance." },
+  mistake: { name: "Mistake", sym: "?", say: "a mistake", tip: "Gave up 6% to 12% winning chance." },
+  blunder: { name: "Blunder", sym: "??", say: "a blunder", tip: "Gave up 12% or more winning chance (or, in a solved endgame, the result)." },
+};
+const CLASS_ORDER = Object.keys(CLASS_INFO);
+const KEY_CLASSES = new Set(["brilliant", "great", "inaccuracy", "mistake", "blunder"]);
+const ICON = {
+  star: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.4l2 4.2 4.6.6-3.4 3.1.9 4.6L8 11.6l-4.1 2.3.9-4.6-3.4-3.1 4.6-.6z"/></svg>',
+  thumb: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.6 7.1h2.6v7.1H1.6zM5.3 7.2 8 1.9c1.3 0 2 .9 1.7 2.1l-.5 2.4h3.9c1 0 1.6.9 1.4 1.8l-1.1 4.7c-.2.8-.9 1.3-1.6 1.3H5.3z"/></svg>',
+  check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.2 8.6l3 3L12.8 4.8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+function badge(cls, extra) {
+  const info = CLASS_INFO[cls];
+  return '<span class="cls ' + cls + (extra ? " " + extra : "") + '" role="img" title="' + info.name + '" aria-label="' + info.name + '">' + (ICON[info.sym] || esc(info.sym)) + "</span>";
+}
+const WIN_STEPS = [0.01, 0.03, 0.06, 0.12];  // excellent | good | inaccuracy | mistake | blunder
+const POINT_STEPS = [2, 5, 10, 20];          // the same, in points, where the result is settled
+const STEP_CLASSES = ["excellent", "good", "inaccuracy", "mistake", "blunder"];
+const stepOf = (x, steps) => { let i = 0; while (i < steps.length && x >= steps[i]) i++; return i; };
+const num = (x) => (x == null || !isFinite(x) ? null : +x);
+// A game all but settled (or a solved endgame) is judged by the points given up instead.
+const settled = (v) => v.bestWin >= 0.97 || v.bestWin <= 0.03;
+const playedWin = (v) => (num(v.playedWin) != null ? +v.playedWin : v.bestWin - v.winLoss);
+function runnerUp(v) {
+  let w = null;
+  for (const a of v.alts || []) if (a.move !== v.best && num(a.win) != null && (w == null || a.win > w)) w = +a.win;
+  return w;
+}
+function isBrilliant(v) {
+  const t = v.top;
+  if (!t || t.move === v.played || isExch(v.played) || isPass(v.played)) return false;
+  if (t.score - (v.playedScore || 0) < 12) return false;
+  if (v.exact) return num(v.playedValue) != null && v.playedValue - t.value >= 10;
+  return !settled(v) && playedWin(v) - t.win >= 0.03;
+}
+function isGreat(v) {
+  const w = runnerUp(v);
+  if (w == null || (!v.exact && settled(v))) return false;
+  return v.bestWin - w >= (v.exact ? 0.5 : 0.05);
+}
+function classify(v) {
+  if (!v) return null;
+  if (v.same) return isBrilliant(v) ? "brilliant" : isGreat(v) ? "great" : "best";
+  const wl = Math.max(0, +v.winLoss || 0), vl = Math.max(0, +v.valueLoss || 0);
+  let s = stepOf(wl, WIN_STEPS);
+  if (v.exact) s = wl > 0 ? 4 : stepOf(vl, POINT_STEPS);
+  else if (settled(v)) s = Math.max(s, stepOf(vl, POINT_STEPS));
+  return STEP_CLASSES[s];
+}
+// Accuracy as a chess site computes it from the winning chance lost, with Scrabble's
+// smaller swings counted double; in a settled game a point of value counts as half a percent.
+function accuracyOf(v) {
+  let loss = Math.max(0, +v.winLoss || 0);
+  if (v.exact ? loss === 0 : settled(v)) loss = Math.max(loss, 0.005 * Math.max(0, +v.valueLoss || 0));
+  if (v.same) loss = 0;
+  return Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.04354 * 200 * loss) - 3.1669));
+}
+
+// Moves as text: "8D WO(R)D" across from 8D, "D8 WORD" down; brackets: already on the board.
+const isExch = (t) => /^exch/i.test(t || ""), isPass = (t) => /^pass/i.test(t || "");
+function parsePlay(text) {
+  const t = (text || "").trim();
+  let m = t.match(/^(\d{1,2})([A-O])\s+(\S+)$/i), r, c, down = false;
+  if (m) { r = +m[1] - 1; c = COLS.indexOf(m[2].toUpperCase()); } else {
+    m = t.match(/^([A-O])(\d{1,2})\s+(\S+)$/i);
+    if (!m) return null;
+    c = COLS.indexOf(m[1].toUpperCase()); r = +m[2] - 1; down = true;
   }
+  const cells = [];
+  let through = false;
+  for (const ch of m[3]) {
+    if (ch === "(") { through = true; continue; }
+    if (ch === ")") { through = false; continue; }
+    if (r < 0 || c < 0 || r >= N || c >= N) return null;
+    cells.push({ sq: r * N + c, ch, fresh: !through && ch !== "." });
+    if (down) r++; else c++;
+  }
+  return cells.length ? { cells, down, coord: t.split(/\s+/)[0].toUpperCase() } : null;
+}
+function tilesOf(text) {  // the tiles a move takes from the rack, blanks as "?"
+  if (!text || isPass(text)) return "";
+  if (isExch(text)) return text.replace(/^exch\s*/i, "").toUpperCase();
+  const p = parsePlay(text);
+  return p ? p.cells.filter((x) => x.fresh).map((x) => (x.ch === x.ch.toLowerCase() ? "?" : x.ch)).join("") : "";
+}
+function leaveOf(rack, text) {
+  const left = (rack || "").split("");
+  for (const ch of tilesOf(text)) { const i = left.indexOf(ch); if (i >= 0) left.splice(i, 1); }
+  return left.join("");
+}
+const moveLabel = (t) => (isPass(t) ? "Pass" : isExch(t) ? "Exchange " + t.replace(/^exch\s*/i, "") : pretty(t));
+const isBingo = (t) => !isExch(t) && tilesOf(t).length === 7;
+const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(Math.round(x));
+const pp = (x) => (100 * x).toFixed(Math.abs(x) < 0.1 ? 1 : 0) + "%";
+
+let rvBoards = null, rvKey = "";  // the board after each number of moves
+let preview = null;               // a move shown on the board in place of the one played: {move, pinned}
+let analysing = null;             // {done, total} while the analysis runs
+let classesOpen = true;
+const moverOf = (k) => (S.history[k].who === "you" ? S.seat : 1 - S.seat);
+const verdictAt = (k) => (G && G.verdicts ? G.verdicts[k] : null);
+const shownVerdict = () => (reviewAt > 0 ? verdictAt(reviewAt - 1) : null);
+function judgedSides() { return G.over || G.mode === "review" || G.mode === "duo" ? [0, 1] : [G.human]; }
+function reviewSecs() { return +store.get("reviewSecs", "1") || 1; }
+
+async function reviewBoards() {
+  const key = G.id + ":" + S.history.length + ":" + (G.gcg ? G.gcg.length : 0);
+  if (rvBoards && rvKey === key) return;
+  const out = [];
+  for (let k = 0; k <= S.history.length; k++) {
+    const r = await ui("at " + k);
+    if (!r.ok) return;
+    out.push(r.board);
+  }
+  rvBoards = out;
+  rvKey = key;
+}
+async function enterReview(n, opts) {
+  if (!S) return;
+  if (!reviewable()) { toast("Moves can be reviewed when the game is over."); return; }
+  const key = G.id + ":" + S.history.length + ":" + (G.gcg ? G.gcg.length : 0);
+  if (!rvBoards || rvKey !== key) {
+    if (busy) return;
+    await reviewBoards();
+    if (!rvBoards) return;
+  }
+  const was = reviewAt;
+  reviewAt = Math.max(0, Math.min(n, S.history.length));
+  if (!(opts && opts.keepPreview)) preview = null;
+  if (was < 0) { recall(); cursor = null; }
+  showReviewBoard(was);
   render();
   renderReviewPanel();
+  scrollLogTo(reviewAt);
+  if (opts && opts.analyse && !Object.keys(G.verdicts || {}).length) analyseGame(reviewSecs());
 }
+function showReviewBoard(was) {
+  shownBoard = rvBoards[reviewAt];
+  last = new Set();
+  if (reviewAt > 0) {
+    const prev = rvBoards[reviewAt - 1];
+    for (let s = 0; s < N * N; s++) if (shownBoard[Math.floor(s / N)][s % N] !== "." && prev[Math.floor(s / N)][s % N] === ".") last.add(s);
+    lastMine = humanSide(moverOf(reviewAt - 1)) && G.mode !== "duo" && G.mode !== "review" ? true : moverOf(reviewAt - 1) === 0;
+  }
+  rvFresh = was >= 0 && reviewAt === was + 1 ? last : null;  // stepping forward drops the tiles in
+}
+let rvFresh = null;
 function leaveReview() {
   reviewAt = -1;
+  preview = null;
   shownBoard = S.board;
+  last = new Set();
   $("review").hidden = true;
+  $("evalbar").hidden = true;
   render();
 }
 function reviewStatus() {
   if (reviewAt === 0) return "The empty board.";
   const h = S.history[reviewAt - 1];
-  const side = h.who === "you" ? S.seat : 1 - S.seat;
-  return "<b>" + esc(sideName(side)) + "</b>: " + esc(h.type === "pass" ? "Pass" : h.type === "exchange" ? "Exchange" : pretty(h.move)) + (h.type === "play" ? ", +" + h.score : "");
+  const v = verdictAt(reviewAt - 1), cls = classify(v);
+  const text = h.type === "pass" ? "Pass" : h.type === "exchange" ? "Exchange " + h.move.replace(/^exch\s*/i, "") : pretty(h.move);
+  let s = (cls ? badge(cls, "sm") + " " : "") + "<b>" + esc(sideName(moverOf(reviewAt - 1))) + "</b>: " + esc(text) + (h.type === "play" ? ", +" + h.score : "");
+  if (preview) s += ' <span class="dim">· showing ' + esc(moveLabel(preview.move)) + " instead</span>";
+  return s;
 }
 function reviewable() { return G && (G.over || G.mode === "review" || assistAllowed()); }
-function reviewSides() { return G.mode === "duo" || G.mode === "review" ? [0, 1] : [G.human]; }
+
+// What the board shows in review: the move played (outlined in its class's colour, with
+// its badge) and, when Tilefish preferred another, that move where it should have gone
+// (dashed, with its coordinate and an arrow for its direction).  A previewed move is shown
+// on the board before the move, in full.
+function reviewMarks() {
+  if (reviewAt <= 0 || !rvBoards) return null;
+  const v = shownVerdict(), cls = classify(v);
+  const h = S.history[reviewAt - 1];
+  const marks = { spans: [], ghosts: new Map(), coords: [] };
+  const played = h.type === "play" ? parsePlay(v ? v.played : h.move) : null;
+  if (preview) {
+    const p = parsePlay(preview.move);
+    if (p) {
+      for (const c of p.cells) if (c.fresh) marks.ghosts.set(c.sq, { ch: c.ch, faint: false });
+      marks.spans.push({ p, kind: "best preview", tag: p.coord });
+      marks.coords.push({ p, kind: "best" });
+    }
+    if (played) marks.spans.push({ p: played, kind: "played ghost", cls });
+    return marks;
+  }
+  if (played) {
+    marks.spans.push({ p: played, kind: "played", cls, badge: cls });
+    marks.coords.push({ p: played, kind: "played", cls });
+  }
+  if (v && !v.same && classify(v) !== "excellent") {
+    const b = parsePlay(v.best);
+    if (b) {
+      for (const c of b.cells) if (c.fresh && !filled(c.sq)) marks.ghosts.set(c.sq, { ch: c.ch, faint: true });
+      marks.spans.push({ p: b, kind: "best", tag: "Best " + b.coord });
+      marks.coords.push({ p: b, kind: "best" });
+    }
+  }
+  return marks;
+}
+function drawReviewMarks(marks) {
+  boardEl.querySelectorAll(".rv-span").forEach((e) => e.remove());
+  for (const el of document.querySelectorAll("#coords-top span, #coords-left span")) { el.className = ""; el.style.removeProperty("--c"); }
+  if (!marks) return;
+  for (const [sq, g] of marks.ghosts) {
+    if (filled(sq)) continue;
+    squares[sq].textContent = "";
+    squares[sq].appendChild(tileEl(g.ch, "suggest" + (g.faint ? " faint" : "")));
+  }
+  for (const s of marks.spans) {
+    const first = s.p.cells[0].sq, len = s.p.cells.length;
+    const r = Math.floor(first / N), c = first % N;
+    const d = document.createElement("div");
+    d.className = "rv-span " + s.kind + (s.p.down ? " down" : " across");
+    d.style.gridRow = r + 1 + " / span " + (s.p.down ? len : 1);
+    d.style.gridColumn = c + 1 + " / span " + (s.p.down ? 1 : len);
+    if (s.cls) d.style.setProperty("--c", "var(--c-" + s.cls + ")");
+    if (s.tag) {
+      const t = document.createElement("span");
+      t.className = "rv-tag " + (s.p.down ? (c > 0 ? "left" : "right") : r > 0 ? "above" : "below");
+      t.textContent = s.tag;
+      d.appendChild(t);
+    }
+    if (s.badge) {
+      const b = document.createElement("span");
+      b.className = "rv-badge";
+      b.innerHTML = badge(s.badge);
+      d.appendChild(b);
+    }
+    boardEl.appendChild(d);
+  }
+  const top = $("coords-top").children, left = $("coords-left").children;
+  for (const m of marks.coords) {
+    const sq = m.p.cells[0].sq, r = Math.floor(sq / N), c = sq % N;
+    for (const el of [top[c], left[r]]) {
+      el.className = "hl " + m.kind;
+      if (m.cls) el.style.setProperty("--c", "var(--c-" + m.cls + ")");
+    }
+  }
+}
+
+// The winning chance of the side on the left-hand card (you, or player 1) after each
+// number of moves: from the judged position before a move where there is one (it knows
+// the rack drawn), else from the estimate after the move before it.
+function winSeries() {
+  const n = S.history.length, A = cardSide(0);
+  const pts = new Array(n + 1).fill(null);
+  const forA = (w, side) => (side === A ? w : 1 - w);
+  const ks = Object.keys(G.verdicts || {}).map(Number).filter((k) => k < n);
+  for (const k of ks) pts[k + 1] = forA(playedWin(G.verdicts[k]), moverOf(k));
+  for (const k of ks) pts[k] = forA(G.verdicts[k].bestWin, moverOf(k));
+  const R = G.result;
+  if (R && G.over) pts[n] = R.winner < 0 ? 0.5 : R.winner === A ? 1 : 0;
+  else if (S.over) { const a = sideScore(A), b = sideScore(1 - A); pts[n] = a > b ? 1 : a < b ? 0 : 0.5; }
+  if (pts[0] == null && ks.length) pts[0] = 0.5;
+  return pts.map((p) => (p == null ? null : Math.max(0, Math.min(1, p))));
+}
+function seriesAt(pts, k) {
+  for (let i = k; i >= 0; i--) if (pts[i] != null) return pts[i];
+  return null;
+}
+function renderEvalBar(pts) {
+  const bar = $("evalbar");
+  const p = reviewAt >= 0 && pts ? seriesAt(pts, reviewAt) : null;
+  bar.hidden = p == null;
+  if (p == null) return;
+  $("evalbar-fill").style.height = (100 * p).toFixed(1) + "%";
+  const lbl = $("evalbar-label");
+  lbl.textContent = Math.round(100 * (p >= 0.5 ? p : 1 - p));
+  lbl.className = "evalbar-label " + (p >= 0.5 ? "lo" : "hi");
+  bar.title = sideName(cardSide(0)) + ": " + pct(p) + " to win here";
+}
+function graphSvg(pts) {
+  const n = S.history.length, W = Math.max(200, $("review").clientWidth - 24 || 300), H = 86;
+  const x = (k) => (n ? (k / n) * W : 0), y = (p) => 3 + (1 - p) * (H - 6);
+  const known = pts.map((p, k) => [k, p]).filter(([, p]) => p != null);
+  let svg = '<svg class="wgraph" viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="Winning chances through the game">';
+  svg += '<rect class="wg-b" x="0" y="0" width="' + W + '" height="' + H + '"/>';
+  if (known.length) {
+    const line = known.map(([k, p]) => x(k).toFixed(1) + "," + y(p).toFixed(1)).join(" L");
+    svg += '<path class="wg-a" d="M' + x(known[0][0]).toFixed(1) + "," + H + " L" + line + " L" + x(known[known.length - 1][0]).toFixed(1) + "," + H + 'Z"/>';
+    svg += '<path class="wg-line" d="M' + line + '"/>';
+  }
+  svg += '<line class="wg-mid" x1="0" x2="' + W + '" y1="' + y(0.5) + '" y2="' + y(0.5) + '"/>';
+  if (reviewAt >= 0) svg += '<line class="wg-at" x1="' + x(reviewAt) + '" x2="' + x(reviewAt) + '" y1="0" y2="' + H + '"/>';
+  for (let k = 0; k < n; k++) {
+    const cls = classify(verdictAt(k));
+    if (!cls || !KEY_CLASSES.has(cls)) continue;
+    const p = seriesAt(pts, k + 1);
+    if (p == null) continue;
+    svg += '<circle class="wg-dot" style="fill:var(--c-' + cls + ')" cx="' + x(k + 1).toFixed(1) + '" cy="' + y(p).toFixed(1) + '" r="3.6"><title>' +
+      esc(k + 1 + ". " + sideName(moverOf(k)) + ": " + moveLabel(S.history[k].move) + " (" + CLASS_INFO[cls].name + ")") + "</title></circle>";
+  }
+  return svg + "</svg>";
+}
 function renderReviewPanel() {
+  if (reviewAt < 0) return;
   const box = $("review");
   box.hidden = false;
-  box.textContent = "";
-  const head = document.createElement("div");
-  head.className = "panel-head";
-  head.innerHTML = "<span>Review</span>";
-  const close = document.createElement("button");
-  close.className = "link";
-  close.textContent = G.over || G.mode === "review" ? "Final position" : "Back to the game";
-  close.onclick = leaveReview;
-  head.appendChild(close);
-  box.appendChild(head);
-  const body = document.createElement("div");
-  body.className = "review-body";
-  const v = reviewAt > 0 ? G.verdicts[reviewAt - 1] : null;
-  if (v) {
-    const d = document.createElement("div");
-    d.className = "verdict";
-    const loss = v.winLoss;
-    const label = v.same ? "Tilefish's choice too." : loss < 0.01 ? "About as good as " + pretty(v.best) + " (within 1%)." :
-      "Tilefish preferred " + pretty(v.best) + ": an estimated " + (100 * loss).toFixed(1) + "% less chance of winning" + (v.exact ? " (solved)" : "") + ".";
-    d.textContent = "With " + v.rack + ": " + label + " [" + v.method + "]";
-    body.appendChild(d);
-    if (v.alts && v.alts.length) {
-      const ol = document.createElement("ol");
-      ol.className = "alts";
-      for (const a of v.alts.slice(0, 4)) { const li = document.createElement("li"); li.textContent = pretty(a.move) + "  +" + a.score + "  " + pct(a.win); ol.appendChild(li); }
-      body.appendChild(ol);
-    }
-  } else if (reviewAt > 0) {
-    const d = document.createElement("div");
-    d.className = "verdict";
-    d.textContent = Object.keys(G.verdicts).length ? "No verdict for this move." : "Run the analysis to judge each move.";
-    body.appendChild(d);
+  const verdicts = G.verdicts || {};
+  const judged = Object.keys(verdicts).length;
+  const pts = winSeries();
+  renderEvalBar(pts);
+  let html = '<div class="panel-head"><span>Game review</span><button class="link" id="rv-close">' + (G.over || G.mode === "review" ? "Final position" : "Back to the game") + "</button></div>";
+  html += '<div class="review-body">';
+  // the move on the board
+  const k = reviewAt - 1, v = k >= 0 ? verdictAt(k) : null;
+  if (v) html += coachHtml(v, k);
+  else if (k >= 0 && analysing) html += '<div class="coach pending">Judging this move…</div>';
+  else if (k >= 0 && judged) html += '<div class="coach pending">This move was not judged' + (judgedSides().includes(moverOf(k)) ? "." : " (only your own moves are judged until the game is over).") + "</div>";
+  // the analysis
+  if (analysing) {
+    html += '<div class="rv-progress"><div class="loading-bar"><div class="loading-fill" style="width:' + (100 * analysing.done / Math.max(1, analysing.total)).toFixed(1) +
+      '%"></div></div><div class="rv-progress-row"><span>Analysing move ' + Math.min(analysing.done + 1, analysing.total) + " of " + analysing.total + '</span><button class="link strong" id="rv-stop">Stop</button></div></div>';
+  } else if (!judged) {
+    html += '<p class="rv-intro">Tilefish judges every move with only what its player could see, marks the best and the costly ones, and shows on the board where the better move would have gone.</p>';
   }
-  const row = document.createElement("div");
-  row.className = "row";
-  const go = document.createElement("button");
-  go.className = "link strong";
-  go.textContent = Object.keys(G.verdicts).length ? "Analyse again" : "Analyse the moves";
-  go.onclick = analyseGame;
-  row.appendChild(go);
-  if (reviewAt > 0 && reviewAt <= G.record.length && !G.gcg && !G.cgp) {
-    const again = document.createElement("button");
-    again.className = "link strong";
-    again.textContent = "Try this move again";
-    again.title = "Practise from the position before this move, with the same tiles to come";
-    again.onclick = () => tryAgain(reviewAt - 1);
-    row.appendChild(again);
+  if (judged) html += '<div class="wgraph-wrap" id="rv-graph">' + graphSvg(pts) + "</div>";
+  if (judged) html += summaryHtml();
+  if (!analysing) {
+    const secs = reviewSecs();
+    html += '<div class="rv-start"><div class="seg rv-depth" role="radiogroup" aria-label="Depth">' +
+      [[0.3, "Quick"], [1, "Standard"], [3, "Deep"]].map(([s, l]) => '<button data-secs="' + s + '" role="radio" aria-checked="' + (s === secs) + '" class="' + (s === secs ? "on" : "") + '">' + l + "</button>").join("") +
+      '</div><button class="ctl primary" id="rv-go">' + (judged ? "Analyse again" : "Start review") + "</button></div>";
   }
-  body.appendChild(row);
-  const sum = summaryText();
-  if (sum) { const p = document.createElement("div"); p.className = "verdict"; p.textContent = sum; body.appendChild(p); }
-  box.appendChild(body);
+  html += "</div>";
+  box.innerHTML = html;
+  $("rv-close").onclick = leaveReview;
+  if ($("rv-stop")) $("rv-stop").onclick = stopAnalysis;
+  if ($("rv-go")) $("rv-go").onclick = () => analyseGame(reviewSecs());
+  box.querySelectorAll(".rv-depth button").forEach((b) => (b.onclick = () => { store.set("reviewSecs", b.dataset.secs); renderReviewPanel(); }));
+  const graph = $("rv-graph");
+  if (graph) graph.onclick = (e) => {
+    const r = graph.firstChild.getBoundingClientRect();
+    enterReview(Math.round(((e.clientX - r.left) / r.width) * S.history.length));
+  };
+  wireCoach(v, k);
+  const det = $("rv-classes");
+  if (det) det.ontoggle = () => { classesOpen = det.open; };
+  box.querySelectorAll("[data-jump]").forEach((b) => (b.onclick = () => jumpToClass(b.dataset.jump, +b.dataset.side)));
 }
-function summaryText() {
+function coachHtml(v, k) {
+  const cls = classify(v), info = CLASS_INFO[cls], side = moverOf(k);
   const lines = [];
-  for (const side of reviewSides()) {
-    const idx = S.history.map((h, k) => [h, k]).filter(([h]) => (h.who === "you" ? S.seat : 1 - S.seat) === side);
-    const judged = idx.filter(([, k]) => G.verdicts[k]);
-    const bingos = idx.filter(([h]) => h.tiles === 7).length;
-    let s = sideName(side) + ": " + idx.length + " moves, " + bingos + " bingo" + (bingos === 1 ? "" : "s");
-    if (judged.length) {
-      const same = judged.filter(([, k]) => G.verdicts[k].same || G.verdicts[k].winLoss < 0.01).length;
-      const lost = judged.reduce((a, [, k]) => a + G.verdicts[k].winLoss, 0);
-      const worst = judged.filter(([, k]) => G.verdicts[k].winLoss >= 0.03).length;
-      s += "; " + same + " of " + judged.length + " as good as Tilefish's choice; " + worst + " costly (3%+); estimated " + (100 * lost).toFixed(1) + "% winning chance given up in total";
-    }
-    if (G.clockMin && G.record.length) s += "; clock used " + fmtClock(G.used[side]).replace("−", "");
-    lines.push(s + ".");
+  const bs = v.bestScore || 0, ps = v.playedScore || 0;
+  const lb = leaveOf(v.rack, v.best), lp = leaveOf(v.rack, v.played);
+  const keeps = (a, b) => "keeps " + (a || "nothing") + " instead of " + (b || "nothing");
+  if (cls === "brilliant") {
+    lines.push("It scores " + (v.top.score - ps) + " less than " + esc(moveLabel(v.top.move)) + " (+" + v.top.score + ") but keeps a better game: " +
+      (v.exact ? sgn(v.playedValue - v.top.value) + " points by the end." : pp(playedWin(v) - v.top.win) + " more winning chance."));
+  } else if (cls === "great") {
+    lines.push("The only strong move here: the next best gives up " + (v.exact ? "the result." : pp(v.bestWin - runnerUp(v)) + " winning chance."));
+  } else if (v.same) {
+    lines.push("Tilefish's choice too.");
+  } else {
+    lines.push("Best was <b>" + esc(moveLabel(v.best)) + "</b>" + (bs ? " (+" + bs + ")" : "") + ".");
+    if (isBingo(v.best) && !isBingo(v.played)) lines.push("That one is a bingo: all seven tiles, for the 50-point bonus.");
+    else if (isExch(v.best) && !isExch(v.played)) lines.push("Exchanging was better: it keeps " + (lb || "nothing") + " and draws fresh tiles.");
+    else if (isExch(v.played) && !isExch(v.best)) lines.push("Playing was better than exchanging: it scores " + bs + " and " + keeps(lb, lp) + ".");
+    else if (isPass(v.played)) lines.push("Passing gave away a turn.");
+    else if (bs > ps) lines.push("It scores " + (bs - ps) + " more" + (lb !== lp ? " and " + keeps(lb, lp) : "") + ".");
+    else if (bs < ps) lines.push("It scores " + (ps - bs) + " less, but " + (lb !== lp ? keeps(lb, lp) : "leaves a better board") + ".");
+    else if (lb !== lp) lines.push("The same score, but it " + keeps(lb, lp) + ".");
+    else if (parsePlay(v.best) && parsePlay(v.played) && parsePlay(v.best).coord === parsePlay(v.played).coord) lines.push("The same squares, score and tiles kept, but its word leaves the opponent less to play with.");
+    else lines.push("The same score and tiles kept, on a spot that leaves the opponent less.");
   }
-  return lines.join(" ");
+  let chance;
+  if (v.exact) {
+    const best = num(v.playedValue) != null ? v.playedValue + (+v.valueLoss || 0) : null;
+    chance = "Endgame, solved: best play gains " + sgn(best) + " from here" + (v.same ? "." : ", this move " + sgn(v.playedValue) + ".");
+  } else if (v.same) {
+    chance = sideName(side) + "'s winning chance: " + pct(v.bestWin) + ".";
+  } else {
+    chance = sideName(side) + "'s winning chance: " + pct(v.bestWin) + " with the best move, " + pct(playedWin(v)) + " after this one" +
+      (+v.valueLoss >= 0.5 ? " (" + (+v.valueLoss).toFixed(1) + " points of value)" : "") + ".";
+  }
+  let html = '<div class="coach ' + cls + '"><div class="coach-head">' + badge(cls, "lg") + "<div><b>" + esc(moveLabel(v.played)) + "</b> is " + info.say +
+    '<div class="coach-sub">' + esc(sideName(side)) + " · move " + (k + 1) + " · rack " + esc(v.rack.replace(/\?/g, "·")) + "</div></div></div>";
+  html += '<p class="coach-text">' + lines.join(" ") + '</p><p class="coach-chance">' + esc(chance) + "</p>";
+  // the moves Tilefish considered, the one played among them
+  const alts = (v.alts || []).slice(0, 5);
+  const bestValue = (num(v.playedValue) || 0) + (+v.valueLoss || 0);
+  const rows = alts.map((a) => ({ a, played: a.move === v.played }));
+  if (!rows.some((r) => r.played)) rows.push({ a: { move: v.played, score: ps, win: playedWin(v), value: v.playedValue }, played: true, extra: true });
+  html += '<ol class="alts2">';
+  for (const { a, played, extra } of rows) {
+    const acls = a.move === v.best ? "best" : played ? cls : STEP_CLASSES[v.exact ? (a.win < v.bestWin ? 4 : stepOf(Math.max(0, bestValue - a.value), POINT_STEPS)) : stepOf(Math.max(0, v.bestWin - a.win), WIN_STEPS)];
+    const on = preview && preview.move === a.move;
+    html += '<li class="' + (played ? "played" : "") + (extra ? " extra" : "") + (on ? " on" : "") + '"><button data-alt="' + esc(a.move) + '" title="Show this move on the board">' + badge(acls, "sm") +
+      '<span class="mv">' + esc(moveLabel(a.move)) + "</span>" + '<span class="sc">' + (a.score ? "+" + a.score : "") + "</span>" +
+      '<span class="wp">' + (v.exact ? sgn(a.value) : num(a.win) != null ? pct(a.win) : "") + "</span>" +
+      '<span class="sub">' + (played ? "played · " : "") + "keeps " + esc(leaveOf(v.rack, a.move).replace(/\?/g, "·") || "nothing") + "</span></button></li>";
+  }
+  html += "</ol>";
+  html += '<div class="coach-acts">';
+  if (!v.same) html += '<button class="ctl" id="rv-best" title="Show the best move on the board (B)">' + (preview && preview.move === v.best ? "Show played" : "Show best") + "</button>";
+  if (reviewAt > 0 && reviewAt <= G.record.length && !G.gcg && !G.cgp) html += '<button class="ctl" id="rv-retry" title="Play from the position before this move, with the same tiles to come">Retry</button>';
+  html += '<span class="ctl-gap"></span><span class="keynav"><button class="ctl" id="rv-kprev" title="Previous key move (↑)" aria-label="Previous key move">‹</button><span class="dim">Key</span><button class="ctl" id="rv-knext" title="Next key move (↓)" aria-label="Next key move">›</button></span></div>';
+  return html + "</div>";
 }
-async function analyseGame() {
-  if (!S) return;
+function wireCoach(v, k) {
+  const box = $("review");
+  if ($("rv-best")) $("rv-best").onclick = () => togglePreview(v.best);
+  if ($("rv-retry")) $("rv-retry").onclick = () => tryAgain(reviewAt - 1);
+  if ($("rv-kprev")) { $("rv-kprev").onclick = () => jumpKey(-1); $("rv-kprev").disabled = keyMove(-1) < 0; }
+  if ($("rv-knext")) { $("rv-knext").onclick = () => jumpKey(1); $("rv-knext").disabled = keyMove(1) < 0; }
+  box.querySelectorAll("[data-alt]").forEach((b) => {
+    const mv = b.dataset.alt;
+    b.onclick = () => togglePreview(mv);
+    // Pointing at a move shows it on the board at once; it stays only when clicked.
+    b.onpointerenter = (e) => { if (e.pointerType === "mouse" && !(preview && preview.pinned)) setPreview(mv === v.played ? null : { move: mv, pinned: false }); };
+    b.onpointerleave = (e) => { if (e.pointerType === "mouse" && preview && !preview.pinned) setPreview(null); };
+  });
+}
+function setPreview(p) {
+  if (reviewAt <= 0) return;
+  preview = p && !isPass(p.move) ? p : null;
+  shownBoard = preview && !isExch(preview.move) ? rvBoards[reviewAt - 1] : rvBoards[reviewAt];
+  rvFresh = null;
+  renderBoard();
+  renderRack();
+  statusForTurn();
+  const box = $("review");
+  box.querySelectorAll(".alts2 li").forEach((li) => li.classList.toggle("on", !!preview && li.firstChild.dataset.alt === preview.move));
+  const b = $("rv-best"), v = shownVerdict();
+  if (b && v) b.textContent = preview && preview.move === v.best ? "Show played" : "Show best";
+}
+function togglePreview(mv) {
+  const v = shownVerdict();
+  if (!v) return;
+  if ((preview && preview.pinned && preview.move === mv) || mv === v.played) setPreview(null);
+  else setPreview({ move: mv, pinned: true });
+}
+function keyMove(dir) {
+  const sides = judgedSides();
+  for (let k = reviewAt - 1 + dir; k >= 0 && k < S.history.length; k += dir) {
+    const cls = classify(verdictAt(k));
+    if (cls && KEY_CLASSES.has(cls) && sides.includes(moverOf(k))) return k;
+  }
+  return -1;
+}
+function jumpKey(dir) { const k = keyMove(dir); if (k >= 0) enterReview(k + 1); }
+function jumpToClass(cls, side) {
+  const n = S.history.length, ks = [];
+  for (let k = 0; k < n; k++) if (moverOf(k) === side && classify(verdictAt(k)) === cls) ks.push(k);
+  if (!ks.length) return;
+  const next = ks.find((k) => k > reviewAt - 1);
+  enterReview((next != null ? next : ks[0]) + 1);
+}
+function summaryHtml() {
+  const sides = [cardSide(0), cardSide(1)].filter((s) => judgedSides().includes(s));
+  const stats = sides.map((side) => {
+    const ks = S.history.map((h, k) => k).filter((k) => moverOf(k) === side);
+    const vs = ks.map((k) => verdictAt(k)).filter(Boolean);
+    const counts = {};
+    for (const v of vs) { const c = classify(v); counts[c] = (counts[c] || 0) + 1; }
+    const acc = vs.length ? vs.reduce((a, v) => a + accuracyOf(v), 0) / vs.length : null;
+    const value = vs.length ? vs.reduce((a, v) => a + Math.max(0, +v.valueLoss || 0), 0) / vs.length : null;
+    const bingos = ks.filter((k) => S.history[k].tiles === 7).length;
+    const pts = ks.reduce((a, k) => a + (S.history[k].score || 0), 0);
+    return { side, counts, acc, value, bingos, avg: ks.length ? pts / ks.length : 0, n: vs.length };
+  });
+  let html = '<div class="acc-row">';
+  for (const s of stats) {
+    html += '<div class="acc ' + (s.side === cardSide(0) ? "a" : "b") + '"><span class="who">' + esc(sideName(s.side)) + '</span><span class="acc-n">' +
+      (s.acc == null ? "–" : s.acc.toFixed(1)) + '</span><span class="acc-sub">accuracy · ' + s.bingos + " bingo" + (s.bingos === 1 ? "" : "s") + " · " +
+      s.avg.toFixed(1) + " a move" + (s.value != null ? " · " + s.value.toFixed(1) + " value lost a move" : "") + "</span></div>";
+  }
+  html += "</div>";
+  html += '<details class="classes" id="rv-classes"' + (classesOpen ? " open" : "") + '><summary>Move classes</summary><table class="cls-table"><thead><tr>' +
+    stats.map((s, i) => '<th class="cnt ' + (i ? "r" : "l") + '">' + esc(sideName(s.side)) + "</th>" + (i ? "" : "<th></th>")).join("") + (stats.length === 1 ? "<th></th>" : "") + "</tr></thead><tbody>";
+  for (const c of CLASS_ORDER) {
+    html += '<tr title="' + esc(CLASS_INFO[c].tip) + '">';
+    stats.forEach((s, i) => {
+      const n = s.counts[c] || 0;
+      const cell = '<td class="cnt ' + (i ? "r" : "l") + '">' + (n ? '<button class="link" data-jump="' + c + '" data-side="' + s.side + '" title="Show ' + esc(sideName(s.side)) + "'s " + esc(CLASS_INFO[c].name.toLowerCase()) + ' moves">' + n + "</button>" : '<span class="zero">0</span>') + "</td>";
+      if (i === 0) html += cell + '<td class="cname">' + badge(c, "sm") + " " + CLASS_INFO[c].name + "</td>";
+      else html += cell;
+    });
+    if (stats.length === 1) html += "<td></td>";
+    html += "</tr>";
+  }
+  return html + "</tbody></table></details>";
+}
+async function analyseGame(secs) {
+  if (!S || busy) return;
   if (G.gcg == null && !G.record.length) return;
+  await reviewBoards();
   const my = epoch;
   busy = true;
   G.verdicts = {};
-  const todo = S.history.map((h, k) => [h, k]).filter(([h]) => reviewSides().includes(h.who === "you" ? S.seat : 1 - S.seat)).map(([, k]) => k);
-  for (let i = 0; i < todo.length; i++) {
-    setStatus("Analysing move " + (i + 1) + " of " + todo.length + ' <button class="link strong" id="btn-an-stop">Stop</button>', "thinking");
-    $("btn-an-stop").onclick = async () => { const st = await restartEngine(); if (st) { busy = false; S = st; enterReview(reviewAt); } };
-    let r;
-    try { r = await ui("review " + todo[i] + " 1"); } catch (e) { return; }
-    if (my !== epoch) return;
-    if (r.ok) G.verdicts[todo[i]] = r;
-    renderReviewPanel();
-  }
-  busy = false;
-  if (G.over) archiveUpdate();
+  preview = null;
+  const sides = judgedSides();
+  const todo = S.history.map((h, k) => k).filter((k) => sides.includes(moverOf(k)));
+  analysing = { done: 0, total: todo.length };
   render();
   renderReviewPanel();
+  for (let i = 0; i < todo.length; i++) {
+    let r;
+    try { r = await ui("review " + todo[i] + " " + secs); } catch (e) { return; }
+    if (my !== epoch) return;
+    if (r.ok) G.verdicts[todo[i]] = r;
+    analysing.done = i + 1;
+    if (reviewAt >= 0) { renderBoard(); renderSide(); renderReviewPanel(); statusForTurn(); }
+  }
+  analysing = null;
+  busy = false;
+  if (G.over || G.mode === "review") archiveUpdate();
+  render();
+  renderReviewPanel();
+}
+async function stopAnalysis() {
+  const at = reviewAt;
+  analysing = null;
+  const st = await restartEngine();
+  if (!st) return;
+  busy = false;
+  S = st;
+  shownBoard = st.board;
+  if (at >= 0) enterReview(at); else render();
 }
 function archiveUpdate() {
   const list = store.json("games", []);
   const i = list.findIndex((g) => g.id === G.id);
   if (i >= 0) { list[i].game = snapshotForSave(); store.put("games", list); }
+}
+function scrollLogTo(n) {  // within the list only, never the page
+  const log = $("log"), li = log.children[n - 1];
+  if (!li) return;
+  if (li.offsetTop < log.scrollTop) log.scrollTop = li.offsetTop - 4;
+  else if (li.offsetTop + li.offsetHeight > log.scrollTop + log.clientHeight) log.scrollTop = li.offsetTop + li.offsetHeight - log.clientHeight + 4;
 }
 async function tryAgain(k) {
   const r = await ui("rewind " + k);
@@ -1092,7 +1545,10 @@ async function tryAgain(k) {
   if (G.mode !== "duo" && mover !== G.human) G.human = mover;
   await ui("seat " + G.human);
   reviewAt = -1;
+  preview = null;
+  rvBoards = null;
   $("review").hidden = true;
+  $("evalbar").hidden = true;
   $("end").hidden = true;
   S = null;
   const st = (await ui("state")).state;
@@ -1105,6 +1561,11 @@ async function tryAgain(k) {
     const n = S.history.length;
     enterReview(id === "rv-first" ? 0 : id === "rv-prev" ? reviewAt - 1 : id === "rv-next" ? reviewAt + 1 : n);
   };
+});
+let rvResize = 0;
+window.addEventListener("resize", () => {
+  cancelAnimationFrame(rvResize);
+  rvResize = requestAnimationFrame(() => { if (reviewAt >= 0 && !$("review").hidden) { const g = $("rv-graph"); if (g) g.innerHTML = graphSvg(winSeries()); } });
 });
 
 // ---------- exports ----------
@@ -1129,7 +1590,7 @@ function renderExports() {
     const r = await ui("cgpout");
     try { await navigator.clipboard.writeText(r.cgp); toast("Position copied (your rack only).", true); } catch (e) { toast(r.cgp); }
   });
-  if (reviewable() && reviewAt < 0 && S && S.history.length) add("Review", () => enterReview(S.history.length));
+  if (reviewable() && reviewAt < 0 && S && S.history.length) add("Game review", () => enterReview(S.history.length, { analyse: G.over || G.mode === "review" }));
 }
 
 // ---------- pointer: tap, drag and drop ----------
@@ -1214,10 +1675,10 @@ async function tap(from) {
   if (from.slot != null) {
     const i = from.slot;
     if (exchanging) { if (xsel.has(i)) xsel.delete(i); else xsel.add(i); }
-    else if (cursor && !occupied(cursor.sq) && humanTurn() && !busy) { if (await place(i, cursor.sq)) { advanceCursor(); checkPending(); } }
+    else if (cursor && !occupied(cursor.sq) && canArrange()) { if (await place(i, cursor.sq)) { advanceCursor(); checkPending(); } }
     else selected = selected === i ? -1 : i;
     render();
-    if (selected >= 0 && humanTurn()) setStatus("Now click a square for " + (rack[i].ch === "?" ? "the blank" : rack[i].ch) + ".");
+    if (selected >= 0 && canArrange()) setStatus("Now click a square for " + (rack[i].ch === "?" ? "the blank" : rack[i].ch) + ".");
     return;
   }
   unplace(from.sq);
@@ -1232,7 +1693,7 @@ boardEl.addEventListener("pointerdown", (e) => {
 });
 boardEl.addEventListener("click", async (e) => {
   const sqEl = e.target.closest(".sq");
-  if (!sqEl || !humanTurn()) return;
+  if (!sqEl || !canArrange()) return;
   const sq = +sqEl.dataset.sq;
   if (occupied(sq)) return;
   if (selected >= 0) { if (await place(selected, sq)) { render(); checkPending(); } return; }
@@ -1258,8 +1719,13 @@ document.addEventListener("keydown", (e) => {
   const k = e.key;
   if (reviewAt >= 0) {
     if (k === "ArrowLeft") { e.preventDefault(); enterReview(reviewAt - 1); }
-    if (k === "ArrowRight") { e.preventDefault(); enterReview(reviewAt + 1); }
-    if (k === "Escape") leaveReview();
+    else if (k === "ArrowRight") { e.preventDefault(); enterReview(reviewAt + 1); }
+    else if (k === "ArrowUp") { e.preventDefault(); jumpKey(-1); }
+    else if (k === "ArrowDown") { e.preventDefault(); jumpKey(1); }
+    else if (k === "Home") { e.preventDefault(); enterReview(0); }
+    else if (k === "End") { e.preventDefault(); enterReview(S.history.length); }
+    else if (k === "b" || k === "B") { const v = shownVerdict(); if (v && !v.same) togglePreview(v.best); }
+    else if (k === "Escape") { if (preview) setPreview(null); else leaveReview(); }
     return;
   }
   if (/^[a-z]$/i.test(k)) { e.preventDefault(); typeLetter(k); }
@@ -1309,7 +1775,7 @@ $("btn-pass").onclick = () => {
 };
 $("btn-new").onclick = () => openStart();
 $("btn-end-new").onclick = () => { $("end").hidden = true; openStart(); };
-$("btn-review").onclick = () => { $("end").hidden = true; enterReview(S.history.length); };
+$("btn-review").onclick = () => { $("end").hidden = true; enterReview(S.history.length, { analyse: true }); };
 $("btn-rematch").onclick = () => {
   $("end").hidden = true;
   if (G.mode !== "duo") settings.first = G.human === 0 ? "second" : "first";
@@ -1467,6 +1933,8 @@ async function withLoading(lex, fn) {
 }
 function resetView() {
   S = null; shownBoard = null; rack = []; pending = new Map(); order = []; last = new Set(); reviewAt = -1;
+  rvBoards = null; preview = null; analysing = null; rvFresh = null;
+  $("evalbar").hidden = true;
   cursor = null; selected = -1; exchanging = false; xsel = new Set(); busy = false; concealed = false; beeped = {};
   $("review").hidden = true;
   $("banner").hidden = true;
@@ -1500,7 +1968,7 @@ async function openSaved(g, review) {
     if (!st) return;
     S = null;
     showState(st, null);
-    if (G.over || review) { $("start").hidden = true; await enterReview(S.history.length); return; }
+    if (G.over || review) { $("start").hidden = true; await enterReview(S.history.length, { analyse: G.over || G.mode === "review" }); return; }
     // A restored game starts paused; time while the page was closed is not charged.
     if (G.clockMin) { G.paused = true; G.pauseNote = "restored"; G.since = 0; }
     $("banner").hidden = true;
@@ -1547,12 +2015,13 @@ $("file-in").onchange = async (e) => {
     if (!r.ok) throw new Error("this record could not be read: " + r.error);
     G.human = 0;
     showState(r.state, null);
-    await enterReview(r.state.history.length);
+    await enterReview(r.state.history.length, { analyse: true });
   });
 };
 $("btn-start").onclick = startGame;
 
 buildBoard();
+if (typeof ResizeObserver === "function") new ResizeObserver(() => boardEl.style.setProperty("--sqw", squares[0].offsetWidth + "px")).observe(boardEl);
 openStart();
 render();
 // The engine starts compiling at once, and the word list chosen last time (or one that

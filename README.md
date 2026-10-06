@@ -70,9 +70,15 @@ British English in Oxford spelling) and a clock:
 
 Click a square and type, drag tiles, or tap a tile and then a square; Enter plays. Clocks are
 total time per player: 5, 10, 15 or 25 minutes or your own figure, with the NASPA overtime
-penalty (rules of 1 December 2016) or loss on time. After a game, review it move by move:
-Tilefish judges each move with only what its player could see, shows the alternatives, and
-lets you try a position again with the same tiles to come. Games save themselves in the
+penalty (rules of 1 December 2016) or loss on time. While Tilefish thinks you can already set
+out your next word. After a game, the **game review** works like a chess site's: Tilefish
+judges every move with only what its player could see and classes it (brilliant, great, best,
+excellent, good, inaccuracy, mistake, blunder) by the winning chance it gave up, draws the
+better move on the board where it should have gone (with its coordinate and direction), says
+why in Scrabble terms (a missed bingo, points, the tiles kept), and shows each player's
+accuracy, a graph of the winning chances and a bar beside the board. Point at any
+alternative to see it on the board, jump between key moves, or retry a position with the
+same tiles to come. Games save themselves in the
 browser and resume after a reload, and they export as GCG or as a Tilefish file. The
 browser version thinks on one core; the download below uses every core and has the full
 command-line analysis. Which word lists are used, and on what terms: [LEXICONS.md](LEXICONS.md).

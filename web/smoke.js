@@ -73,6 +73,13 @@ Tilefish().then((m) => {
     const last = s.history[s.history.length - 1];
     check(last.total === (last.who === "you" ? s.you : s.bot), "the last total matches the score");
     check(!ui("move pass").ok && !ui("bot").ok, "no moves after the end");
+    // The game review's verdicts: the move's own estimate, the scores and the alternatives,
+    // in the simulated middle game and in the solved endgame alike.
+    for (const n of [0, s.history.length - 1]) {
+      const v = ui("review " + n + " 0.2");
+      check(v.ok && typeof v.bestScore === "number" && typeof v.playedScore === "number" && v.alts.length > 0 && typeof v.playedWin === "number",
+        "review of move " + (n + 1) + " has the played move's estimate and alternatives: " + JSON.stringify(v).slice(0, 300));
+    }
     console.log("game " + (g + 1) + ": " + s.you + "-" + s.bot + " in " + turns + " turns; hint methods: " + [...phases].join(", "));
     // Take-back and replay: the exact move record rebuilds the identical game (the seed fixes
     // every draw), and taking two moves back then replaying them changes nothing.
