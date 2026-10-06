@@ -1345,6 +1345,7 @@ function renderReviewPanel() {
   if (det) det.ontoggle = () => { classesOpen = det.open; };
   box.querySelectorAll("[data-jump]").forEach((b) => (b.onclick = () => jumpToClass(b.dataset.jump, +b.dataset.side)));
 }
+const possessive = (side) => (sideName(side) === "You" ? "Your" : sideName(side) + "'s");
 function coachHtml(v, k) {
   const cls = classify(v), info = CLASS_INFO[cls], side = moverOf(k);
   const lines = [];
@@ -1375,9 +1376,9 @@ function coachHtml(v, k) {
     const best = num(v.playedValue) != null ? v.playedValue + (+v.valueLoss || 0) : null;
     chance = "Endgame, solved: best play gains " + sgn(best) + " from here" + (v.same ? "." : ", this move " + sgn(v.playedValue) + ".");
   } else if (v.same) {
-    chance = sideName(side) + "'s winning chance: " + pct(v.bestWin) + ".";
+    chance = possessive(side) + " winning chance: " + pct(v.bestWin) + ".";
   } else {
-    chance = sideName(side) + "'s winning chance: " + pct(v.bestWin) + " with the best move, " + pct(playedWin(v)) + " after this one" +
+    chance = possessive(side) + " winning chance: " + pct(v.bestWin) + " with the best move, " + pct(playedWin(v)) + " after this one" +
       (+v.valueLoss >= 0.5 ? " (" + (+v.valueLoss).toFixed(1) + " points of value)" : "") + ".";
   }
   let html = '<div class="coach ' + cls + '"><div class="coach-head">' + badge(cls, "lg") + "<div><b>" + esc(moveLabel(v.played)) + "</b> is " + info.say +
@@ -1479,7 +1480,7 @@ function summaryHtml() {
     html += '<tr title="' + esc(CLASS_INFO[c].tip) + '">';
     stats.forEach((s, i) => {
       const n = s.counts[c] || 0;
-      const cell = '<td class="cnt ' + (i ? "r" : "l") + '">' + (n ? '<button class="link" data-jump="' + c + '" data-side="' + s.side + '" title="Show ' + esc(sideName(s.side)) + "'s " + esc(CLASS_INFO[c].name.toLowerCase()) + ' moves">' + n + "</button>" : '<span class="zero">0</span>') + "</td>";
+      const cell = '<td class="cnt ' + (i ? "r" : "l") + '">' + (n ? '<button class="link" data-jump="' + c + '" data-side="' + s.side + '" title="Show ' + esc(possessive(s.side)) + " " + esc(CLASS_INFO[c].name.toLowerCase()) + ' moves">' + n + "</button>" : '<span class="zero">0</span>') + "</td>";
       if (i === 0) html += cell + '<td class="cname">' + badge(c, "sm") + " " + CLASS_INFO[c].name + "</td>";
       else html += cell;
     });
