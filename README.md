@@ -18,9 +18,11 @@ which Woogles calls the best crossword-game engine it knows of. On one core at 1
 seconds a move, Tilefish won 57.1% of 760 CSW24 games against MAGPIE's full search, and
 68.5% of 100 NWL23 games. Against Macondo with BestBot's settings at 20 seconds a move
 it is level on wins: 49.9% of 400 games and then 52.3% of 400 more on fresh deals, neither
-different from 50% (an earlier 55.0% of 100 games did not reproduce). With four threads each at
-5 seconds a move it won 51.5% of 200 games against MAGPIE, averaging +16.7 points a
-game. What that does and does not prove is set out in
+different from 50% (an earlier 55.0% of 100 games did not reproduce). At a tournament-like
+budget, **four threads each and 60 seconds a move**, it is again level within the interval
+against Macondo with BestBot's settings: 48.6% of 832 games (95% interval 45.8% to 51.4%),
++3.2 points a game. With four threads each at 5 seconds a move it won 51.5% of 200 games
+against MAGPIE, averaging +16.7 points a game. What that does and does not prove is set out in
 [How strong is it?](#how-strong-is-it).
 
 **Fresh matches against pinned current versions** (October 2026, CSW24, one thread each,
@@ -49,7 +51,9 @@ Two more ideas then failed their 20 s screens: a 4-ply second look at the three 
 inferring the opponent's rack from the game's history. A replay study (5 October) found why
 more time adds little: the middle-game choice is settled within a second or two of one core,
 and neither more samples nor more candidates change it, so the time beyond that needs a
-different use. Everything, including the failures, is in
+different use. The registered 60 s, four-thread match (6 October, 416 deal pairs) then came
+out level within its interval, 48.6% (45.8% to 51.4%), with Tilefish's lead in points gone
+(+3.2, −2.2 to +8.7). Everything, including the failures, is in
 [experiments/](experiments/README.md#4-why-level-on-wins-but-ahead-on-points-against-macondo-at-20-s-registered-4-october-2026-before-any-game).
 
 ## Quick start
@@ -531,11 +535,11 @@ What this shows, and what it does not:
   54.1% ± 4.2 over 400 games (+8.1 ± 8.1 points a game), at the edge of significance.
   More simulation should count for more with longer thinking time.
 * **It does not prove Tilefish is the strongest engine at tournament length.**
-  Nothing here went beyond 20 core-seconds a move, and the lead in wins shrinks as
-  thinking time grows: about 57% at 1–10 s on one core, 54–55% at 20 s against MAGPIE
-  and BestBot's settings, 51.5% with four threads at 5 s. At a minute or more a move,
-  where tournament broadcasts would run, either engine could be ahead. The tools to
-  settle it are in `tools/`; it needs hundreds of games at that length.
+  The lead in wins shrinks as thinking time grows: about 57% at 1–10 s on one core,
+  54–55% at 20 s against MAGPIE, 51.5% with four threads at 5 s, and level against
+  BestBot's settings at 20 s. At four threads and 60 s a move against BestBot's settings
+  (416 deal pairs, October 2026) Tilefish scored 48.6% (45.8% to 51.4%): level within
+  the interval, neither ahead nor behind. MAGPIE has not been measured at that budget.
 
 ### Against Macondo (Woogles' BestBot)
 
@@ -565,7 +569,11 @@ is not.
   engine match at equal time and hardware measures.
 * **BestBot's own budget is larger.** In production it divides its clock by the turns
   it expects to have left, up to three minutes a move, on a cloud function with three
-  to four cores. That was not tested here.
+  to four cores. The closest test so far: four threads each at 60 s a move (416 deal
+  pairs, October 2026), where Tilefish scored 48.6% (45.8% to 51.4%), level within the
+  interval ([experiments/](experiments/README.md), section 9). With these settings
+  Macondo's own stopping rule ends each simulation after about 20 s on four threads, so
+  a longer budget changes only Tilefish.
 * **Two changes let it run in parallel matches.** Its endgame hash table was cut from
   20% to 4% of memory, as for MAGPIE. Its endgame and pre-endgame solvers use the
   thread count they are given instead of every core of the machine.
@@ -639,14 +647,14 @@ Here is where Tilefish stands on each requirement:
 | Standard formats | GCG game records (read, write, review), CGP positions, KLV/KLV2 leave files. |
 | Machine interface for broadcasts and GUIs | `--quiet` mode with one-line JSON analyses (win %, spread, every candidate). |
 | Post-game analysis | `review`: every move vs the engine, with win % lost and a win-probability timeline. |
-| Proven playing strength | **Partly.** Against MAGPIE: 57.1% ± 3.1 on one core at 1–20 s a move (760 CSW24 games), 68.5% ± 8.9 on NWL23 (100 games), 51.5% ± 6.4 with four threads each at 5 s a move (200 games). Against Macondo with BestBot's settings at 20 s a move: level on wins, 49.9% of 400 games and 52.3% of 400 more (October 2026; an earlier 55.0% of 100 games did not reproduce). Not yet measured at tournament length. |
+| Proven playing strength | **Partly.** Against MAGPIE: 57.1% ± 3.1 on one core at 1–20 s a move (760 CSW24 games), 68.5% ± 8.9 on NWL23 (100 games), 51.5% ± 6.4 with four threads each at 5 s a move (200 games). Against Macondo with BestBot's settings at 20 s a move: level on wins, 49.9% of 400 games and 52.3% of 400 more (October 2026; an earlier 55.0% of 100 games did not reproduce). With four threads each at 60 s a move: level within the interval, 48.6% (45.8% to 51.4%) of 832 games. |
 
 The last row is the whole job. The plan, in order of expected payoff:
 
-1. **Measure at tournament length.** Up to 20 core-seconds a move has been tried
-   (above), and the lead in wins narrows as thinking time grows. Next: a minute or more
-   a move over hundreds of game pairs, against MAGPIE and BestBot's settings. The lead
-   has to survive there before any "strongest" claim. Deeper simulations (BestBot uses
+1. **Measure at tournament length.** Against BestBot's settings this is done: at four
+   threads and 60 s a move, 416 deal pairs, Tilefish is level within the interval
+   (48.6%, 45.8% to 51.4%), so no "strongest" claim follows. Against MAGPIE it is not
+   yet measured at that length. Deeper simulations (BestBot uses
    5 plies, Tilefish 2) are the first thing to try at that length.
 2. **Pre-endgame.** Measured against MAGPIE from 7 tiles in the bag, Tilefish already
    gains 15 points a game at 1 s a move. With one tile in the bag it values every

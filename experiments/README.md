@@ -885,13 +885,75 @@ entirely below, otherwise "level within the interval". Nothing beyond this oppon
 configuration, CSW24 and this budget follows; no claim of the strongest engine follows from
 one match.
 
-**Status (5 October 2026): incomplete, being completed.** The run played 408 of the 416
-registered pairs: 51 of its 52 jobs finished, and job 36 (pairs 288–295) lost its runner three
-hours into play and uploaded nothing. Under the rule above, 408 pairs are not a result (the
-record under "Results recorded automatically" says so). Only that job is being re-run ("Re-run
-failed jobs" replays the same deals with the same builds); `report.yml` now pools every job's
-log itself and records a run again when its log changes, so the completed run is recorded
-with the rule's verdict when it finishes.
+### Results of section 9 (6 October 2026): level within the interval
+
+All 416 registered deal pairs were played (832 games; run 37208427774, job 36 completed by
+its re-run with the same deals and builds; log `tournament-60s-4t.jsonl.gz`; record under
+"Results recorded automatically"; `tools/analyze.py --bootstrap 10000`). The referee rejected
+four of Macondo's moves in two games (one misplaced word, and the same phony offered three
+times in one endgame), each counted as a pass; Macondo won both games. There were no crashes
+and no slow moves.
+
+| 416 deal pairs, CSW24, 60 s a move, 4 threads each | Value |
+|---|---|
+| Tilefish's wins, draws, losses | 404, 1, 427 |
+| **Tilefish's score (95%, bootstrap over pairs)** | **48.62% (45.79% to 51.44%)** |
+| Elo difference (95%) | −10 (−29 to +10) |
+| Spread a game (95%) | +3.2 (−2.2 to +8.7) |
+| Time a move, mean (max) | Tilefish 53.27 s (60.42 s); Macondo 20.00 s (58.59 s) |
+
+**Verdict under the rule registered above: level within the interval** at this budget. The
+interval contains 50%, so neither "ahead" nor "behind" may be claimed. Nothing beyond this
+opponent, this configuration, CSW24 and this budget follows, and no claim of the strongest
+engine follows. The point estimate is a little below 50%, and the spread lead seen at 20 s
+(+21.8 points a game in `fresh-9200`) is not there at this budget. As section 5's pilot
+predicted, Macondo's settings ended their simulations by their own stopping rule (20 s of the
+60 s on average), so they played at full strength, while Tilefish used most of the minute.
+This describes how each engine spends the budget; it does not adjust the score.
+
+**Descriptive analyses registered in section 11** (`tools/latebias.py`, 95% intervals by
+bootstrap over deal pairs; they do not bear on the verdict).
+
+`decided --by either` (a game is decided at the first decision where either engine's estimate,
+read as Tilefish's chance, is 1% or less or 99% or more):
+
+| 832 games, 60 s, 4 threads | Value | At 20 s (section 11, 800 games) |
+|---|---|---|
+| Tilefish's mean final margin | +3.2 (−2.4 to +8.8) | +17.8 |
+| ...the margin when the game was decided (the final margin if never) | +3.7 (−0.6 to +8.3) | +10.2 |
+| ...points gained after the game was decided | −0.5 (−3.5 to +2.2) | +7.6 |
+| Decided for Tilefish: games, its score, points it gained afterwards | 271, 99.6%, +22.0 a game | 257, 99.2%, +45.0 |
+| Decided against Tilefish: games, its score, points it gained afterwards | 274, 0.2%, −23.3 a game | 245, 1.2%, −22.4 |
+| Not decided while tiles remained: games, Tilefish's score, margin | 287, 46.7%, −0.3 a game | 298, 50.3%, +2.9 |
+
+At 60 s the points added after a game is settled are symmetric (+22.0 and −23.3 a game), so
+the 20 s pattern in which Tilefish piled up more points once a game was won does not appear
+here. Tilefish's share of the decisive games by final margin: 54.8% at 1–10 (62 games), 44.4%
+at 11–25 (108), 42.1% at 26–50 (126), 44.9% at 51–100 (256), 55.2% above 100 (279).
+
+`convert` (the lead when the bag first holds 7 or fewer; Macondo's conversion minus
+Tilefish's, points): lead 1–40, Tilefish 68.0% (103), Macondo 78.2% (124), +10.3 (−1.5 to
++22.0); lead 41–100, 91.6% (178) and 95.2% (155), +3.6 (−1.6 to +8.7); lead above 100, both
+100%. Macondo converts more in both lower bands, as in both 20 s matches (section 11), and
+again no interval excludes zero.
+
+`calib` (own estimate 0.1–0.9, estimate minus result, points):
+
+| Estimate minus result | Late (2–7 in the bag) | Middle game (8 or more) |
+|---|---|---|
+| Tilefish | +16.0 (+10.7 to +20.9), 210 decisions | +3.8 (+1.0 to +6.8), 6,168 |
+| Macondo, the same games | +17.2 (+11.9 to +22.8), 224 | +0.6 (−2.4 to +3.4), 6,026 |
+
+As at 20 s, both engines' late estimates run high by similar amounts, and each side on move
+rates its position better than the other side does: after a late Tilefish move its estimate
+plus Macondo's next one exceeds 1 by 21.4 points (16.6 to 26.3; 78), after a late Macondo
+move by 21.8 (18.0 to 25.8; 161).
+
+**What this changes.** At four threads and 60 s a move, Tilefish is level with Macondo using
+BestBot's settings within an interval of about ±2.8 percentage points, as it is at 20 s on one
+core. The README's "not yet measured at tournament length" is replaced by this result. What
+section 13 found (the middle-game choice settles early, so the extra time needs a different
+use) is consistent with the advantage in points shrinking as the budget grows.
 
 ## 10. Deeper simulation of the finalists in the middle game (registered 4 October 2026, before any game)
 
