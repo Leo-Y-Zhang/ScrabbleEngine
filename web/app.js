@@ -8,7 +8,8 @@
 const N = 15;
 const COLS = "ABCDEFGHIJKLMNO";
 const VALUES = { A: 1, B: 3, C: 3, D: 2, E: 1, F: 4, G: 2, H: 4, I: 1, J: 8, K: 5, L: 1, M: 3, N: 1, O: 1, P: 3, Q: 10, R: 1, S: 1, T: 1, U: 1, V: 4, W: 4, X: 8, Y: 4, Z: 10 };
-const LEVEL_TIME = { casual: 0, strong: 3, champion: 10 };
+const LEVEL_TIME = { beginner: 0, easy: 0, casual: 0, strong: 3, champion: 10 };
+const WEAK = new Set(["beginner", "easy"]);  // levels that choose among the static best moves in the page
 const LEX_NAME = { CSW24: "Collins 2024", NWL23: "NWL 2023", ENABLE: "ENABLE", OXENDICT: "Oxford spelling" };
 const BUNDLED = new Set(["ENABLE", "OXENDICT"]);  // free lists that come with the page
 const NOTES = {
@@ -16,7 +17,9 @@ const NOTES = {
   NWL23: "The North American tournament list. About 8 MB, downloaded once and kept by this browser.",
   ENABLE: "A free public-domain list that comes with Tilefish.",
   OXENDICT: "British English in Oxford spelling (realize, colour), a free list that comes with Tilefish. Built from the English Speller Database: not the Oxford English Dictionary's own list.",
-  casual: "Plays at once, from its evaluation of each move, with exact endgames.",
+  beginner: "Plays short, everyday words, scores modestly and rarely bingos: a gentle game for learning.",
+  easy: "A friendly club player: sound moves, the odd bingo, and now and then a slip.",
+  casual: "Plays at once, from its evaluation of each move, with exact endgames. Already strong.",
   strong: "Simulates its best candidates for up to 3 seconds a move.",
   champion: "Its full search, up to 10 seconds a move.",
   play: "A game against Tilefish with no help. Your clock keeps running if you switch tabs.",
@@ -59,7 +62,7 @@ const settings = {
   mode: store.get("mode", "play"), level: store.get("level", "strong"), lexicon: store.get("lexicon", "CSW24"),
   clock: store.get("clock", "0"), customMin: store.get("customMin", "20"), first: store.get("first", "first"),
   overtime: store.get("overtime", "naspa"), think: store.get("think", ""), theme: store.get("theme", "system"),
-  sound: store.get("sound", "0"),
+  sound: store.get("sound", "0"), sfx: store.get("sfx", "0"), rate: store.get("rate", "1"),
 };
 function applyTheme() {
   if (settings.theme === "system") delete document.documentElement.dataset.theme;
@@ -191,14 +194,16 @@ function viewSeat(state) {
   if (G.mode === "duo") return state ? state.turn : 0;
   return G.human;
 }
-const humanTurn = () => S && !S.over && !G.over && reviewAt < 0 && (G.mode === "duo" || S.turn === G.human);
+const humanTurn = () => S && !S.over && !G.over && reviewAt < 0 && !puzzleDone() && (G.mode === "duo" || S.turn === G.human);
 // Tiles can be set out while Tilefish thinks, as a plan for your next move; they are
 // checked, and can be played, once its move is on the board.
-const canArrange = () => S && !S.over && !G.over && reviewAt < 0 && !concealed && (G.mode === "duo" ? humanTurn() : true);
+const canArrange = () => !!exploring || (S && !S.over && !G.over && reviewAt < 0 && !concealed && !puzzleDone() && (G.mode === "duo" ? humanTurn() : true));
+const puzzleDone = () => G && G.mode === "puzzle" && G.puzzle && (G.puzzle.solved || G.puzzle.revealed);
 const assistAllowed = () => G && (G.mode === "practice" || G.mode === "analysis");
 function sideName(side) {
   if (!G) return "";
   if (G.mode === "duo" || G.mode === "review") return "Player " + (side + 1);
+  if (G.mode === "puzzle") return side === G.human ? "You" : "Opponent";
   return side === G.human ? "You" : "Tilefish";
 }
 function sideScore(side) {
@@ -234,15 +239,15 @@ function clockMinutes() {
 }
 function describe(g) {
   const parts = [];
-  parts.push({ play: "Play", practice: "Practice", duo: "Two players", analysis: "Analysis", review: "Review" }[g.mode] || g.mode);
-  if (g.mode !== "duo" && g.mode !== "review") parts.push(capital(g.level));
+  parts.push({ play: "Play", practice: "Practice", duo: "Two players", analysis: "Analysis", review: "Review", puzzle: g.puzzle && g.puzzle.daily ? "Daily puzzle" : "Puzzle" }[g.mode] || g.mode);
+  if (g.mode !== "duo" && g.mode !== "review" && g.mode !== "puzzle") parts.push(capital(g.level));
   parts.push(LEX_NAME[g.lexicon] || g.lexicon);
-  if (g.mode !== "review" && g.mode !== "analysis")
+  if (g.mode !== "review" && g.mode !== "analysis" && g.mode !== "puzzle")
     parts.push(g.clockMin ? g.clockMin + " min each, " + (g.overtime === "naspa" ? "overtime penalty" : "lose on time") : "untimed");
   return parts.join(" · ");
 }
 function save() {
-  if (!G || G.mode === "review") return;
+  if (!G || G.mode === "review" || G.mode === "puzzle") return;
   if (G.over) store.del("current"); else store.put("current", snapshotForSave());
 }
 function snapshotForSave() {
@@ -315,6 +320,77 @@ function tickClocks() {
   }
 }
 const humanSide = (side) => G.mode === "duo" || side === G.human;
+// Sound effects, made on the spot with Web Audio (no files): a wooden click for a tile,
+// a rattle for a shuffle, clicks in step with the opponent's tiles dropping, a rising
+// figure for a bingo.  Vibration on phones goes with them.  All off unless chosen.
+const sfx = (() => {
+  let ctx = null, noise = null;
+  const on = () => settings.sfx === "1";
+  const ac = () => {
+    try {
+      ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === "suspended") ctx.resume();
+      return ctx;
+    } catch (e) { return null; }
+  };
+  const buzz = (p) => { try { if (navigator.vibrate) navigator.vibrate(p); } catch (e) { /* */ } };
+  function click(c, at, freq, vol) {
+    if (!noise) {
+      noise = c.createBuffer(1, Math.floor(c.sampleRate * 0.05), c.sampleRate);
+      const d = noise.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 4);
+    }
+    const src = c.createBufferSource(), bp = c.createBiquadFilter(), g = c.createGain();
+    src.buffer = noise;
+    bp.type = "bandpass"; bp.frequency.value = freq; bp.Q.value = 3.5;
+    g.gain.setValueAtTime(vol, at);
+    g.gain.exponentialRampToValueAtTime(0.0008, at + 0.045);
+    src.connect(bp).connect(g).connect(c.destination);
+    src.start(at);
+    const o = c.createOscillator(), g2 = c.createGain();
+    o.frequency.setValueAtTime(freq / 7, at);
+    o.frequency.exponentialRampToValueAtTime(freq / 14, at + 0.05);
+    g2.gain.setValueAtTime(vol * 0.5, at);
+    g2.gain.exponentialRampToValueAtTime(0.0008, at + 0.06);
+    o.connect(g2).connect(c.destination);
+    o.start(at);
+    o.stop(at + 0.07);
+  }
+  function tone(c, at, freq, vol, len, type) {
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type || "sine";
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0008, at);
+    g.gain.exponentialRampToValueAtTime(vol, at + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0008, at + len);
+    o.connect(g).connect(c.destination);
+    o.start(at);
+    o.stop(at + len + 0.02);
+  }
+  const run = (fn) => { if (!on()) return; const c = ac(); if (c) fn(c, c.currentTime + 0.005); };
+  return {
+    place() { run((c, t) => click(c, t, 1900, 0.32)); if (on()) buzz(6); },
+    lift() { run((c, t) => click(c, t, 1400, 0.16)); },
+    shuffle() { run((c, t) => { for (let i = 0; i < 6; i++) click(c, t + i * 0.028, 1500 + 300 * Math.random(), 0.12); }); },
+    play(n, bingo) {
+      run((c, t) => {
+        for (let i = 0; i < Math.max(1, n); i++) click(c, t + i * 0.05, 1700 + 120 * (i % 3), 0.26);
+        if (bingo) [523.3, 659.3, 784, 1046.5].forEach((f, i) => tone(c, t + 0.18 + i * 0.09, f, 0.09, 0.32));
+      });
+      if (on()) buzz(bingo ? [12, 40, 12, 40, 24] : 12);
+    },
+    opp(n, bingo) {
+      run((c, t) => {
+        for (let i = 0; i < Math.max(1, n); i++) click(c, t + 0.02 + i * 0.03, 1300 + 140 * (i % 2), 0.2);
+        if (bingo) [392, 493.9, 587.3].forEach((f, i) => tone(c, t + 0.2 + i * 0.09, f, 0.07, 0.3));
+      });
+      if (on()) buzz([8, 30, 8]);
+    },
+    bad() { run((c, t) => tone(c, t, 150, 0.08, 0.16, "triangle")); if (on()) buzz(30); },
+    good() { run((c, t) => [659.3, 784, 1046.5].forEach((f, i) => tone(c, t + i * 0.08, f, 0.08, 0.3))); },
+    end(won) { run((c, t) => (won ? [523.3, 659.3, 784, 1046.5] : [440, 523.3, 659.3]).forEach((f, i) => tone(c, t + i * 0.11, f, 0.08, 0.6))); },
+  };
+})();
 let audioCtx = null;
 function beep() {
   try {
@@ -373,7 +449,8 @@ const occupied = (s) => filled(s) || pending.has(s);
 function renderBoard(fresh) {
   if (!fresh && rvFresh && reviewAt >= 0) fresh = rvFresh;
   rvFresh = null;
-  const marks = reviewAt >= 0 ? reviewMarks() : null;
+  const marks = reviewAt >= 0 ? reviewMarks() : liveMarks();
+  const bad = badSquares();
   for (let s = 0; s < N * N; s++) {
     const d = squares[s];
     d.textContent = "";
@@ -381,12 +458,13 @@ function renderBoard(fresh) {
     d.classList.toggle("down", !!cursor && cursor.down);
     d.classList.toggle("lastsq", last.has(s) && filled(s) && !(marks && preview));
     d.classList.toggle("mine", lastMine);
+    d.classList.toggle("badword", !!bad && bad.has(s));
     if (filled(s)) {
       let cls = last.has(s) ? "last" + (lastMine ? " mine" : "") : "";
       if (fresh && fresh.has(s)) cls += " fresh";
       d.appendChild(tileEl(at(s), cls));
     } else if (pending.has(s)) {
-      d.appendChild(tileEl(pending.get(s).ch, "pending"));
+      d.appendChild(tileEl(pending.get(s).ch, "pending" + (s === justPlaced ? " popin" : "")));
     } else if (PREMIUM[s]) {
       const l = document.createElement("span");
       l.className = "lbl";
@@ -395,12 +473,14 @@ function renderBoard(fresh) {
     }
   }
   drawReviewMarks(marks);
+  justPlaced = -1;
+  if (zoomed && cursor) keepVisible(cursor.sq);
 }
 function renderRack() {
   rackEl.textContent = "";
   rackEl.classList.toggle("concealed", concealed);
-  rackEl.classList.toggle("review", reviewAt >= 0);
-  if (reviewAt >= 0) {
+  rackEl.classList.toggle("review", reviewAt >= 0 && !exploring);
+  if (reviewAt >= 0 && !exploring) {
     const v = shownVerdict(), left = v ? v.rack.split("") : [];
     const spent = tilesOf(preview ? preview.move : v ? v.played : "").split("");
     for (let i = 0; i < Math.max(7, left.length); i++) {
@@ -424,6 +504,7 @@ function renderRack() {
     if (i === selected) t.classList.add("sel");
     if (xsel.has(i)) t.classList.add("xsel");
     t.dataset.slot = i;
+    t.dataset.id = r.id;
     rackEl.appendChild(t);
   }
 }
@@ -432,7 +513,17 @@ function renderSide() {
   for (let c = 0; c < 2; c++) {
     const side = cardSide(c);
     $("name-" + c).textContent = sideName(side);
-    $("pts-" + c).textContent = G.result ? G.result.final[side] : sideScore(side);
+    // A score that went up bumps, with the points gained floating beside it.
+    const ptsEl = $("pts-" + c), val = G.result ? G.result.final[side] : sideScore(side), was = +ptsEl.textContent;
+    if (reviewAt < 0 && ptsEl.dataset.game === G.id && val > was) {
+      ptsEl.classList.remove("bump");
+      ptsEl.removeAttribute("data-gain");
+      void ptsEl.offsetWidth;
+      ptsEl.classList.add("bump");
+      ptsEl.dataset.gain = "+" + (val - was);
+    } else if (ptsEl.dataset.game !== G.id) ptsEl.removeAttribute("data-gain");
+    ptsEl.dataset.game = G.id;
+    ptsEl.textContent = val;
     $("card-" + c).classList.toggle("turn", !S.over && !G.over && S.turn === side && reviewAt < 0);
     $("clock-" + c).hidden = !G.clockMin;
   }
@@ -475,6 +566,10 @@ function renderSide() {
   if (reviewAt < 0) log.scrollTop = log.scrollHeight;
   const counts = {};
   for (const ch of S.unseen) counts[ch] = (counts[ch] || 0) + 1;
+  const tr = tracker(counts);
+  $("unseen-notes").innerHTML = '<div class="tr-sum"><span><b>' + tr.vowels + "</b> vowels</span><span><b>" + tr.cons + "</b> consonants</span>" +
+    (tr.blanks ? "<span><b>" + tr.blanks + "</b> blank" + (tr.blanks > 1 ? "s" : "") + "</span>" : "") + "</div>" +
+    (tr.notes.length ? '<ul class="tr-notes">' + tr.notes.map((n) => "<li>" + esc(n) + "</li>").join("") + "</ul>" : "");
   const un = $("unseen");
   un.textContent = "";
   for (const ch of Object.keys(counts).sort()) {
@@ -483,15 +578,36 @@ function renderSide() {
     if (counts[ch] > 1) { const n = document.createElement("span"); n.className = "n"; n.textContent = counts[ch]; sp.appendChild(n); }
     un.appendChild(sp);
   }
-  $("unseen-count").textContent = S.unseen.length;
+  $("unseen-count").textContent = S.unseen.length + " · " + tr.vowels + " vowels";
   renderExports();
+}
+// What the unseen tiles (the bag and the opponent's rack) mean for your next moves.
+function tracker(counts) {
+  const n = (ch) => counts[ch] || 0, total = S.unseen.length;
+  const vowels = "AEIOU".split("").reduce((a, ch) => a + n(ch), 0), blanks = n("?"), cons = total - vowels - blanks;
+  const mine = reviewAt < 0 ? rack.map((r) => r.ch) : [];
+  const opp = G.mode === "duo" ? sideName(1 - S.seat) : G.mode === "puzzle" ? "the opponent" : "Tilefish";
+  const notes = [];
+  if (mine.includes("Q") && !n("U") && !mine.includes("U")) notes.push("You hold the Q and no U is left to draw.");
+  else if (n("Q") && !n("U")) notes.push("The Q is still out and every U is gone.");
+  if (n("S") === 1) notes.push("One S left."); else if (!n("S") && total > 7) notes.push("No S left.");
+  if (blanks === 2) notes.push("Both blanks are still out.");
+  const power = ["J", "Q", "X", "Z"].filter((ch) => n(ch));
+  if (power.length) notes.push(power.join(", ") + (power.length > 1 ? " are" : " is") + " still out.");
+  const ratio = total - blanks ? vowels / (total - blanks) : 0;
+  if (total >= 14 && ratio > 0.5) notes.push("A vowel-heavy pool: keep consonants.");
+  else if (total >= 14 && ratio < 0.3) notes.push("Few vowels left: keep one or two.");
+  if (S.bag === 0 && total) notes.push(capital(opp) + " holds exactly these tiles.");
+  else if (S.bag > 0 && S.bag <= 7) notes.push(S.bag + " in the bag; the other " + (total - S.bag) + " are on " + opp + "'s rack.");
+  return { vowels, cons, blanks, notes };
 }
 function renderControls() {
   const mine = humanTurn() && !busy && !concealed;
-  const reviewing = reviewAt >= 0;
+  const reviewing = reviewAt >= 0 && !exploring;
   $("controls").hidden = reviewing;
-  $("review-nav").hidden = !reviewing;
-  $("btn-shuffle").disabled = !S || reviewing;
+  $("controls").classList.toggle("exploring", !!exploring);
+  $("review-nav").hidden = reviewAt < 0 || !!exploring;
+  $("btn-shuffle").disabled = $("btn-sort").disabled = !S || reviewing;
   $("btn-recall").disabled = !canArrange() || concealed || !pending.size;
   $("btn-exchange").disabled = !mine || S.bag < 7;
   $("btn-exchange").textContent = exchanging ? "Cancel" : "Exchange";
@@ -499,7 +615,12 @@ function renderControls() {
   $("btn-hint").hidden = !assistAllowed();
   $("btn-hint").disabled = !mine || exchanging;
   const play = $("btn-play");
-  if (exchanging) {
+  if (exploring) {
+    const mv = buildMove();
+    const ready = checked && checked.ok && mv && checked.text === mv.text && !exploring.judging;
+    play.textContent = exploring.judging ? "Judging" : ready ? "Judge " + checked.score : "Judge";
+    play.disabled = !ready;
+  } else if (exchanging) {
     play.textContent = xsel.size ? "Exchange " + xsel.size : "Exchange";
     play.disabled = !mine || !xsel.size;
   } else {
@@ -508,13 +629,13 @@ function renderControls() {
     play.textContent = ready ? "Play " + checked.score : "Play";
     play.disabled = !ready;
   }
-  const live = G && !G.over && !reviewing && G.mode !== "review";
+  const live = G && !G.over && reviewAt < 0 && G.mode !== "review" && G.mode !== "puzzle";
   $("secondary").hidden = !live;
   $("btn-takeback").hidden = !assistAllowed();
   $("btn-takeback").disabled = !G || !G.record.some((e) => humanSide(e.side));
   $("btn-pause").hidden = !(assistAllowed() && G && G.clockMin);
   $("btn-pause").textContent = G && G.paused ? "Resume clock" : "Pause clock";
-  $("btn-resign").hidden = !G || G.mode === "analysis";
+  $("btn-resign").hidden = !G || G.mode === "analysis" || G.mode === "puzzle";
   if (reviewing && S) {
     $("rv-pos").textContent = reviewAt === 0 ? "Start" : "After move " + reviewAt + " of " + S.history.length;
     $("rv-prev").disabled = $("rv-first").disabled = reviewAt === 0;
@@ -528,19 +649,95 @@ function setStatus(html, cls) {
 }
 function statusForTurn() {
   if (!S || !G) return setStatus("&nbsp;");
+  if (exploring) return setStatus(pending.size ? pendingStatus() : "Set out a move from the rack; <b>Judge</b> (Enter) rates it.");
   if (reviewAt >= 0) return setStatus(reviewStatus());
+  if (puzzleDone()) return setStatus(G.puzzle.solved ? "Solved." : "The answer is on the board.");
   if (G.over) return setStatus("Game over.");
-  if (busy) return setStatus(G.mode === "duo" ? "Working" : "Tilefish is thinking", "thinking");
+  if (busy) {
+    const bd = pending.size && !analysing ? breakdown() : null;
+    return setStatus((bd ? wordChips(bd, null) + ' <span class="dim">·</span> ' : "") + (G.mode === "duo" ? "Working" : analysing ? "Analysing" : "Tilefish is thinking"), "thinking");
+  }
   if (G.paused) return setStatus("The clock is paused.");
   if (!humanTurn()) return setStatus("&nbsp;");
   if (exchanging) return setStatus("Pick the tiles to put back in the bag.");
   const who = G.mode === "duo" ? sideName(S.turn) + " to move." : "Your move.";
-  if (!pending.size) return setStatus(who + lastMoveNote());
+  if (!pending.size) return setStatus(who + (G.mode === "puzzle" ? ' <span class="dim">Find the best move.</span>' : lastMoveNote()));
+  setStatus(pendingStatus());
+}
+function pendingStatus() {
   const mv = buildMove();
-  if (mv && mv.error) return setStatus('<span class="bad">' + esc(mv.error) + "</span>");
-  if (!checked || !mv || checked.text !== mv.text) return setStatus("&nbsp;");
-  if (checked.ok) return setStatus("<b>" + esc(pretty(mv.text)) + "</b> scores " + checked.score + ".");
-  setStatus('<span class="bad">' + esc(capital(checked.error)) + "</span>");
+  if (mv && mv.error) return '<span class="bad">' + esc(mv.error) + "</span>";
+  const bd = breakdown();
+  if (!checked || !mv || checked.text !== mv.text) return bd ? wordChips(bd, null) : "&nbsp;";
+  if (checked.words && checked.words.length && bd && (checked.ok || /lexicon/.test(checked.error || ""))) return wordChips(bd, checked);
+  if (checked.ok) return "<b>" + esc(pretty(mv.text)) + "</b> scores " + checked.score + ".";
+  return '<span class="bad">' + esc(capital(checked.error)) + "</span>";
+}
+// The words a move forms, each with its points and the bonus squares it uses, worked out
+// here from the board (the engine's own total is the one shown when the two differ).
+function breakdown() {
+  const mv = buildMove();
+  if (!mv || mv.error) return null;
+  const p = parsePlay(mv.text);
+  if (!p) return null;
+  const letterAt = (sq) => (pending.has(sq) ? pending.get(sq).ch : at(sq));
+  const line = (sq, down) => {
+    const step = down ? N : 1;
+    const ok = (s2, prev) => s2 >= 0 && s2 < N * N && (down || Math.floor(s2 / N) === Math.floor(prev / N));
+    let a = sq;
+    while (ok(a - step, a) && occupied(a - step)) a -= step;
+    const out = [];
+    for (let z = a; ; z += step) { out.push(z); if (!(ok(z + step, z) && occupied(z + step))) break; }
+    return out;
+  };
+  const scoreWord = (sqs) => {
+    let sum = 0, wm = 1;
+    const tags = [];
+    for (const sq of sqs) {
+      const ch = letterAt(sq);
+      let v = ch === ch.toLowerCase() ? 0 : VALUES[ch] || 0;
+      if (pending.has(sq)) {
+        const pm = PREMIUM[sq];
+        if (pm === "dl") { v *= 2; tags.push("2L"); } else if (pm === "tl") { v *= 3; tags.push("3L"); }
+        else if (pm === "dw" || pm === "star") { wm *= 2; tags.push("2W"); } else if (pm === "tw") { wm *= 3; tags.push("3W"); }
+      }
+      sum += v;
+    }
+    return { word: sqs.map(letterAt).join("").toUpperCase(), score: sum * wm, tags, sqs };
+  };
+  const fresh = p.cells.filter((c) => c.fresh).map((c) => c.sq);
+  if (!fresh.length) return null;
+  const words = [];
+  const main = line(fresh[0], p.down);
+  if (main.length >= 2) words.push(scoreWord(main));
+  for (const sq of fresh) { const cw = line(sq, !p.down); if (cw.length >= 2) words.push(scoreWord(cw)); }
+  const bingo = fresh.length === 7 ? 50 : 0;
+  return { words, bingo, total: words.reduce((a, w) => a + w.score, 0) + bingo };
+}
+function wordValidity(bd, chk) {
+  if (!chk || !chk.words) return bd.words.map(() => null);
+  if (chk.words.length === bd.words.length) return chk.words.map((w) => w.ok);
+  return bd.words.map((w) => { const m = chk.words.find((x) => x.word === w.word); return m ? m.ok : null; });
+}
+function wordChips(bd, chk) {
+  const valid = wordValidity(bd, chk);
+  const chips = bd.words.map((w, i) => '<span class="wchip' + (valid[i] === false ? " bad" : valid[i] ? " ok" : "") + '" title="' +
+    esc(w.tags.length ? w.tags.join(" ") : "no bonus squares") + '">' + (valid[i] === false ? "✗ " : "") + esc(w.word) + " <b>" + w.score + "</b>" +
+    (w.tags.length ? '<span class="wtags">' + w.tags.join(" ") + "</span>" : "") + "</span>");
+  if (bd.bingo) chips.push('<span class="wchip bingo">Bingo <b>+50</b></span>');
+  const total = chk && chk.ok ? chk.score : bd.total;
+  const bad = valid.some((v) => v === false);
+  return '<span class="wchips">' + chips.join("") + (bd.words.length > 1 || bd.bingo ? '<span class="wsum">= ' + total + "</span>" : "") + "</span>" +
+    (bad ? ' <span class="bad">not in ' + esc(LEX_NAME[G.lexicon] || G.lexicon) + "</span>" : "");
+}
+// Squares of the words the engine rejected, outlined in red on the board.
+function badSquares() {
+  if (!checked || !checked.words || reviewAt >= 0 && !exploring) return null;
+  const bd = breakdown(), mv = buildMove();
+  if (!bd || !mv || checked.text !== mv.text) return null;
+  const valid = wordValidity(bd, checked), out = new Set();
+  bd.words.forEach((w, i) => { if (valid[i] === false) w.sqs.forEach((q) => out.add(q)); });
+  return out.size ? out : null;
 }
 // The opponent's last move, in words, under the board until you start your own.
 function lastMoveNote() {
@@ -552,6 +749,7 @@ function lastMoveNote() {
 }
 let toastTimer = 0;
 function toast(text, ok) {
+  if (!ok) sfx.bad();
   const t = $("toast");
   t.textContent = text;
   t.className = "toast show" + (ok ? " ok" : "");
@@ -598,12 +796,13 @@ function buildMove() {
 async function checkPending() {
   const mv = buildMove();
   checked = null;
-  if (!mv || mv.error || !humanTurn() || busy) { renderControls(); statusForTurn(); return; }
+  if (!mv || mv.error || (!exploring && (!humanTurn() || busy))) { renderBoard(); renderControls(); statusForTurn(); return; }
   const seq = ++checkSeq, my = epoch;
   let r;
-  try { r = await ui("check " + mv.text); } catch (e) { return; }
+  try { r = await ui(exploring ? "judge " + exploring.k + " " + mv.text + " 0" : "check " + mv.text); } catch (e) { return; }
   if (seq !== checkSeq || my !== epoch) return;
-  checked = { text: mv.text, ok: r.ok, score: r.score, error: r.error };
+  checked = { text: mv.text, ok: r.ok, score: r.score, error: r.error, words: r.words };
+  renderBoard();
   renderControls();
   statusForTurn();
 }
@@ -646,11 +845,15 @@ async function place(slot, sq, letter) {
   pending.set(sq, { ch, slot });
   order.push(sq);
   selected = -1;
+  justPlaced = sq;
+  sfx.place();
   return true;
 }
+let justPlaced = -1;  // the square of the tile just put down (it pops in)
 function unplace(sq) {
   const p = pending.get(sq);
   if (!p) return;
+  sfx.lift();
   rack[p.slot].used = false;
   pending.delete(sq);
   order = order.filter((s) => s !== sq);
@@ -691,10 +894,11 @@ function backspace() {
 }
 
 // ---------- turns ----------
+let tileIds = 0;
 function rackFrom(state, keep) {
   const left = state.rack.split(""), out = [];
-  for (const r of keep) { const i = left.indexOf(r.ch); if (i >= 0) { out.push({ ch: r.ch, used: false }); left.splice(i, 1); } }
-  for (const ch of left) out.push({ ch, used: false });
+  for (const r of keep) { const i = left.indexOf(r.ch); if (i >= 0) { out.push({ ch: r.ch, used: false, id: r.id || ++tileIds }); left.splice(i, 1); } }
+  for (const ch of left) out.push({ ch, used: false, id: ++tileIds });
   return out;
 }
 function showState(state, mover) {
@@ -707,7 +911,7 @@ function showState(state, mover) {
   const kept = sameView ? rack.filter((r, i) => r && (plan.length || !r.used) && !xsel.has(i)) : [];
   S = state;
   shownBoard = state.board;
-  rack = rackFrom(state, kept.map((r) => ({ ch: r.ch })));
+  rack = rackFrom(state, kept.map((r) => ({ ch: r.ch, id: r.id })));
   pending = new Map();
   order = [];
   for (const [sq, p] of plan) {
@@ -737,10 +941,14 @@ async function committed(state, mover) {
   G.record.push({ move: moveText, side: mover, used: used.slice() });
   if (!state.over) startClock(state.turn); else stopClocks();
   showState(state, mover);
+  const lastH = S.history[S.history.length - 1];
+  if (lastH && G.mode !== "duo" && !humanSide(mover)) sfx.opp(lastH.tiles, lastH.tiles === 7);
+  else if (lastH) sfx.play(lastH.tiles, lastH.tiles === 7);
   save();
   if (state.over) finishGame("out");
 }
 async function submit() {
+  if (exploring) return judgeTry();
   if (!humanTurn() || busy) return;
   let text;
   if (exchanging) {
@@ -763,7 +971,9 @@ async function playMove(text) {
   if (my !== epoch) return;
   if (!r.ok) { toast(capital(r.error)); render(); return; }
   hidePanels();
+  $("rating").hidden = true;
   await committed(r.state, mover);
+  if (G.mode === "puzzle") return puzzleCheck();
   nextTurn();
 }
 function nextTurn() {
@@ -778,6 +988,7 @@ function botSpec() {
     t = Math.max(0.5, Math.min(t || 1, left / 12));
   }
   if (G.level === "casual" && !G.think) return "static+";
+  if (WEAK.has(G.level)) return "static+";
   return (G.level === "champion" ? "champion" : "sim") + ":time=" + (+t).toFixed(1);
 }
 async function botTurn() {
@@ -786,7 +997,7 @@ async function botTurn() {
   busy = true;
   render();
   let r;
-  try { r = await ui("bot " + botSpec()); } catch (e) { if (my === epoch) { busy = false; engineFailed(e.message); } return; }
+  try { r = WEAK.has(G.level) ? await weakTurn() : await ui("bot " + botSpec()); } catch (e) { if (my === epoch) { busy = false; engineFailed(e.message); } return; }
   if (my !== epoch || G.over) return;  // a stale answer: the game moved on without it
   busy = false;
   if (!r.ok) { toast(capital(r.error)); render(); return; }
@@ -794,6 +1005,41 @@ async function botTurn() {
   const h = S.history[S.history.length - 1];
   if (h) toast(h.type === "play" ? "Tilefish played " + pretty(h.move) + " for " + h.score
     : h.type === "exchange" ? "Tilefish exchanged " + h.move.replace(/^exch\s*/i, "") + " tiles" : "Tilefish passed", true);
+  rateLastMove();
+}
+// The easier levels: a move chosen in the page among the static best, then played with
+// `ui force`.  Beginner aims at about half the best score with short words and seldom
+// bingos; Easy picks near the top, slipping now and then.  A short pause, so the move
+// does not land the instant yours does.
+const wordLen = (m) => { const p = parsePlay(m.move); return p ? p.cells.length : 0; };
+function pickWeak(moves, level) {
+  const plays = moves.filter((m) => !isExch(m.move) && !isPass(m.move));
+  if (!plays.length) return moves.length ? moves[0].move : "pass";
+  const best = Math.max(...plays.map((m) => m.score));
+  const rnd = Math.random;
+  if (level === "beginner") {
+    const bingo = plays.find((m) => m.tiles === 7);
+    if (bingo && S.history.length > 6 && rnd() < 0.04) return bingo.move;
+    let pool = plays.filter((m) => m.tiles < 7 && wordLen(m) <= 6);
+    if (!pool.length) pool = plays;
+    const target = best * (0.3 + 0.3 * rnd());
+    pool.sort((a, b) => Math.abs(a.score - target) - Math.abs(b.score - target));
+    return pool[Math.floor(rnd() * Math.min(6, pool.length))].move;
+  }
+  if (plays[0].tiles === 7 && rnd() < 0.55) return plays[0].move;
+  const pool = plays.filter((m) => m.tiles < 7 || rnd() < 0.3).slice(0, 24);
+  let i = 0;
+  while (i < pool.length - 1 && rnd() < 0.42) i++;
+  return (pool[i] || plays[0]).move;
+}
+async function weakTurn() {
+  const t0 = Date.now();
+  const list = await ui("moves 160");
+  if (!list.ok) return list;
+  const mv = pickWeak(list.moves, G.level);
+  const wait = 650 + Math.random() * 700 - (Date.now() - t0);
+  if (wait > 0) await new Promise((res) => setTimeout(res, wait));
+  return ui("force " + mv);
 }
 function handover() {
   concealed = true;
@@ -831,7 +1077,9 @@ function finishGame(reason, loser) {
   if (reason === "time" || reason === "resign") winner = 1 - loser;
   G.over = true;
   G.result = { final, winner, reason, penalties: pen, endedAt: new Date().toISOString() };
+  setTimeout(() => sfx.end(G.mode === "duo" ? winner >= 0 : winner === G.human), 450);
   archive();
+  recordStats();
   store.del("current");
   render();
   showEnd();
@@ -862,9 +1110,20 @@ function archive() {
 }
 
 // ---------- hints ----------
-function hidePanels() { $("hints").hidden = true; }
+function hidePanels() { $("hints").hidden = true; if (hintState) hintState.shown = false; }
+// Hints come in steps, as a coach would give them: a nudge (a bingo? how many tiles, what
+// score?), then where the move goes, then the moves themselves.
+let hintState = null;  // {h, step, at, shown}
 async function hint(secs) {
-  if (!humanTurn() || busy || !assistAllowed()) return;
+  if (!humanTurn() || !assistAllowed()) return;
+  if (hintState && hintState.at === S.history.length && !secs) {
+    if (!hintState.shown) hintState.shown = true;
+    else if (hintState.step < 3) hintState.step++;
+    renderHint();
+    return;
+  }
+  if (busy) return;
+  secs = secs || 1.5;
   const my = epoch;
   busy = true;
   G.assisted = true;
@@ -876,40 +1135,102 @@ async function hint(secs) {
   try { r = await ui("hint " + secs); } catch (e) { return; }
   if (my !== epoch) return;
   busy = false;
+  if (!r.ok) { render(); toast(capital(r.error)); return; }
+  const deeper = hintState && hintState.at === S.history.length;
+  hintState = { h: r.hint, step: deeper ? 3 : 1, at: S.history.length, shown: true };
   render();
-  if (!r.ok) { toast(capital(r.error)); return; }
-  const h = r.hint, box = $("hints");
-  box.textContent = "";
-  const head = document.createElement("div");
-  head.className = "panel-head";
-  head.innerHTML = "<span>Best found</span><span class=\"dim\">" + esc(h.exact ? h.method + ", solved" : h.method + ", " + h.seconds + " s") + "</span>";
-  box.appendChild(head);
-  const top = h.moves[0] && isFinite(h.moves[0].win) ? h.moves[0].win : null;
-  for (const m of h.moves.slice(0, 5)) {
-    const b = document.createElement("button");
-    b.className = "hint-row";
-    const exch = /^exch/i.test(m.move), pass = /^pass/i.test(m.move);
-    const close = top != null && isFinite(m.win) && top - m.win < 0.01 && m !== h.moves[0];
-    const wp = isFinite(m.win) ? (close ? "≈ " : "") + pct(m.win) : "";
-    b.innerHTML = "<span>" + esc(pass ? "Pass" : exch ? "Exchange " + m.move.replace(/^exch\s*/i, "") : pretty(m.move)) + "</span><span class=\"sc\">" +
-      (m.score ? "+" + m.score : "") + "</span><span class=\"wp\">" + wp + "</span><span class=\"sub\">keeps " + esc(m.leave || "nothing") +
-      " · value " + (+m.value).toFixed(1) + (m.pruned ? " · dropped early" : "") + "</span>";
-    b.title = "Show this move on the board";
-    b.onclick = () => showHint(m.move);
-    box.appendChild(b);
+  renderHint();
+}
+function hintNudge(h) {
+  const best = h.moves[0];
+  if (!best) return "No move found.";
+  if (isPass(best.move)) return "Passing is best here.";
+  if (isExch(best.move)) return "Tilefish would exchange this turn rather than play: the rack needs fresh tiles.";
+  const n = tilesOf(best.move).length, plays = h.moves.filter((m) => !isExch(m.move) && !isPass(m.move));
+  const top = Math.max(...plays.map((m) => m.score));
+  if (n === 7) return "There is a bingo: all seven tiles, for " + best.score + " points.";
+  return "The best play uses " + n + " tile" + (n === 1 ? "" : "s") + " and scores " + best.score + "." +
+    (top - best.score >= 6 ? " It is not the highest-scoring move: what it keeps matters more." : "") +
+    (best.leave ? " It keeps " + best.leave.length + " tile" + (best.leave.length === 1 ? "" : "s") + "." : "");
+}
+function hintWhere(h) {
+  const best = h.moves[0];
+  const p = best && parsePlay(best.move);
+  if (!p) return "";
+  const sq = p.cells[0].sq, r = Math.floor(sq / N) + 1, c = COLS[sq % N];
+  return p.down ? "It goes down column " + c + ", starting on row " + r + " (" + p.coord + "), " + p.cells.length + " squares long."
+    : "It goes across row " + r + ", starting in column " + c + " (" + p.coord + "), " + p.cells.length + " squares long.";
+}
+function renderHint() {
+  const box = $("hints"), hs = hintState;
+  if (!hs) return;
+  const h = hs.h;
+  let html = '<div class="panel-head"><span>Hint <span class="dim">' + hs.step + " of 3</span></span><span class=\"dim\">" +
+    esc(h.exact ? h.method + ", solved" : h.method + ", " + h.seconds + " s") + "</span></div>";
+  html += '<div class="hint-steps"><p class="hint-step">' + esc(hintNudge(h)) + "</p>";
+  if (hs.step >= 2) html += '<p class="hint-step where">' + esc(hintWhere(h) || "It is not a play on the board.") + "</p>";
+  html += "</div>";
+  if (hs.step >= 3) {
+    const top = h.moves[0] && isFinite(h.moves[0].win) ? h.moves[0].win : null;
+    for (const m of h.moves.slice(0, 5)) {
+      const close = top != null && isFinite(m.win) && top - m.win < 0.01 && m !== h.moves[0];
+      const wp = isFinite(m.win) ? (close ? "≈ " : "") + pct(m.win) : "";
+      html += '<button class="hint-row" data-move="' + esc(m.move) + '" title="Put this move on the board"><span>' + esc(moveLabel(m.move)) + '</span><span class="sc">' +
+        (m.score ? "+" + m.score : "") + '</span><span class="wp">' + wp + '</span><span class="sub">keeps ' + esc(m.leave || "nothing") +
+        " · value " + (+m.value).toFixed(1) + (m.pruned ? " · dropped early" : "") + "</span></button>";
+    }
   }
-  const foot = document.createElement("div");
-  foot.className = "hint-foot";
-  foot.innerHTML = "<span>Win chances are estimates; ≈ marks moves within 1%.</span>";
-  if (!h.exact) {
-    const more = document.createElement("button");
-    more.className = "link strong";
-    more.textContent = "Analyse longer";
-    more.onclick = () => hint(8);
-    foot.appendChild(more);
-  }
-  box.appendChild(foot);
+  html += '<div class="hint-foot"><span>' + (hs.step >= 3 ? "Win chances are estimates; ≈ marks moves within 1%." : "Each step tells a little more.") + "</span>" +
+    (hs.step < 3 ? '<button class="ctl small" id="hint-more">' + (hs.step === 1 ? "Where?" : "Show the moves") + "</button>"
+      : !h.exact ? '<button class="link strong" id="hint-longer">Analyse longer</button>' : "") + "</div>";
+  box.innerHTML = html;
   box.hidden = false;
+  box.querySelectorAll("[data-move]").forEach((b) => (b.onclick = () => showHint(b.dataset.move)));
+  if ($("hint-more")) $("hint-more").onclick = () => { hs.step++; renderHint(); renderBoard(); };
+  if ($("hint-longer")) $("hint-longer").onclick = () => hint(8);
+  renderBoard();
+}
+// Marks on the live board: where the hinted move goes (from the second step).
+function liveMarks() {
+  const hs = hintState;
+  if (!hs || !hs.shown || hs.step < 2 || $("hints").hidden || !S || hs.at !== S.history.length || !humanTurn()) return null;
+  const p = hs.h.moves[0] && parsePlay(hs.h.moves[0].move);
+  if (!p) return null;
+  return { spans: [{ p, kind: "hint", tag: hs.step >= 3 ? p.coord : "" }], ghosts: new Map(), coords: [{ p, kind: "hint" }] };
+}
+
+// Practice: each of your moves is judged once Tilefish has answered it (so its own thinking
+// is not slowed), and the verdict appears beside the board with the better move a tap away.
+function rateLastMove() {
+  if (!G || G.mode !== "practice" || settings.rate === "0" || !S || G.over) return;
+  let k = S.history.length - 1;
+  while (k >= 0 && moverOf(k) !== G.human) k--;
+  if (k < 0 || verdictAt(k)) return;
+  const my = epoch, id = G.id;
+  ui("review " + k + " 0.6").then((r) => {
+    if (my !== epoch || !G || G.id !== id || !r.ok || G.record.length <= k) return;
+    G.verdicts = G.verdicts || {};
+    G.verdicts[k] = r;
+    save();
+    renderSide();
+    showRating(k);
+  }).catch(() => {});
+}
+function showRating(k) {
+  const v = verdictAt(k), box = $("rating");
+  if (!v || reviewAt >= 0) { box.hidden = true; return; }
+  const cls = classify(v), info = CLASS_INFO[cls];
+  let why = "";
+  if (v.same) why = cls === "best" ? "Tilefish's choice too." : info.tip;
+  else why = "Best was <b>" + esc(moveLabel(v.best)) + "</b>" + (v.bestScore ? " (+" + v.bestScore + ")" : "") +
+    (v.exact ? "." : ": " + pp(Math.max(0, v.bestWin - playedWin(v))) + " more winning chance.");
+  box.className = "panel rating " + cls;
+  box.innerHTML = '<div class="rating-row">' + badge(cls, "lg") + '<div class="rating-text"><div><b>' + esc(moveLabel(v.played)) + "</b> is " + info.say +
+    '</div><div class="rating-sub">' + why + '</div></div><button class="link rating-x" aria-label="Dismiss" title="Dismiss">×</button></div>' +
+    (v.same ? "" : '<div class="rating-acts"><button class="ctl small" id="rating-see">See it on the board</button></div>');
+  box.hidden = false;
+  box.querySelector(".rating-x").onclick = () => { box.hidden = true; };
+  if ($("rating-see")) $("rating-see").onclick = () => { box.hidden = true; enterReview(k + 1); };
 }
 async function showHint(text) {
   recall();
@@ -952,6 +1273,8 @@ async function takeback() {
   if (k < 0) return;
   G.assisted = true;
   G.record = G.record.slice(0, k);
+  for (const key of Object.keys(G.verdicts || {})) if (+key >= k) delete G.verdicts[key];
+  $("rating").hidden = true;
   const prev = G.record.length ? G.record[G.record.length - 1].used : [0, 0];
   G.used = prev.slice();
   hidePanels();
@@ -1099,6 +1422,7 @@ const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(Math.round(x));
 const pp = (x) => (100 * x).toFixed(Math.abs(x) < 0.1 ? 1 : 0) + "%";
 
 let rvBoards = null, rvKey = "";  // the board after each number of moves
+let exploring = null;             // trying your own move in a reviewed position: {k, result, judging}
 let preview = null;               // a move shown on the board in place of the one played: {move, pinned}
 let analysing = null;             // {done, total} while the analysis runs
 let classesOpen = true;
@@ -1130,6 +1454,7 @@ async function enterReview(n, opts) {
     if (!rvBoards) return;
   }
   const was = reviewAt;
+  if (exploring) { rack = exploring.saved; exploring = null; pending = new Map(); order = []; checked = null; }
   reviewAt = Math.max(0, Math.min(n, S.history.length));
   if (!(opts && opts.keepPreview)) preview = null;
   if (was < 0) { recall(); cursor = null; }
@@ -1151,6 +1476,7 @@ function showReviewBoard(was) {
 }
 let rvFresh = null;
 function leaveReview() {
+  if (exploring) { rack = exploring.saved; exploring = null; pending = new Map(); order = []; checked = null; }
   reviewAt = -1;
   preview = null;
   shownBoard = S.board;
@@ -1175,6 +1501,13 @@ function reviewable() { return G && (G.over || G.mode === "review" || assistAllo
 // (dashed, with its coordinate and an arrow for its direction).  A previewed move is shown
 // on the board before the move, in full.
 function reviewMarks() {
+  if (exploring) {
+    const r = exploring.result, b = r && !r.same && parsePlay(r.best);
+    if (!b) return null;
+    const marks = { spans: [{ p: b, kind: "best", tag: "Best " + b.coord }], ghosts: new Map(), coords: [{ p: b, kind: "best" }] };
+    for (const c of b.cells) if (c.fresh) marks.ghosts.set(c.sq, { ch: c.ch, faint: true });
+    return marks;
+  }
   if (reviewAt <= 0 || !rvBoards) return null;
   const v = shownVerdict(), cls = classify(v);
   const h = S.history[reviewAt - 1];
@@ -1209,7 +1542,7 @@ function drawReviewMarks(marks) {
   for (const el of document.querySelectorAll("#coords-top span, #coords-left span")) { el.className = ""; el.style.removeProperty("--c"); }
   if (!marks) return;
   for (const [sq, g] of marks.ghosts) {
-    if (filled(sq)) continue;
+    if (occupied(sq)) continue;
     squares[sq].textContent = "";
     squares[sq].appendChild(tileEl(g.ch, "suggest" + (g.faint ? " faint" : "")));
   }
@@ -1311,7 +1644,8 @@ function renderReviewPanel() {
   html += '<div class="review-body">';
   // the move on the board
   const k = reviewAt - 1, v = k >= 0 ? verdictAt(k) : null;
-  if (v) html += coachHtml(v, k);
+  if (exploring) html += exploreHtml();
+  else if (v) html += coachHtml(v, k);
   else if (k >= 0 && analysing) html += '<div class="coach pending">Judging this move…</div>';
   else if (k >= 0 && judged) html += '<div class="coach pending">This move was not judged' + (judgedSides().includes(moverOf(k)) ? "." : " (only your own moves are judged until the game is over).") + "</div>";
   // the analysis
@@ -1340,13 +1674,13 @@ function renderReviewPanel() {
     const r = graph.firstChild.getBoundingClientRect();
     enterReview(Math.round(((e.clientX - r.left) / r.width) * S.history.length));
   };
-  wireCoach(v, k);
+  if (exploring) wireExplore(); else wireCoach(v, k);
   const det = $("rv-classes");
   if (det) det.ontoggle = () => { classesOpen = det.open; };
   box.querySelectorAll("[data-jump]").forEach((b) => (b.onclick = () => jumpToClass(b.dataset.jump, +b.dataset.side)));
 }
 const possessive = (side) => (sideName(side) === "You" ? "Your" : sideName(side) + "'s");
-function coachHtml(v, k) {
+function coachHtml(v, k, opts) {
   const cls = classify(v), info = CLASS_INFO[cls], side = moverOf(k);
   const lines = [];
   const bs = v.bestScore || 0, ps = v.playedScore || 0;
@@ -1382,7 +1716,7 @@ function coachHtml(v, k) {
       (+v.valueLoss >= 0.5 ? " (" + (+v.valueLoss).toFixed(1) + " points of value)" : "") + ".";
   }
   let html = '<div class="coach ' + cls + '"><div class="coach-head">' + badge(cls, "lg") + "<div><b>" + esc(moveLabel(v.played)) + "</b> is " + info.say +
-    '<div class="coach-sub">' + esc(sideName(side)) + " · move " + (k + 1) + " · rack " + esc(v.rack.replace(/\?/g, "·")) + "</div></div></div>";
+    '<div class="coach-sub">' + (opts && opts.explore ? "your try" : esc(sideName(side)) + " · move " + (k + 1) + " · rack " + esc(v.rack.replace(/\?/g, "·"))) + "</div></div></div>";
   html += '<p class="coach-text">' + lines.join(" ") + '</p><p class="coach-chance">' + esc(chance) + "</p>";
   // the moves Tilefish considered, the one played among them
   const alts = (v.alts || []).slice(0, 5);
@@ -1399,8 +1733,10 @@ function coachHtml(v, k) {
       '<span class="sub">' + (played ? "played · " : "") + "keeps " + esc(leaveOf(v.rack, a.move).replace(/\?/g, "·") || "nothing") + "</span></button></li>";
   }
   html += "</ol>";
+  if (opts && opts.explore) return html + "</div>";
   html += '<div class="coach-acts">';
   if (!v.same) html += '<button class="ctl" id="rv-best" title="Show the best move on the board (B)">' + (preview && preview.move === v.best ? "Show played" : "Show best") + "</button>";
+  if (rvBoards) html += '<button class="ctl" id="rv-try" title="Set out your own move in this position and have it judged">Try a move</button>';
   if (reviewAt > 0 && reviewAt <= G.record.length && !G.gcg && !G.cgp) html += '<button class="ctl" id="rv-retry" title="Play from the position before this move, with the same tiles to come">Retry</button>';
   html += '<span class="ctl-gap"></span><span class="keynav"><button class="ctl" id="rv-kprev" title="Previous key move (↑)" aria-label="Previous key move">‹</button><span class="dim">Key</span><button class="ctl" id="rv-knext" title="Next key move (↓)" aria-label="Next key move">›</button></span></div>';
   return html + "</div>";
@@ -1409,6 +1745,7 @@ function wireCoach(v, k) {
   const box = $("review");
   if ($("rv-best")) $("rv-best").onclick = () => togglePreview(v.best);
   if ($("rv-retry")) $("rv-retry").onclick = () => tryAgain(reviewAt - 1);
+  if ($("rv-try")) $("rv-try").onclick = () => startExplore(k);
   if ($("rv-kprev")) { $("rv-kprev").onclick = () => jumpKey(-1); $("rv-kprev").disabled = keyMove(-1) < 0; }
   if ($("rv-knext")) { $("rv-knext").onclick = () => jumpKey(1); $("rv-knext").disabled = keyMove(1) < 0; }
   box.querySelectorAll("[data-alt]").forEach((b) => {
@@ -1418,6 +1755,59 @@ function wireCoach(v, k) {
     b.onpointerenter = (e) => { if (e.pointerType === "mouse" && !(preview && preview.pinned)) setPreview(mv === v.played ? null : { move: mv, pinned: false }); };
     b.onpointerleave = (e) => { if (e.pointerType === "mouse" && preview && !preview.pinned) setPreview(null); };
   });
+}
+// The analysis board: the position before a move, with the mover's rack, where any move
+// can be set out and judged as the review judges the one played (`ui judge`).
+function startExplore(k) {
+  const v = verdictAt(k);
+  if (!v || !rvBoards) return;
+  preview = null;
+  exploring = { k, result: null, judging: false, saved: rack };
+  shownBoard = rvBoards[k];
+  last = new Set();
+  rack = rackFrom({ rack: v.rack }, []);
+  pending = new Map(); order = []; checked = null; cursor = null; selected = -1; exchanging = false;
+  render();
+  renderReviewPanel();
+}
+function exitExplore() {
+  if (!exploring) return;
+  rack = exploring.saved;
+  exploring = null;
+  pending = new Map(); order = []; checked = null; cursor = null;
+  showReviewBoard(-1);
+  render();
+  renderReviewPanel();
+}
+async function judgeTry() {
+  const mv = buildMove();
+  if (!exploring || exploring.judging || !mv || mv.error || !checked || !checked.ok || checked.text !== mv.text) return;
+  const ex = exploring;
+  ex.judging = true;
+  renderControls();
+  renderReviewPanel();
+  let r;
+  try { r = await ui("judge " + ex.k + " " + mv.text + " " + Math.max(0.6, reviewSecs())); } catch (e) { ex.judging = false; return; }
+  ex.judging = false;
+  if (exploring !== ex) return;
+  ex.result = r.ok ? r : null;
+  if (!r.ok) toast(capital(r.error));
+  else if (KEY_CLASSES.has(classify(r)) && !["brilliant", "great"].includes(classify(r))) sfx.bad(); else sfx.good();
+  render();
+  renderReviewPanel();
+}
+function exploreHtml() {
+  const ex = exploring, v = verdictAt(ex.k);
+  let html = '<div class="coach explore"><div class="coach-head"><span class="explore-ico" aria-hidden="true">✎</span><div><b>Try a move</b>' +
+    '<div class="coach-sub">' + esc(sideName(moverOf(ex.k))) + "'s position before move " + (ex.k + 1) + " · rack " + esc(v.rack.replace(/\?/g, "·")) + "</div></div></div>";
+  if (ex.judging) html += '<p class="coach-text">Judging…</p>';
+  else if (!ex.result) html += '<p class="coach-text">Set out tiles from the rack below, then press <b>Judge</b> (or Enter). Played in the game: <b>' + esc(moveLabel(v.played)) + "</b> (" + CLASS_INFO[classify(v)].name.toLowerCase() + ").</p>";
+  html += '<div class="coach-acts"><button class="ctl" id="ex-back">Back to the review</button></div></div>';
+  if (ex.result) html += coachHtml(ex.result, ex.k, { explore: true });
+  return html;
+}
+function wireExplore() {
+  if ($("ex-back")) $("ex-back").onclick = exitExplore;
 }
 function setPreview(p) {
   if (reviewAt <= 0) return;
@@ -1512,7 +1902,7 @@ async function analyseGame(secs) {
   }
   analysing = null;
   busy = false;
-  if (G.over || G.mode === "review") archiveUpdate();
+  if (G.over || G.mode === "review") { archiveUpdate(); statsAccuracy(); }
   render();
   renderReviewPanel();
 }
@@ -1569,6 +1959,242 @@ window.addEventListener("resize", () => {
   rvResize = requestAnimationFrame(() => { if (reviewAt >= 0 && !$("review").hidden) { const g = $("rv-graph"); if (g) g.innerHTML = graphSvg(winSeries()); } });
 });
 
+// ---------- puzzles ----------
+// "Find the best move": a position from a game the static player plays against itself,
+// kept when its best move is worth finding (a bingo, or clearly better than the obvious
+// highest-scoring play).  The daily puzzle comes from the date, so everyone with the same
+// word list gets the same one.  Your move is judged as the review judges a move; within
+// 1% of the best counts as solved, and you get three tries.
+const dayKey = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+const daySeed = (key) => 4000000 + Math.round(Date.parse(key + "T00:00:00Z") / 86400000) * 8;
+const SOLVED = new Set(["brilliant", "great", "best", "excellent"]);
+function puzzleLog() { return store.json("puzzles", {}); }
+function puzzleStreak() {
+  const log = puzzleLog();
+  const solved = (d) => { const e = log[dayKey(d)]; return e && e.solved; };
+  const d = new Date();
+  if (!solved(d)) d.setDate(d.getDate() - 1);
+  let n = 0;
+  while (solved(d)) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+async function findPuzzle(base) {
+  let chosen = null;
+  for (let a = 0; a < 5; a++) {
+    const seed = base + a;
+    let r = await ui("new first " + seed);
+    const plies = 7 + (seed % 9);
+    for (let i = 0; i < plies && r.ok && !r.state.over; i++) {
+      await ui("seat " + (1 - r.state.turn));  // `bot` moves for the side not seated
+      r = await ui("bot static");
+    }
+    if (!r.ok || r.state.over || r.state.bag < 8) continue;
+    const turn = r.state.turn;
+    await ui("seat " + turn);
+    const moves = (await ui("record")).moves;
+    const h = await ui("hint 1.2");
+    if (!h.ok || !h.hint.moves.length) continue;
+    const ms = h.hint.moves, best = ms[0];
+    const plays = ms.filter((m) => !isExch(m.move) && !isPass(m.move));
+    const topScore = plays.length ? Math.max(...plays.map((m) => m.score)) : 0;
+    const isPlay = !isExch(best.move) && !isPass(best.move);
+    const good = isPlay && (tilesOf(best.move).length === 7 || (ms[1] && best.win - ms[1].win >= 0.03) || topScore - best.score >= 8);
+    if (isPlay || !chosen) chosen = { seed, moves, turn, hint: h.hint };
+    if (good) break;
+  }
+  return chosen;
+}
+async function openPuzzle(daily) {
+  const lex = settings.lexicon, key = daily ? dayKey(new Date()) : null;
+  const base = daily ? daySeed(key) : 1000 + Math.floor(Math.random() * 2 ** 29) * 8;
+  G = { id: Date.now().toString(36), version: 1, mode: "puzzle", lexicon: lex, level: "strong", clockMin: 0, overtime: "naspa", think: "", seed: 0,
+    firstSide: 0, human: 0, record: [], used: [0, 0], running: -1, since: 0, paused: false, pauseNote: "", assisted: false, over: false, result: null,
+    startedAt: new Date().toISOString(), verdicts: {}, puzzle: { daily: key, tries: 0, solved: false, revealed: false, answer: null, alts: [], last: null } };
+  resetView();
+  if (loadedLex !== lex) openStart();
+  $("puzzle").hidden = false;
+  $("puzzle").innerHTML = '<div class="panel-head"><span>' + (daily ? "Daily puzzle" : "Puzzle") + '</span></div><div class="puzzle-body"><p class="dim">Setting up the position…</p></div>';
+  await withLoading(lex, async () => {
+    if (busy) await restartEngine();
+    epoch++;
+    const my = epoch;
+    busy = true;
+    setStatus("Setting up the puzzle", "thinking");
+    const pz = await findPuzzle(base);
+    busy = false;
+    if (my !== epoch) return;
+    if (!pz) throw new Error("no puzzle could be set up; try again");
+    G.seed = pz.seed;
+    G.human = pz.turn;
+    G.record = pz.moves.map((m, i) => ({ move: m, side: i % 2, used: [0, 0] }));
+    G.puzzle.answer = pz.hint.moves[0].move;
+    G.puzzle.alts = pz.hint.moves.slice(0, 5);
+    const st = (await ui("state")).state;
+    S = null;
+    showState(st, null);
+    cursor = null;
+    render();
+    renderPuzzle();
+  });
+}
+async function puzzleCheck() {
+  const k = G.record.length - 1, pz = G.puzzle, my = epoch;
+  busy = true;
+  render();
+  setStatus("Judging your move", "thinking");
+  let r;
+  try { r = await ui("review " + k + " 1.5"); } catch (e) { return; }
+  busy = false;
+  if (my !== epoch || G.mode !== "puzzle") return;
+  pz.tries++;
+  pz.last = r.ok ? r : null;
+  const cls = r.ok ? classify(r) : null;
+  if (cls && SOLVED.has(cls)) {
+    pz.solved = true;
+    sfx.good();
+    logPuzzle();
+    render();
+  } else {
+    sfx.bad();
+    await ui("undo");
+    G.record.pop();
+    const st = (await ui("state")).state;
+    S = null;
+    showState(st, null);
+    if (pz.tries >= 3) { pz.revealed = true; logPuzzle(); await showAnswer(); }
+  }
+  renderPuzzle();
+}
+async function showAnswer() {
+  const pz = G.puzzle;
+  pz.revealed = true;
+  logPuzzle();
+  recall();
+  const was = pz.solved;
+  pz.solved = false;   // let the answer's tiles go down
+  pz.revealed = false;
+  await showHint(pz.last && !pz.last.same ? pz.last.best : pz.answer);
+  pz.solved = was;
+  pz.revealed = true;
+  render();
+  renderPuzzle();
+}
+function logPuzzle() {
+  const pz = G.puzzle;
+  const log = puzzleLog(), key = pz.daily || "free:" + G.id;
+  const prev = log[key] || {};
+  log[key] = { solved: prev.solved || pz.solved, tries: pz.tries, revealed: !pz.solved && pz.revealed, lex: G.lexicon, at: new Date().toISOString() };
+  store.put("puzzles", log);
+}
+function renderPuzzle() {
+  const box = $("puzzle"), pz = G && G.puzzle;
+  if (!pz) { box.hidden = true; return; }
+  box.hidden = false;
+  const streak = puzzleStreak();
+  let html = '<div class="panel-head"><span>' + (pz.daily ? "Daily puzzle · " + new Date(pz.daily + "T12:00:00").toLocaleDateString([], { day: "numeric", month: "long" }) : "Puzzle") +
+    "</span>" + (streak ? '<span class="streak" title="Daily puzzles solved in a row">' + streak + " day streak</span>" : "") + "</div><div class=\"puzzle-body\">";
+  if (pz.solved) {
+    const v = pz.last, cls = classify(v);
+    html += '<div class="pz-result ok">' + badge(cls, "lg") + "<div><b>Solved" + (pz.tries > 1 ? " in " + pz.tries + " tries" : " first time") + ".</b> " +
+      esc(moveLabel(v.played)) + " is " + CLASS_INFO[cls].say + (v.same ? ": Tilefish's choice too." : ", within 1% of " + esc(moveLabel(v.best)) + ".") + "</div></div>";
+  } else if (pz.revealed) {
+    html += '<div class="pz-result">' + "<div><b>The answer:</b> " + esc(moveLabel(pz.last && !pz.last.same ? pz.last.best : pz.answer)) + ", shown on the board.</div></div>";
+  } else {
+    html += '<p class="pz-task">Find the best move for your rack. Your move is judged by the winning chance it keeps; within 1% of the best solves it.</p>';
+    if (pz.last) {
+      const v = pz.last, cls = classify(v);
+      html += '<div class="pz-result no">' + badge(cls, "lg") + "<div><b>Not quite.</b> " + esc(moveLabel(v.played)) + " is " + CLASS_INFO[cls].say +
+        " (" + pp(Math.max(0, v.winLoss)) + " less winning chance). " + (isBingo(v.best) && !isBingo(v.played) ? "Look for a bingo." :
+          (v.bestScore || 0) > (v.playedScore || 0) ? "The best move scores more." : "Think about what you keep.") + "</div></div>";
+    }
+    html += '<div class="pz-tries">' + [0, 1, 2].map((i) => '<span class="' + (i < pz.tries ? "used" : "") + '"></span>').join("") + "<em>" + (3 - pz.tries) + " tr" + (3 - pz.tries === 1 ? "y" : "ies") + " left</em></div>";
+  }
+  if ((pz.solved || pz.revealed) && pz.alts.length) {
+    html += '<ol class="alts2 pz-alts">' + pz.alts.slice(0, 4).map((a, i) => '<li><button data-pzmove="' + esc(a.move) + '">' + badge(i ? STEP_CLASSES[stepOf(Math.max(0, pz.alts[0].win - a.win), WIN_STEPS)] : "best", "sm") +
+      '<span class="mv">' + esc(moveLabel(a.move)) + '</span><span class="sc">' + (a.score ? "+" + a.score : "") + '</span><span class="wp">' + (isFinite(a.win) ? pct(a.win) : "") + "</span></button></li>").join("") + "</ol>";
+  }
+  html += '<div class="coach-acts">' + (!pz.solved && !pz.revealed && pz.tries ? '<button class="ctl" id="pz-answer">Show the answer</button>' : "") +
+    '<span class="ctl-gap"></span><button class="ctl primary" id="pz-next">' + (pz.solved || pz.revealed ? "Next puzzle" : "Skip") + "</button></div></div>";
+  box.innerHTML = html;
+  if ($("pz-answer")) $("pz-answer").onclick = showAnswer;
+  $("pz-next").onclick = () => openPuzzle(false);
+  box.querySelectorAll("[data-pzmove]").forEach((b) => (b.onclick = async () => {
+    if (!puzzleDone()) return;
+    const was = [pz.solved, pz.revealed];
+    if (pz.solved) return;  // the move stays as played
+    pz.revealed = false;
+    recall();
+    await showHint(b.dataset.pzmove);
+    [pz.solved, pz.revealed] = was;
+    render();
+  }));
+}
+
+// ---------- stats ----------
+// Every finished game against Tilefish is noted (score, result, bingos, best move), with
+// your accuracy once the game has been reviewed, and shown with the puzzles under Games.
+function recordStats() {
+  if (!G || (G.mode !== "play" && G.mode !== "practice") || !G.result) return;
+  const me = G.human, R = G.result;
+  const mine = S.history.filter((h) => (h.who === "you" ? S.seat : 1 - S.seat) === me);
+  const top = mine.reduce((a, h) => (h.type === "play" && (!a || h.score > a.score) ? h : a), null);
+  const list = store.json("stats", []);
+  list.push({ id: G.id, d: R.endedAt, mode: G.mode, level: G.level, lex: G.lexicon, me: R.final[me], opp: R.final[1 - me],
+    r: R.winner < 0 ? 0.5 : R.winner === me ? 1 : 0, bingos: mine.filter((h) => h.tiles === 7).length, n: mine.length,
+    best: top ? { move: top.move, score: top.score } : null, acc: null, assisted: !!G.assisted });
+  store.put("stats", list.slice(-500));
+}
+function statsAccuracy() {
+  if (!G || (G.mode !== "play" && G.mode !== "practice")) return;
+  const vs = S.history.map((h, k) => k).filter((k) => moverOf(k) === G.human).map(verdictAt).filter(Boolean);
+  if (!vs.length) return;
+  const list = store.json("stats", []), e = list.find((x) => x.id === G.id);
+  if (!e) return;
+  e.acc = vs.reduce((a, v) => a + accuracyOf(v), 0) / vs.length;
+  store.put("stats", list);
+}
+function renderStats() {
+  const list = store.json("stats", []), box = $("stats-view");
+  const log = puzzleLog(), pz = Object.values(log);
+  if (!list.length && !pz.length) { box.innerHTML = '<p class="dim">Finish a game against Tilefish, or solve a puzzle, and your stats appear here.</p>'; return; }
+  const n = list.length, wins = list.reduce((a, g) => a + g.r, 0);
+  const avg = (f) => (n ? list.reduce((a, g) => a + f(g), 0) / n : 0);
+  const tile = (v, l) => '<div class="stat"><span class="stat-n">' + v + '</span><span class="stat-l">' + l + "</span></div>";
+  let html = '<div class="stat-row">' + tile(n, "games") + tile(n ? Math.round((100 * wins) / n) + "%" : "–", "won") + tile(n ? Math.round(avg((g) => g.me)) : "–", "average score") +
+    tile(n ? avg((g) => g.bingos).toFixed(1) : "–", "bingos a game") + "</div>";
+  const levels = ["beginner", "easy", "casual", "strong", "champion"].filter((l) => list.some((g) => g.level === l));
+  if (levels.length) {
+    html += '<table class="stat-table"><thead><tr><th>Against</th><th>Won</th><th>Lost</th><th>Drawn</th><th>Average</th></tr></thead><tbody>';
+    for (const l of levels) {
+      const gs = list.filter((g) => g.level === l);
+      html += "<tr><td>" + capital(l) + "</td><td>" + gs.filter((g) => g.r === 1).length + "</td><td>" + gs.filter((g) => g.r === 0).length + "</td><td>" +
+        gs.filter((g) => g.r === 0.5).length + "</td><td>" + Math.round(gs.reduce((a, g) => a + g.me, 0) / gs.length) + "–" + Math.round(gs.reduce((a, g) => a + g.opp, 0) / gs.length) + "</td></tr>";
+    }
+    html += "</tbody></table>";
+  }
+  const acc = list.filter((g) => g.acc != null).slice(-20);
+  if (acc.length) {
+    const W = 560, H = 56, xs = (i) => (acc.length > 1 ? (i / (acc.length - 1)) * (W - 8) + 4 : W / 2), ys = (a) => H - 4 - ((a - 40) / 60) * (H - 8);
+    const pts = acc.map((g, i) => xs(i).toFixed(1) + "," + ys(Math.max(40, g.acc)).toFixed(1)).join(" ");
+    html += '<div class="stat-acc"><div class="stat-acc-head"><span>Accuracy, last ' + acc.length + ' reviewed games</span><b>' + (acc.reduce((a, g) => a + g.acc, 0) / acc.length).toFixed(1) +
+      '</b></div><svg viewBox="0 0 ' + W + " " + H + '" class="spark" role="img" aria-label="Accuracy over recent games"><polyline points="' + pts + '"/>' +
+      acc.map((g, i) => '<circle cx="' + xs(i).toFixed(1) + '" cy="' + ys(Math.max(40, g.acc)).toFixed(1) + '" r="2.6"><title>' + g.acc.toFixed(1) + "</title></circle>").join("") + "</svg></div>";
+  }
+  const bestGame = list.reduce((a, g) => (!a || g.me > a.me ? g : a), null), bestMove = list.reduce((a, g) => (g.best && (!a || g.best.score > a.score) ? g.best : a), null);
+  if (bestGame) html += '<p class="stat-line">Highest score <b>' + bestGame.me + "</b>" + (bestMove ? " · best move <b>" + esc(pretty(bestMove.move)) + "</b> for " + bestMove.score : "") + "</p>";
+  if (pz.length) {
+    const solved = pz.filter((e) => e.solved).length;
+    html += '<p class="stat-line">Puzzles solved <b>' + solved + "</b> of " + pz.length + " · daily streak <b>" + puzzleStreak() + "</b></p>";
+  }
+  html += '<button class="link" id="stats-reset">Clear stats</button>';
+  box.innerHTML = html;
+  let armed = false;
+  $("stats-reset").onclick = () => {
+    if (!armed) { armed = true; $("stats-reset").textContent = "Clear them? Click again"; return; }
+    store.del("stats"); store.del("puzzles"); renderStats();
+  };
+}
+
 // ---------- exports ----------
 function download(name, text, type) {
   const a = document.createElement("a");
@@ -1586,6 +2212,7 @@ function renderExports() {
   if (G.over || G.mode === "review" || assistAllowed()) {
     add("Save GCG", async () => { const r = await ui("gcg"); download("tilefish-" + G.id + ".gcg", r.gcg); });
   }
+  if (G.mode === "puzzle") return;
   if (G.mode !== "review") add("Save Tilefish file", () => download("tilefish-" + G.id + ".json", JSON.stringify(snapshotForSave(), null, 1), "application/json"));
   add("Copy position", async () => {
     const r = await ui("cgpout");
@@ -1599,7 +2226,7 @@ let drag = null;
 function squareAt(x, y) { const el = document.elementFromPoint(x, y); const sq = el && el.closest(".sq"); return sq ? +sq.dataset.sq : -1; }
 function rackSlotAt(x, y) { const el = document.elementFromPoint(x, y); if (!el || !el.closest("#rack")) return -2; const t = el.closest("[data-slot]"); return t ? +t.dataset.slot : -1; }
 function startDrag(e, from) {
-  drag = { from, x: e.clientX, y: e.clientY, moved: false, ghost: null };
+  drag = { from, x: e.clientX, y: e.clientY, moved: false, ghost: null, t0: performance.now() };
   document.addEventListener("pointermove", moveDrag);
   document.addEventListener("pointerup", endDrag, { once: true });
 }
@@ -1650,6 +2277,12 @@ async function endDrag(e) {
   if (d.ghost) d.ghost.remove();
   if (!d.moved) return tap(d.from);
   const sq = d.target != null ? d.target : -1, slotTo = rackSlotAt(e.clientX, e.clientY);
+  // A quick sideways flick along the rack shuffles it; a slower drag moves one tile.
+  if (d.from.slot != null && sq < 0 && Math.abs(e.clientX - d.x) > 70 && Math.abs(e.clientY - d.y) < 45 && performance.now() - d.t0 < 300) {
+    render();
+    shuffle();
+    return;
+  }
   if (d.from.slot != null) {
     if (sq >= 0 && !occupied(sq)) await place(d.from.slot, sq);
     else if (slotTo >= -1) reorder(d.from.slot, slotTo);
@@ -1718,7 +2351,8 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.ctrlKey || e.metaKey || e.altKey || /input|textarea/i.test(e.target.tagName)) return;
   const k = e.key;
-  if (reviewAt >= 0) {
+  if (exploring && k === "Escape") { e.preventDefault(); if (pending.size) { recall(); render(); checkPending(); } else exitExplore(); return; }
+  if (reviewAt >= 0 && !exploring) {
     if (k === "ArrowLeft") { e.preventDefault(); enterReview(reviewAt - 1); }
     else if (k === "ArrowRight") { e.preventDefault(); enterReview(reviewAt + 1); }
     else if (k === "ArrowUp") { e.preventDefault(); jumpKey(-1); }
@@ -1745,9 +2379,25 @@ document.addEventListener("keydown", (e) => {
   }
 });
 function shuffle() {
-  if (!rack.length || reviewAt >= 0) return;
+  if (!rack.length || (reviewAt >= 0 && !exploring)) return;
   const idx = rack.map((_, i) => i);
   for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+  permuteRack(idx);
+  sfx.shuffle();
+}
+// Sort: alphabetical, then (pressed again) vowels before consonants; blanks last.
+let sortMode = "alpha";
+function sortRack() {
+  if (!rack.length || (reviewAt >= 0 && !exploring)) return;
+  const key = (ch) => (ch === "?" ? "~" : sortMode === "vowels" ? ("AEIOU".includes(ch) ? "0" : "1") + ch : ch);
+  const idx = rack.map((_, i) => i).sort((a, b) => (key(rack[a].ch) < key(rack[b].ch) ? -1 : key(rack[a].ch) > key(rack[b].ch) ? 1 : a - b));
+  permuteRack(idx);
+  sortMode = sortMode === "alpha" ? "vowels" : "alpha";
+  $("btn-sort").title = sortMode === "alpha" ? "Sort the rack A to Z" : "Sort vowels first";
+  sfx.shuffle();
+}
+function permuteRack(idx) {
+  const before = rackPositions();
   const map = {};
   idx.forEach((oldI, newI) => { map[oldI] = newI; });
   rack = idx.map((i) => rack[i]);
@@ -1755,13 +2405,30 @@ function shuffle() {
   xsel = new Set([...xsel].map((i) => map[i]));
   selected = -1;
   render();
+  animateRack(before);
+}
+function rackPositions() {
+  const m = new Map();
+  rackEl.querySelectorAll("[data-id]").forEach((el) => m.set(el.dataset.id, el.getBoundingClientRect().left));
+  return m;
+}
+// Tiles slide to their new places instead of jumping.
+function animateRack(before) {
+  if (!before.size || !rackEl.animate || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  rackEl.querySelectorAll("[data-id]").forEach((el, i) => {
+    const x = before.get(el.dataset.id);
+    if (x == null) return;
+    const dx = x - el.getBoundingClientRect().left;
+    if (Math.abs(dx) < 1) return;
+    el.animate([{ transform: "translateX(" + dx + "px)" }, { transform: "none" }], { duration: 280, delay: i * 12, easing: "cubic-bezier(.2,.75,.25,1)", fill: "backwards" });
+  });
 }
 
 // ---------- buttons ----------
 $("btn-shuffle").onclick = shuffle;
 $("btn-recall").onclick = () => { recall(); render(); };
 $("btn-play").onclick = submit;
-$("btn-hint").onclick = () => hint(1.5);
+$("btn-hint").onclick = () => hint();
 $("btn-exchange").onclick = () => { recall(); hidePanels(); exchanging = !exchanging; xsel = new Set(); cursor = null; render(); };
 let passArmed = 0;
 $("btn-pass").onclick = () => {
@@ -1793,7 +2460,9 @@ $("btn-focus").onclick = () => {
 store.del("focus");  // earlier versions kept Focus on from one visit to the next
 $("btn-help").onclick = () => { $("help").hidden = false; $("btn-help-close").focus(); };
 $("btn-help-close").onclick = () => { $("help").hidden = true; };
-$("btn-games").onclick = openGames;
+$("btn-games").onclick = () => openGames();
+$("btn-puzzle").onclick = () => openPuzzle(true);
+$("btn-start-puzzle").onclick = () => { $("start").hidden = true; openPuzzle(true); };
 $("btn-games-close").onclick = () => { $("games").hidden = true; };
 $("banner-retry").onclick = async () => {
   $("banner").hidden = true;
@@ -1814,7 +2483,15 @@ function stopClocksForFailure() {
 }
 
 // ---------- games list ----------
-function openGames() {
+function showGamesTab(tab) {
+  document.querySelectorAll("#games .tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  $("games-view").hidden = tab !== "games";
+  $("stats-view").hidden = tab !== "stats";
+  if (tab === "stats") renderStats();
+}
+document.querySelectorAll("#games .tabs button").forEach((b) => (b.onclick = () => showGamesTab(b.dataset.tab)));
+function openGames(tab) {
+  showGamesTab(typeof tab === "string" ? tab : "games");
   const list = store.json("games", []);
   const ol = $("games-list");
   ol.textContent = "";
@@ -1862,6 +2539,8 @@ function syncStart() {
   $("custom-min").value = settings.customMin;
   $("think").value = settings.think;
   $("sound").checked = settings.sound === "1";
+  $("sfx").checked = settings.sfx === "1";
+  $("rate").checked = settings.rate !== "0";
   $("btn-start").textContent = settings.mode === "analysis" ? "Open position" : "Start game";
   const fake = { mode: settings.mode, level: settings.level, lexicon: settings.lexicon, clockMin: clockMinutes(), overtime: settings.overtime };
   let s = describe(fake);
@@ -1882,6 +2561,8 @@ document.querySelectorAll(".seg").forEach((seg) => {
 });
 $("custom-min").onchange = () => { settings.customMin = $("custom-min").value; store.set("customMin", settings.customMin); syncStart(); };
 $("think").onchange = () => { settings.think = $("think").value; store.set("think", settings.think); syncStart(); };
+$("sfx").onchange = () => { settings.sfx = $("sfx").checked ? "1" : "0"; store.set("sfx", settings.sfx); sfx.place(); };
+$("rate").onchange = () => { settings.rate = $("rate").checked ? "1" : "0"; store.set("rate", settings.rate); };
 $("sound").onchange = () => { settings.sound = $("sound").checked ? "1" : "0"; store.set("sound", settings.sound); if (settings.sound === "1") beep(); };
 
 // The bar follows the download byte by byte; for the stages that run inside the engine
@@ -1934,7 +2615,9 @@ async function withLoading(lex, fn) {
 }
 function resetView() {
   S = null; shownBoard = null; rack = []; pending = new Map(); order = []; last = new Set(); reviewAt = -1;
-  rvBoards = null; preview = null; analysing = null; rvFresh = null;
+  rvBoards = null; preview = null; analysing = null; rvFresh = null; exploring = null; hintState = null;
+  $("rating").hidden = true;
+  $("puzzle").hidden = true;
   $("evalbar").hidden = true;
   cursor = null; selected = -1; exchanging = false; xsel = new Set(); busy = false; concealed = false; beeped = {};
   $("review").hidden = true;
@@ -2021,6 +2704,34 @@ $("file-in").onchange = async (e) => {
 };
 $("btn-start").onclick = startGame;
 
+// Zoom (phones): the board grows inside a window you can pan with a finger, and follows
+// the cursor as you type.  The magnifier button, or a double tap on the board.
+let zoomed = false;
+function setZoom(on, sq) {
+  zoomed = on;
+  $("board-area").classList.toggle("zoomed", on);
+  $("btn-zoom").setAttribute("aria-pressed", on);
+  $("btn-zoom").title = on ? "Show the whole board" : "Zoom in";
+  if (on) requestAnimationFrame(() => centerOn(sq != null ? sq : cursor ? cursor.sq : pending.size ? [...pending.keys()][0] : last.size ? [...last][0] : 7 * N + 7, false));
+}
+function centerOn(sq, smooth) {
+  const sc = $("board-scroll"), el = squares[sq];
+  if (!el) return;
+  const r = el.getBoundingClientRect(), b = sc.getBoundingClientRect();
+  sc.scrollBy({ left: r.left + r.width / 2 - (b.left + b.width / 2), top: r.top + r.height / 2 - (b.top + b.height / 2), behavior: smooth === false ? "auto" : "smooth" });
+}
+function keepVisible(sq) {
+  const sc = $("board-scroll"), el = squares[sq];
+  if (!el) return;
+  const r = el.getBoundingClientRect(), b = sc.getBoundingClientRect(), m = r.width * 1.5;
+  if (r.left < b.left + m || r.right > b.right - m || r.top < b.top + m || r.bottom > b.bottom - m) centerOn(sq);
+}
+$("btn-zoom").onclick = () => setZoom(!zoomed);
+boardEl.addEventListener("dblclick", (e) => {
+  const sqEl = e.target.closest(".sq");
+  if (sqEl && matchMedia("(max-width: 700px)").matches) setZoom(!zoomed, +sqEl.dataset.sq);
+});
+$("btn-sort").onclick = sortRack;
 buildBoard();
 if (typeof ResizeObserver === "function") new ResizeObserver(() => boardEl.style.setProperty("--sqw", squares[0].offsetWidth + "px")).observe(boardEl);
 openStart();

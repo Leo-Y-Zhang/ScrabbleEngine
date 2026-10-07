@@ -68,7 +68,12 @@ British English in Oxford spelling) and a clock:
 - **Two players** at one screen, with the rack hidden between turns.
 - **Analyse** a pasted position (CGP) or a game record (`.gcg`, or a Tilefish game file).
 
-Click a square and type, drag tiles, or tap a tile and then a square; Enter plays. Clocks are
+Five strengths, from Beginner and Easy (which pick weaker moves on purpose, for learning) to
+Casual, Strong and Champion; a **daily puzzle** (find the best move); and your **stats** over
+time. Click a square and type, drag tiles, or tap a tile and then a square; Enter plays. As
+you place tiles, every word the move makes is listed with its points and bonus squares, and a
+word not in the list turns red on the board. Practice rates each move once Tilefish has
+answered and gives hints in steps (a nudge, then where, then the moves). Clocks are
 total time per player: 5, 10, 15 or 25 minutes or your own figure, with the NASPA overtime
 penalty (rules of 1 December 2016) or loss on time. While Tilefish thinks you can already set
 out your next word. After a game, the **game review** works like a chess site's: Tilefish
@@ -77,8 +82,8 @@ excellent, good, inaccuracy, mistake, blunder) by the winning chance it gave up,
 better move on the board where it should have gone (with its coordinate and direction), says
 why in Scrabble terms (a missed bingo, points, the tiles kept), and shows each player's
 accuracy, a graph of the winning chances and a bar beside the board. Point at any
-alternative to see it on the board, jump between key moves, or retry a position with the
-same tiles to come. Games save themselves in the
+alternative to see it on the board, set out your own move in any position and have it judged,
+jump between key moves, or retry a position with the same tiles to come. Games save themselves in the
 browser and resume after a reload, and they export as GCG or as a Tilefish file. The
 browser version thinks on one core; the download below uses every core and has the full
 command-line analysis. Which word lists are used, and on what terms: [LEXICONS.md](LEXICONS.md).

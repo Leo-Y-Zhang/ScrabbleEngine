@@ -25,6 +25,7 @@
     <div class="mini" id="mini" hidden></div>
     <nav class="top-actions" aria-label="Main">
       <button class="link" id="btn-new">New game</button>
+      <button class="link" id="btn-puzzle">Puzzle</button>
       <button class="link" id="btn-games">Games</button>
       <button class="link" id="btn-focus" aria-pressed="false">Focus</button>
       <button class="link" id="btn-help" aria-label="Help and shortcuts">Help</button>
@@ -35,19 +36,25 @@
 
   <main class="layout">
     <section class="table" aria-label="Board">
+      <div class="board-area" id="board-area">
+      <button class="zoom-btn" id="btn-zoom" aria-pressed="false" title="Zoom in" aria-label="Zoom the board"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.6 12.6 17 17M6 8.5h5M8.5 6v5"/></svg></button>
+      <div class="board-scroll" id="board-scroll">
       <div class="board-frame">
         <div class="evalbar" id="evalbar" hidden><div class="evalbar-fill" id="evalbar-fill"></div><span class="evalbar-label" id="evalbar-label"></span></div>
         <div class="coords-top" aria-hidden="true" id="coords-top"></div>
         <div class="coords-left" aria-hidden="true" id="coords-left"></div>
         <div class="board-wrap">
           <div class="board" id="board" role="grid" aria-label="Scrabble board"></div>
-          <div class="toast" id="toast" role="status" aria-live="polite"></div>
         </div>
+      </div>
+      </div>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
       </div>
       <div class="rack" id="rack" aria-label="Your rack"></div>
       <div class="status" id="status" aria-live="polite"></div>
       <div class="controls" id="controls">
-        <button class="ctl" id="btn-shuffle" title="Shuffle your rack (Space)">Shuffle</button>
+        <button class="ctl icon" id="btn-shuffle" title="Shuffle your rack (Space, or flick the rack)" aria-label="Shuffle"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h3.5c1.5 0 2.4.7 3.3 2l1.4 2.2c.9 1.4 1.8 2 3.3 2H17M14.5 9.8 17 12.2l-2.5 2.4M3 14h3.5c1 0 1.7-.3 2.4-1M11.6 7c.7-.7 1.4-1 2.4-1H17M14.5 3.6 17 6l-2.5 2.4"/></svg><span>Shuffle</span></button>
+        <button class="ctl icon" id="btn-sort" title="Sort the rack A to Z" aria-label="Sort"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4v12M1.8 13.8 4 16l2.2-2.2M9 5h8M9 10h6M9 15h4"/></svg><span>Sort</span></button>
         <button class="ctl" id="btn-exchange" title="Swap tiles with the bag">Exchange</button>
         <button class="ctl" id="btn-pass" title="Pass your turn">Pass</button>
         <span class="ctl-gap"></span>
@@ -79,6 +86,8 @@
         <div class="chance-bar"><div class="chance-fill" id="chance-fill"></div></div>
         <div class="chance-label" id="chance-label"></div>
       </div>
+      <div class="panel puzzle" id="puzzle" hidden></div>
+      <div class="panel rating" id="rating" hidden></div>
       <div class="panel hints" id="hints" hidden></div>
       <div class="panel review" id="review" hidden></div>
       <div class="panel">
@@ -87,6 +96,7 @@
       </div>
       <details class="panel unseen-panel">
         <summary class="panel-head"><span>Unseen tiles</span><span class="dim" id="unseen-count"></span></summary>
+        <div class="unseen-notes" id="unseen-notes"></div>
         <div class="unseen" id="unseen"></div>
       </details>
       <div class="exports" id="exports"></div>
@@ -109,6 +119,7 @@
   <div class="card">
     <h2 class="card-title" id="start-title">Tilefish</h2>
     <p class="card-sub">Play, practise and analyse Scrabble against a strong engine.</p>
+    <button class="puzzle-cta" id="btn-start-puzzle"><span class="pz-ico" aria-hidden="true">?</span><span><b>Daily puzzle</b><span class="dim"> Find the best move in one position.</span></span><span class="pz-go" aria-hidden="true">›</span></button>
     <div class="resume" id="resume" hidden>
       <div><b>Unfinished game</b> <span class="dim" id="resume-text"></span></div>
       <button class="ctl primary" id="btn-resume">Resume</button>
@@ -126,6 +137,8 @@
     <div class="field" data-for="play practice">
       <div class="label" id="lbl-level">Tilefish's strength</div>
       <div class="seg" data-name="level" role="radiogroup" aria-labelledby="lbl-level">
+        <button data-v="beginner">Beginner</button>
+        <button data-v="easy">Easy</button>
         <button data-v="casual">Casual</button>
         <button data-v="strong">Strong</button>
         <button data-v="champion">Champion</button>
@@ -184,7 +197,9 @@
           <button data-v="dark">Dark</button>
         </div>
       </div>
-      <label class="check"><input type="checkbox" id="sound"> Sounds for low time</label>
+      <label class="check"><input type="checkbox" id="sfx"> Sound effects and vibration</label>
+      <label class="check"><input type="checkbox" id="sound"> Beeps when your clock runs low</label>
+      <label class="check"><input type="checkbox" id="rate"> In Practice, rate each move as I play</label>
     </details>
     <div class="analysis-in" data-for="analysis">
       <label class="label" for="cgp-in">Position (CGP), or open a game record</label>
@@ -231,8 +246,12 @@
 <div class="sheet" id="games" role="dialog" aria-modal="true" aria-labelledby="games-title" hidden>
   <div class="card wide">
     <div class="card-head"><h2 class="card-title" id="games-title">Games</h2><button class="link" id="btn-games-close">Close</button></div>
-    <p class="card-sub">Finished games are kept in this browser (the last 30).</p>
-    <ol class="games-list" id="games-list"></ol>
+    <div class="tabs" role="tablist"><button data-tab="games" class="on" role="tab">Games</button><button data-tab="stats" role="tab">Stats</button></div>
+    <div id="games-view">
+      <p class="card-sub">Finished games are kept in this browser (the last 30).</p>
+      <ol class="games-list" id="games-list"></ol>
+    </div>
+    <div class="stats-view" id="stats-view" hidden></div>
   </div>
 </div>
 
@@ -246,10 +265,16 @@
       <li><b>Clocks</b> are total time per player. With <i>Overtime penalty</i>, as in the NASPA rules of 1 December 2016, each started minute past zero costs 10 points, and more than 10 minutes of overtime loses the game (100 points off; the opponent is raised to a one-point win if needed). With <i>Lose on time</i>, the game ends when a clock reaches zero. Tilefish's thinking runs on its own clock.</li>
       <li><b>Practice</b> allows hints, take-backs and pausing; the game is marked as assisted if you use them. <b>Play</b> has none, and its clock keeps running if you switch tabs.</li>
       <li><b>Plan ahead:</b> while Tilefish thinks you can set out tiles for your next move; they stay where they are if Tilefish's word leaves the squares free, and are checked as soon as it is your turn.</li>
+      <li><b>As you place tiles</b> every word the move makes is listed under the board with its points and bonus squares; a word that is not in the list turns red, on the board too.</li>
+      <li><b>Rack:</b> <i>Sort</i> puts it in order (A to Z, then vowels first); a quick sideways flick along the rack shuffles it. On a phone, the magnifier (or a double tap on the board) zooms in so tiles are easier to place.</li>
+      <li><b>Levels:</b> Beginner and Easy choose weaker moves on purpose, for learning; Casual, Strong and Champion play their best.</li>
+      <li><b>Practice</b> rates each of your moves once Tilefish has answered (switch it off under Advanced), and <i>Hint</i> helps in steps: a nudge first, then where the move goes, then the moves.</li>
+      <li><b>Puzzles:</b> find the best move in one position; within 1% of Tilefish's choice solves it, with three tries. The daily puzzle is the same for everyone on the same word list. Your results and stats are under <i>Games</i>.</li>
+      <li><b>Unseen tiles</b> counts vowels and consonants and warns about what matters (the Q without a U, the last S, the tiles in the endgame).</li>
       <li><b>Hints and reviews</b> come from Tilefish's search. Winning chances are estimates (simulation) unless marked solved; moves within about one percent are effectively equal. Reviews judge each move with only what its player could see.</li>
       <li><b>Game review:</b> each move gets a class by the winning chance it gave up against Tilefish's choice:
         <span class="cls-legend"><span class="cls brilliant">!!</span> Brilliant (the best move, giving up 12+ points of score for a better game) · <span class="cls great">!</span> Great (the only strong move) · <span class="cls best">&#9733;</span> Best · Excellent (within 1%) · Good (under 3%) · <span class="cls inaccuracy">?!</span> Inaccuracy (3–6%) · <span class="cls mistake">?</span> Mistake (6–12%) · <span class="cls blunder">??</span> Blunder (12% or more).</span>
-        Where a game is settled or the endgame is solved, points given up count instead. The better move is drawn on the board, dashed, with its coordinate and an arrow for its direction; point at any move in the list to see it there, or click to keep it. Accuracy is the average over a player's moves (100 for Tilefish's choice).
+        Where a game is settled or the endgame is solved, points given up count instead. The better move is drawn on the board, dashed, with its coordinate and an arrow for its direction; point at any move in the list to see it there, or click to keep it. Accuracy is the average over a player's moves (100 for Tilefish's choice). <i>Try a move</i> sets out your own move in any reviewed position and judges it.
         <kbd>&larr;</kbd> <kbd>&rarr;</kbd> step through the game, <kbd>&uarr;</kbd> <kbd>&darr;</kbd> jump between key moves, <kbd>B</kbd> shows the best move, <kbd>Home</kbd> <kbd>End</kbd> go to the start and the end.</li>
       <li><b>Notation:</b> <i>8D WORD</i> is across from row 8, column D; <i>D8 WORD</i> is down. Letters in brackets were already on the board; lower case is a blank.</li>
     </ul>
