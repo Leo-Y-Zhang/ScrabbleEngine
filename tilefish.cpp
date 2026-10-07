@@ -6850,11 +6850,16 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
     std::cout << fmt("%.1fs\n", R.seconds);
   }
 
-  bool human_move_ok(const std::string& text, Move& m, std::string& err) {
-    if (!parse_move(game.board, text, m, err)) return false;
-    const Rack& r = game.rack[game.turn];
+  bool human_move_ok(const std::string& text, Move& m, std::string& err, std::vector<std::string>* words = nullptr) {
+    return move_ok_in(game, text, m, err, words);
+  }
+  // Is `text` legal for the player to move in `g`?  `words`: the words it forms, filled in
+  // even when one of them is not in the lexicon.
+  bool move_ok_in(const Game& g, const std::string& text, Move& m, std::string& err, std::vector<std::string>* words = nullptr) {
+    if (!parse_move(g.board, text, m, err)) return false;
+    const Rack& r = g.rack[g.turn];
     if (m.type == MT_EXCHANGE) {
-      if (game.bag.n < RACK_SIZE) {
+      if (g.bag.n < RACK_SIZE) {
         err = "exchanges need at least 7 tiles in the bag";
         return false;
       }
@@ -6869,10 +6874,18 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       err = "you do not hold " + m.used().str() + " (use lower case for blanks)";
       return false;
     }
-    std::vector<std::string> words;
-    if (!validate_move(lex, game.board, m, err, &words)) return false;
-    m.score = (i16)score_move(game.board, m);
+    std::vector<std::string> formed;
+    const bool ok = validate_move(lex, g.board, m, err, &formed);
+    if (words) *words = formed;
+    if (!ok) return false;
+    m.score = (i16)score_move(g.board, m);
     return true;
+  }
+  std::string words_json(const std::vector<std::string>& words) {
+    std::string o = "[";
+    for (size_t i = 0; i < words.size(); ++i)
+      o += std::string(i ? "," : "") + "{\"word\":" + json_str(to_upper(words[i])) + ",\"ok\":" + (lex.is_word(to_upper(words[i])) ? "true" : "false") + "}";
+    return o + "]";
   }
 
   // ---- ui: a game against the engine driven by a graphical front-end (web/) ----
@@ -6948,6 +6961,8 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
   //   ui gcg                         the game as a GCG record
   //   ui at N                        the board after the first N moves
   //   ui review N [SECS]             move N judged with what its player could see then
+  //   ui judge N MOVE [SECS]         any MOVE in that position judged the same way (SECS 0: checked only)
+  //   ui moves [K]                   the K best moves for the player to move, by static evaluation
   //   ui record                      every move exactly (for saving; not for display)
   //   ui rewind N                    back to the position before move N, same draws ahead
   //   ui import FILE.gcg             a game record, for review (racks as recorded)
@@ -7079,22 +7094,53 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       if (actual.type == MT_PLACE) actual.score = (i16)score_move(P.board, actual);
       ReviewVerdict v;
       if (!review_position(P, actual, secs, v)) return fail("no verdict for this move");
-      const bool same = v.best.same_as(actual);
-      std::cout << "{\"ok\":true,\"n\":" << n << ",\"rack\":" << json_str(P.rack.str())
-                << ",\"played\":" << json_str(move_str(P.board, actual)) << ",\"best\":" << json_str(move_str(P.board, v.best))
-                << ",\"same\":" << (same ? "true" : "false") << ",\"winLoss\":" << json_num(v.win_loss, 4)
-                << ",\"valueLoss\":" << json_num(v.eq_loss, 2) << ",\"bestWin\":" << json_num(v.best_win, 4)
-                << ",\"method\":" << json_str(v.method) << ",\"exact\":" << (v.exact ? "true" : "false")
-                << ",\"bestScore\":" << (v.best.type == MT_PLACE ? v.best.score : 0)
-                << ",\"playedScore\":" << (actual.type == MT_PLACE ? actual.score : 0)
-                << ",\"playedWin\":" << json_num(v.played_win, 4) << ",\"playedValue\":" << json_num(v.played_value, 2);
-      if (v.has_top)
-        std::cout << ",\"top\":{\"move\":" << json_str(v.top.move) << ",\"score\":" << v.top.score
-                  << ",\"win\":" << json_num(v.top.win, 4) << ",\"value\":" << json_num(v.top.value, 2) << "}";
-      std::cout << ",\"alts\":[";
-      for (size_t k = 0; k < v.alts.size(); ++k)
-        std::cout << (k ? "," : "") << "{\"move\":" << json_str(v.alts[k].move) << ",\"score\":" << v.alts[k].score
-                  << ",\"win\":" << json_num(v.alts[k].win, 4) << ",\"value\":" << json_num(v.alts[k].value, 2) << "}";
+      std::cout << review_json(n, P, actual, v) << std::endl;
+      return;
+    } else if (sub == "judge") {
+      // ui judge N MOVE [SECS]: any move for the player before move N, judged as review does;
+      // SECS 0 only checks it (legal? score? the words it forms).
+      const size_t n = args.size() > 1 ? (size_t)std::max(0, std::atoi(args[1].c_str())) : 0;
+      if (n >= ui_before.size()) return fail("no such move");
+      std::string text = trim(rest.substr(args[0].size()));
+      text = trim(text.substr(args[1].size()));
+      double secs = 1.0;
+      const size_t sp = text.find_last_of(' ');
+      if (sp != std::string::npos) {
+        const std::string tail = text.substr(sp + 1);
+        char* end = nullptr;
+        const double d = std::strtod(tail.c_str(), &end);
+        if (end && *end == 0 && !tail.empty() && (std::isdigit((unsigned char)tail[0]) || tail[0] == '.')) {
+          secs = d;
+          text = trim(text.substr(0, sp));
+        }
+      }
+      const Game& g = ui_before[n];
+      Move m;
+      std::string err;
+      std::vector<std::string> words;
+      const bool ok = move_ok_in(g, text, m, err, &words);
+      if (!ok || secs <= 0) {
+        std::cout << "{\"ok\":" << (ok ? "true" : "false") << ",\"score\":" << (ok && m.type == MT_PLACE ? m.score : 0)
+                  << ",\"error\":" << json_str(err) << ",\"words\":" << words_json(words) << "}" << std::endl;
+        return;
+      }
+      const Position P = Position::from_game(g);
+      ReviewVerdict v;
+      if (!review_position(P, m, std::max(0.1, secs), v)) return fail("no verdict for this move");
+      std::cout << review_json(n, P, m, v) << std::endl;
+      return;
+    } else if (sub == "moves") {
+      // ui moves [N]: the player to move's N best moves by static evaluation (weaker players
+      // in the page choose among them).
+      if (game.over) return fail("the game is over");
+      const int k = args.size() > 1 ? std::max(1, std::atoi(args[1].c_str())) : 50;
+      const Position P = Position::from_game(game);
+      const std::vector<Move> ms = eng().simulator().candidates(P, k);
+      std::cout << "{\"ok\":true,\"moves\":[";
+      for (size_t i = 0; i < ms.size(); ++i)
+        std::cout << (i ? "," : "") << "{\"move\":" << json_str(move_str(P.board, ms[i])) << ",\"score\":"
+                  << (ms[i].type == MT_PLACE ? ms[i].score : 0) << ",\"tiles\":" << (ms[i].type == MT_PLACE ? (int)ms[i].ntiles : 0)
+                  << ",\"equity\":" << json_num(ms[i].equity, 2) << "}";
       std::cout << "]}" << std::endl;
       return;
     } else if (sub == "move" || sub == "check" || sub == "force") {
@@ -7102,11 +7148,14 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       if (sub != "force" && game.turn != ui_human) return fail("it is not your turn");
       Move m;
       std::string err;
-      if (!human_move_ok(trim(rest.substr(args[0].size())), m, err)) return fail(err);
-      if (sub == "check") {
-        std::cout << "{\"ok\":true,\"score\":" << (m.type == MT_PLACE ? m.score : 0) << "}" << std::endl;
+      std::vector<std::string> words;
+      const bool legal = human_move_ok(trim(rest.substr(args[0].size())), m, err, &words);
+      if (sub == "check") {  // the words formed come back whether or not they are all valid
+        std::cout << "{\"ok\":" << (legal ? "true" : "false") << ",\"score\":" << (legal && m.type == MT_PLACE ? m.score : 0)
+                  << ",\"error\":" << json_str(err) << ",\"words\":" << words_json(words) << "}" << std::endl;
         return;
       }
+      if (!legal) return fail(err);
       ui_apply(m);
     } else if (sub == "bot") {
       if (game.over) return fail("the game is over");
@@ -7490,6 +7539,29 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
     v.eq_loss = eq_loss;
     v.best_win = best_win;
     return true;
+  }
+
+  // A verdict as one line of JSON (`ui review`, `ui judge`).
+  std::string review_json(size_t n, const Position& P, const Move& actual, const ReviewVerdict& v) {
+    const bool same = v.best.same_as(actual);
+    std::ostringstream o;
+    o << "{\"ok\":true,\"n\":" << n << ",\"rack\":" << json_str(P.rack.str())
+      << ",\"played\":" << json_str(move_str(P.board, actual)) << ",\"best\":" << json_str(move_str(P.board, v.best))
+      << ",\"same\":" << (same ? "true" : "false") << ",\"winLoss\":" << json_num(v.win_loss, 4)
+      << ",\"valueLoss\":" << json_num(v.eq_loss, 2) << ",\"bestWin\":" << json_num(v.best_win, 4)
+      << ",\"method\":" << json_str(v.method) << ",\"exact\":" << (v.exact ? "true" : "false")
+      << ",\"bestScore\":" << (v.best.type == MT_PLACE ? v.best.score : 0)
+      << ",\"playedScore\":" << (actual.type == MT_PLACE ? actual.score : 0)
+      << ",\"playedWin\":" << json_num(v.played_win, 4) << ",\"playedValue\":" << json_num(v.played_value, 2);
+    if (v.has_top)
+      o << ",\"top\":{\"move\":" << json_str(v.top.move) << ",\"score\":" << v.top.score
+        << ",\"win\":" << json_num(v.top.win, 4) << ",\"value\":" << json_num(v.top.value, 2) << "}";
+    o << ",\"alts\":[";
+    for (size_t k = 0; k < v.alts.size(); ++k)
+      o << (k ? "," : "") << "{\"move\":" << json_str(v.alts[k].move) << ",\"score\":" << v.alts[k].score
+        << ",\"win\":" << json_num(v.alts[k].win, 4) << ",\"value\":" << json_num(v.alts[k].value, 2) << "}";
+    o << "]}";
+    return o.str();
   }
 
   void cmd_review(const std::vector<std::string>& a) {
