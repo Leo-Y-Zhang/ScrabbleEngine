@@ -16,6 +16,22 @@
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='5' fill='%23ecd096' stroke='%23b8955a' stroke-width='2'/%3E%3Ctext x='15' y='23' font-family='Arial' font-weight='800' font-size='18' text-anchor='middle' fill='%232a2116'%3ET%3C/text%3E%3C/svg%3E">
 <script>try{var t=localStorage.getItem("tilefish.theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;}catch(e){}</script>
+<script>
+// Several cores for the engine: coi-sw.js makes the page cross-origin isolated (GitHub Pages
+// cannot send the headers). On the first visit the page reloads once, before any game, to
+// come under it; where it cannot, the engine simply runs on one core.
+if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureContext) {
+  navigator.serviceWorker.register("coi-sw.js").then(function (r) {
+    function ready() {
+      if (self.crossOriginIsolated) return;
+      try { if (typeof G !== "undefined" && G) return; if (sessionStorage.getItem("tilefish.coi")) return; sessionStorage.setItem("tilefish.coi", "1"); } catch (e) { return; }
+      location.reload();
+    }
+    var w = r.installing || r.waiting;
+    if (r.active && !w) ready(); else if (w) w.addEventListener("statechange", function () { if (w.state === "activated") ready(); });
+  }).catch(function () {});
+}
+</script>
 </head>
 <body>
 <noscript><p style="padding:16px;font:16px system-ui,sans-serif">Tilefish runs in your browser and needs JavaScript switched on.</p></noscript>

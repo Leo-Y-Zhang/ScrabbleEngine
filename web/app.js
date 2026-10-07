@@ -20,8 +20,8 @@ const NOTES = {
   beginner: "Plays short, everyday words, scores modestly and rarely bingos: a gentle game for learning.",
   easy: "A friendly club player: sound moves, the odd bingo, and now and then a slip.",
   casual: "Plays at once, from its evaluation of each move, with exact endgames. Already strong.",
-  strong: "Simulates its best candidates for up to 3 seconds a move.",
-  champion: "Its full search, up to 10 seconds a move.",
+  strong: "Simulates its best candidates for a few seconds a move (less on a multi-core device, where it searches more).",
+  champion: "Its full search, up to 10 seconds a move (about half that on a multi-core device, searching more).",
   play: "A game against Tilefish with no help. Your clock keeps running if you switch tabs.",
   practice: "Against Tilefish with hints, take-backs and a pause button. Games where you use them are marked as assisted.",
   duo: "Two people at one screen. The rack is hidden between turns.",
@@ -74,6 +74,13 @@ applyTheme();
 const ENGINE_OK = typeof WebAssembly === "object" && typeof Worker === "function";
 const VERSION = "";  // web/build.sh sets "?v=CODE&d=DATA", passed on to the worker's files
 let worker = null, nextId = 1, waiting = new Map(), loadedLex = null, epoch = 0;
+// Search threads the engine got (worker.js: one per core where the page is cross-origin
+// isolated).  With several, timed searches are shortened and still search more than one
+// core did in the full time: the levels answer sooner, and hints, ratings, reviews and
+// puzzles come faster.
+let engineThreads = 1;
+const speed = () => (engineThreads >= 3 ? 0.5 : engineThreads === 2 ? 0.75 : 1);
+const secs = (s) => Math.max(0.2, +(s * speed()).toFixed(2));
 function startWorker() {
   if (!ENGINE_OK) throw new Error("this browser cannot run the engine (it needs WebAssembly); please update it or try another browser");
   worker = new Worker("worker.js" + VERSION);
@@ -82,6 +89,7 @@ function startWorker() {
     if (!w) return;
     if (m.progress != null) { if (w.progress) w.progress(m.progress, m); return; }
     waiting.delete(m.id);
+    if (m.threads) engineThreads = m.threads;
     if (m.error) w.reject(new Error(m.error)); else w.resolve(m.out);
   };
   worker.onerror = (e) => {
@@ -982,7 +990,7 @@ function nextTurn() {
   if (S.turn !== G.human) botTurn();
 }
 function botSpec() {
-  let t = G.think ? +G.think : LEVEL_TIME[G.level];
+  let t = G.think ? +G.think : LEVEL_TIME[G.level] * speed();
   if (G.clockMin) {
     const left = (G.clockMin * 60000 - clockUsed()[1 - G.human]) / 1000;
     t = Math.max(0.5, Math.min(t || 1, left / 12));
@@ -1114,25 +1122,26 @@ function hidePanels() { $("hints").hidden = true; if (hintState) hintState.shown
 // Hints come in steps, as a coach would give them: a nudge (a bingo? how many tiles, what
 // score?), then where the move goes, then the moves themselves.
 let hintState = null;  // {h, step, at, shown}
-async function hint(secs) {
+const secsFor = (s) => secs(s);
+async function hint(secsArg) {
   if (!humanTurn() || !assistAllowed()) return;
-  if (hintState && hintState.at === S.history.length && !secs) {
+  if (hintState && hintState.at === S.history.length && !secsArg) {
     if (!hintState.shown) hintState.shown = true;
     else if (hintState.step < 3) hintState.step++;
     renderHint();
     return;
   }
   if (busy) return;
-  secs = secs || 1.5;
+  const sec = secsArg || 1.5;
   const my = epoch;
   busy = true;
   G.assisted = true;
   render();
-  setStatus("Tilefish is looking at your rack" + (secs > 2 ? ' <button class="link strong" id="btn-hint-cancel">Stop</button>' : ""), "thinking");
+  setStatus("Tilefish is looking at your rack" + (sec > 2 ? ' <button class="link strong" id="btn-hint-cancel">Stop</button>' : ""), "thinking");
   const cancel = $("btn-hint-cancel");
   if (cancel) cancel.onclick = async () => { const st = await restartEngine(); if (st) { S = null; showState(st, null); } };
   let r;
-  try { r = await ui("hint " + secs); } catch (e) { return; }
+  try { r = await ui("hint " + secsFor(sec)); } catch (e) { return; }
   if (my !== epoch) return;
   busy = false;
   if (!r.ok) { render(); toast(capital(r.error)); return; }
@@ -1207,7 +1216,7 @@ function rateLastMove() {
   while (k >= 0 && moverOf(k) !== G.human) k--;
   if (k < 0 || verdictAt(k)) return;
   const my = epoch, id = G.id;
-  ui("review " + k + " 0.6").then((r) => {
+  ui("review " + k + " " + secs(0.6)).then((r) => {
     if (my !== epoch || !G || G.id !== id || !r.ok || G.record.length <= k) return;
     G.verdicts = G.verdicts || {};
     G.verdicts[k] = r;
@@ -1787,7 +1796,7 @@ async function judgeTry() {
   renderControls();
   renderReviewPanel();
   let r;
-  try { r = await ui("judge " + ex.k + " " + mv.text + " " + Math.max(0.6, reviewSecs())); } catch (e) { ex.judging = false; return; }
+  try { r = await ui("judge " + ex.k + " " + mv.text + " " + secs(Math.max(0.6, reviewSecs()))); } catch (e) { ex.judging = false; return; }
   ex.judging = false;
   if (exploring !== ex) return;
   ex.result = r.ok ? r : null;
@@ -1879,7 +1888,7 @@ function summaryHtml() {
   }
   return html + "</tbody></table></details>";
 }
-async function analyseGame(secs) {
+async function analyseGame(sec) {
   if (!S || busy) return;
   if (G.gcg == null && !G.record.length) return;
   await reviewBoards();
@@ -1894,7 +1903,7 @@ async function analyseGame(secs) {
   renderReviewPanel();
   for (let i = 0; i < todo.length; i++) {
     let r;
-    try { r = await ui("review " + todo[i] + " " + secs); } catch (e) { return; }
+    try { r = await ui("review " + todo[i] + " " + secsFor(sec)); } catch (e) { return; }
     if (my !== epoch) return;
     if (r.ok) G.verdicts[todo[i]] = r;
     analysing.done = i + 1;
@@ -1991,17 +2000,19 @@ async function findPuzzle(base) {
     if (!r.ok || r.state.over || r.state.bag < 8) continue;
     const turn = r.state.turn;
     await ui("seat " + turn);
-    const moves = (await ui("record")).moves;
-    const h = await ui("hint 1.2");
-    if (!h.ok || !h.hint.moves.length) continue;
-    const ms = h.hint.moves, best = ms[0];
-    const plays = ms.filter((m) => !isExch(m.move) && !isPass(m.move));
-    const topScore = plays.length ? Math.max(...plays.map((m) => m.score)) : 0;
-    const isPlay = !isExch(best.move) && !isPass(best.move);
-    const good = isPlay && (tilesOf(best.move).length === 7 || (ms[1] && best.win - ms[1].win >= 0.03) || topScore - best.score >= 8);
-    if (isPlay || !chosen) chosen = { seed, moves, turn, hint: h.hint };
-    if (good) break;
+    const st = await ui("moves 40");
+    if (!st.ok || !st.moves.length) continue;
+    const plays = st.moves.filter((m) => !isExch(m.move) && !isPass(m.move));
+    const top = plays[0], topScore = plays.length ? Math.max(...plays.map((m) => m.score)) : 0;
+    const good = top && !isExch(st.moves[0].move) && (top.tiles === 7 || topScore - top.score >= 8);
+    if (!good && a < 4) continue;
+    chosen = { seed, turn, moves: (await ui("record")).moves };
+    break;
   }
+  if (!chosen) return null;
+  const h = await ui("hint " + secs(1.2));
+  if (!h.ok || !h.hint.moves.length) return null;
+  chosen.hint = h.hint;
   return chosen;
 }
 async function openPuzzle(daily) {
@@ -2043,7 +2054,7 @@ async function puzzleCheck() {
   render();
   setStatus("Judging your move", "thinking");
   let r;
-  try { r = await ui("review " + k + " 1.5"); } catch (e) { return; }
+  try { r = await ui("review " + k + " " + secs(1.5)); } catch (e) { return; }
   busy = false;
   if (my !== epoch || G.mode !== "puzzle") return;
   pz.tries++;

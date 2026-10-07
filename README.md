@@ -85,8 +85,8 @@ accuracy, a graph of the winning chances and a bar beside the board. Point at an
 alternative to see it on the board, set out your own move in any position and have it judged,
 jump between key moves, or retry a position with the same tiles to come. Games save themselves in the
 browser and resume after a reload, and they export as GCG or as a Tilefish file. The
-browser version thinks on one core; the download below uses every core and has the full
-command-line analysis. Which word lists are used, and on what terms: [LEXICONS.md](LEXICONS.md).
+browser version thinks on every core (up to eight) in browsers that allow it, and on one
+core elsewhere; the download below uses every core and has the full command-line analysis. Which word lists are used, and on what terms: [LEXICONS.md](LEXICONS.md).
 
 **On your computer:**
 
