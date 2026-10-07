@@ -7,12 +7,20 @@ set -e
 cd "$(dirname "$0")/.."
 OUT=web/dist
 mkdir -p "$OUT/data"
-# One thread; an 8 MB stack as on Linux (the move generator keeps large tables on it).
-em++ -O3 -std=c++17 -fexceptions tilefish.cpp -o "$OUT/tilefish.js" \
-  -sMODULARIZE=1 -sEXPORT_NAME=Tilefish -sENVIRONMENT=worker,node -sALLOW_MEMORY_GROWTH=1 \
-  -sMAXIMUM_MEMORY=2GB -sSTACK_SIZE=8MB -sEXPORTED_FUNCTIONS=_tf_run \
-  -sEXPORTED_RUNTIME_METHODS=ccall,FS --no-entry
-cp web/index.html web/style.css web/app.js web/worker.js "$OUT/"
+# Two builds of the same engine.  tilefish.js: one thread, for any browser.  tilefish-mt.js:
+# a search thread per core (pthreads on SharedArrayBuffer), used where the page is
+# cross-origin isolated (web/coi-sw.js).  Both use WebAssembly's own exceptions (smaller
+# and faster than the JavaScript-based ones) and an 8 MB stack as on Linux, for every
+# thread (the move generator keeps large tables on it).
+EM="-O3 -std=c++17 -fwasm-exceptions tilefish.cpp -sMODULARIZE=1 -sENVIRONMENT=worker,node -sALLOW_MEMORY_GROWTH=1
+  -sSTACK_SIZE=8MB -sEXPORTED_FUNCTIONS=_tf_run -sEXPORTED_RUNTIME_METHODS=ccall,FS --no-entry"
+em++ $EM -sEXPORT_NAME=Tilefish -sMAXIMUM_MEMORY=2GB -o "$OUT/tilefish.js"
+em++ $EM -pthread -sEXPORT_NAME=TilefishMT -sINITIAL_MEMORY=256MB -sMAXIMUM_MEMORY=1GB \
+  -sDEFAULT_PTHREAD_STACK_SIZE=8MB -o "$OUT/tilefish-mt.js" \
+  -sPTHREAD_POOL_SIZE='Math.min(8,(typeof navigator!="undefined"&&navigator.hardwareConcurrency)||2)+1'
+# (the engine never starts more search threads at once than worker.js gives it, one per
+# core up to 8, so a pool that size plus one never has to start a worker mid-search)
+cp web/index.html web/style.css web/app.js web/worker.js web/coi-sw.js "$OUT/"
 # The fonts are served from the site itself, never from a third-party font server.
 mkdir -p "$OUT/fonts" && cp web/fonts/* "$OUT/fonts/"
 cp ENABLE.txt ENABLE.win CSW24.win NWL23.win OXENDICT.txt OXENDICT.klv2 OXENDICT.win "$OUT/data/"
@@ -33,7 +41,7 @@ for f in ENABLE.kwg ENABLE.klv2 OXENDICT.kwg OXENDICT.klv2; do gzip -9 -n -c "$O
 # minutes, so without them a browser could mix files from two releases): CODE changes
 # with the engine or the page, DATA with the files the site serves.
 hash() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi | cut -c1-12; }
-CODE=$(cat tilefish.cpp web/index.html web/style.css web/app.js web/worker.js | hash)
+CODE=$(cat tilefish.cpp web/index.html web/style.css web/app.js web/worker.js web/build.sh | hash)
 DATA=$(cd "$OUT/data" && cat ENABLE.kwg ENABLE.klv2 ENABLE.win OXENDICT.kwg OXENDICT.klv2 OXENDICT.win CSW24.win NWL23.win | hash)
 sed -e "s|href=\"style.css\"|href=\"style.css?v=$CODE\"|" -e "s|src=\"app.js\"|src=\"app.js?v=$CODE\"|" web/index.html > "$OUT/index.html"
 sed -e "s|^const VERSION = \"\";|const VERSION = \"?v=$CODE\&d=$DATA\";|" web/app.js > "$OUT/app.js"

@@ -116,5 +116,30 @@ Tilefish().then((m) => {
     check(r.ok, "OXENDICT: engine move: " + r.error);
   }
   console.log("OXENDICT: " + r.state.you + "-" + r.state.bot + " after 4 moves each");
-  console.log("ok");
+  // The multi-core build (used where the page is cross-origin isolated) gives the same
+  // fixed-work checksum on one thread and on two, and plays through the ui commands.
+  const single = run("lexicon /data/ENABLE.kwg") && run("benchsim 0 1 1000").match(/checksum ([\d.-]+)/)[1];
+  require("./dist/tilefish-mt.js")().then((mt) => {
+    mt.FS.mkdir("/data");
+    for (const f of ["ENABLE.kwg", "ENABLE.klv2", "ENABLE.win"]) mt.FS.writeFile("/data/" + f, fs.readFileSync(path.join(data, f)));
+    const mrun = (c) => mt.ccall("tf_run", "string", ["string"], [c]);
+    check(/ENABLE: 168551 words/.test(mrun("lexicon /data/ENABLE.kwg")), "multi-core build loads ENABLE");
+    for (const n of [1, 2]) {
+      const c = mrun("benchsim 0 " + n + " 1000").match(/checksum ([\d.-]+)/)[1];
+      check(c === single, "multi-core build, " + n + " thread(s): checksum " + c + " = " + single);
+    }
+    mrun("threads 2");
+    let st = JSON.parse(mrun("ui new first 9").trim().split("\n").pop());
+    for (let k = 0; k < 6 && !st.state.over; k++) {
+      const h = JSON.parse(mrun("ui hint 0.2").trim().split("\n").pop());
+      check(h.ok, "multi-core hint");
+      st = JSON.parse(mrun("ui move " + h.hint.best).trim().split("\n").pop());
+      check(st.ok, "multi-core move " + h.hint.best);
+      st = JSON.parse(mrun("ui bot sim:time=0.2").trim().split("\n").pop());
+      check(st.ok, "multi-core engine move");
+    }
+    console.log("multi-core: " + st.state.you + "-" + st.state.bot + " after 6 moves each on 2 threads");
+    console.log("ok");
+    process.exit(0);
+  });
 });
