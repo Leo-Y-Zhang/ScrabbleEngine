@@ -7084,7 +7084,14 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
                 << ",\"played\":" << json_str(move_str(P.board, actual)) << ",\"best\":" << json_str(move_str(P.board, v.best))
                 << ",\"same\":" << (same ? "true" : "false") << ",\"winLoss\":" << json_num(v.win_loss, 4)
                 << ",\"valueLoss\":" << json_num(v.eq_loss, 2) << ",\"bestWin\":" << json_num(v.best_win, 4)
-                << ",\"method\":" << json_str(v.method) << ",\"exact\":" << (v.exact ? "true" : "false") << ",\"alts\":[";
+                << ",\"method\":" << json_str(v.method) << ",\"exact\":" << (v.exact ? "true" : "false")
+                << ",\"bestScore\":" << (v.best.type == MT_PLACE ? v.best.score : 0)
+                << ",\"playedScore\":" << (actual.type == MT_PLACE ? actual.score : 0)
+                << ",\"playedWin\":" << json_num(v.played_win, 4) << ",\"playedValue\":" << json_num(v.played_value, 2);
+      if (v.has_top)
+        std::cout << ",\"top\":{\"move\":" << json_str(v.top.move) << ",\"score\":" << v.top.score
+                  << ",\"win\":" << json_num(v.top.win, 4) << ",\"value\":" << json_num(v.top.value, 2) << "}";
+      std::cout << ",\"alts\":[";
       for (size_t k = 0; k < v.alts.size(); ++k)
         std::cout << (k ? "," : "") << "{\"move\":" << json_str(v.alts[k].move) << ",\"score\":" << v.alts[k].score
                   << ",\"win\":" << json_num(v.alts[k].win, 4) << ",\"value\":" << json_num(v.alts[k].value, 2) << "}";
@@ -7371,6 +7378,12 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
     std::string method;
     bool exact = false;
     std::vector<ReviewAlt> alts;
+    // The played move's own estimate, and the highest-scoring move that was evaluated
+    // (the page's review tells a move that gave up points for position from one that
+    // simply scored less).
+    double played_win = NAN, played_value = NAN;
+    bool has_top = false;
+    ReviewAlt top;
   };
   bool review_position(const Position& P, Move actual, double secs, ReviewVerdict& v) {
     MoveGen gen(&lex, &leaves);
@@ -7405,6 +7418,18 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       auto res = [&](int v) { const int f = P.spread() + v; return f > 0 ? 1.0 : (f == 0 ? 0.5 : 0.0); };
       win_loss = std::max(0.0, res(er.value) - res(va));
       best_win = res(er.value);
+      v.played_win = res(va);
+      v.played_value = va;
+      std::vector<std::pair<Move, int>> root = er.root;
+      std::stable_sort(root.begin(), root.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+      for (size_t r = 0; r < root.size() && r < 5; ++r)
+        v.alts.push_back({move_str(P.board, root[r].first), root[r].first.type == MT_PLACE ? root[r].first.score : 0,
+                          res(root[r].second), (double)root[r].second});
+      for (const auto& r : root)
+        if (r.first.type == MT_PLACE && (!v.has_top || r.first.score > v.top.score)) {
+          v.has_top = true;
+          v.top = {move_str(P.board, r.first), r.first.score, res(r.second), (double)r.second};
+        }
     } else if (P.bag_n == 1) {
       const PegResult pr = eng().preendgame().solve(P, cfg.peg_candidates, secs, threads, false, &actual);
       if (pr.rows.empty()) return false;
@@ -7415,12 +7440,19 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
         v.alts.push_back({move_str(P.board, pr.rows[r].move), pr.rows[r].move.type == MT_PLACE ? pr.rows[r].move.score : 0,
                           pr.rows[r].win, pr.rows[r].spread});
       bool found = false;
-      for (const auto& r : pr.rows)
+      for (const auto& r : pr.rows) {
         if (r.move.same_as(actual)) {
           found = true;
           win_loss = std::max(0.0, pr.rows[0].win - r.win);
           eq_loss = std::max(0.0, pr.rows[0].spread - r.spread);
+          v.played_win = r.win;
+          v.played_value = r.spread;
         }
+        if (r.move.type == MT_PLACE && (!v.has_top || r.move.score > v.top.score)) {
+          v.has_top = true;
+          v.top = {move_str(P.board, r.move), r.move.score, r.win, r.spread};
+        }
+      }
       if (!found && actual.type == MT_PLACE) return false;  // not evaluated in time: no verdict
     } else {
       Simulator& sim = eng().simulator();
@@ -7439,11 +7471,18 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       for (size_t r = 0; r < sr.cands.size() && r < 5; ++r)
         v.alts.push_back({move_str(P.board, sr.cands[r].move), sr.cands[r].move.type == MT_PLACE ? sr.cands[r].move.score : 0,
                           sr.cands[r].mean_win(), sr.cands[r].mean_eq()});
-      for (const auto& c : sr.cands)
+      for (const auto& c : sr.cands) {
         if (c.move.same_as(actual)) {
           win_loss = std::max(0.0, sr.cands[0].mean_win() - c.mean_win());
           eq_loss = std::max(0.0, sr.cands[0].mean_eq() - c.mean_eq());
+          v.played_win = c.mean_win();
+          v.played_value = c.mean_eq();
         }
+        if (c.move.type == MT_PLACE && (!v.has_top || c.move.score > v.top.score)) {
+          v.has_top = true;
+          v.top = {move_str(P.board, c.move), c.move.score, c.mean_win(), c.mean_eq()};
+        }
+      }
     }
     v.best = best;
     if (best.same_as(actual)) win_loss = eq_loss = 0;

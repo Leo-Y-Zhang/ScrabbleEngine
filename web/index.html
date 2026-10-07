@@ -36,12 +36,12 @@
   <main class="layout">
     <section class="table" aria-label="Board">
       <div class="board-frame">
+        <div class="evalbar" id="evalbar" hidden><div class="evalbar-fill" id="evalbar-fill"></div><span class="evalbar-label" id="evalbar-label"></span></div>
         <div class="coords-top" aria-hidden="true" id="coords-top"></div>
         <div class="coords-left" aria-hidden="true" id="coords-left"></div>
         <div class="board-wrap">
           <div class="board" id="board" role="grid" aria-label="Scrabble board"></div>
           <div class="toast" id="toast" role="status" aria-live="polite"></div>
-          <div class="review-badge" id="review-badge" hidden></div>
         </div>
       </div>
       <div class="rack" id="rack" aria-label="Your rack"></div>
@@ -245,7 +245,12 @@
       <li><b>Words are checked automatically</b> as you place tiles: a word that is not in the list cannot be played, so there are no challenges here. That differs from tournament play, where an invalid word can be played and challenged off.</li>
       <li><b>Clocks</b> are total time per player. With <i>Overtime penalty</i>, as in the NASPA rules of 1 December 2016, each started minute past zero costs 10 points, and more than 10 minutes of overtime loses the game (100 points off; the opponent is raised to a one-point win if needed). With <i>Lose on time</i>, the game ends when a clock reaches zero. Tilefish's thinking runs on its own clock.</li>
       <li><b>Practice</b> allows hints, take-backs and pausing; the game is marked as assisted if you use them. <b>Play</b> has none, and its clock keeps running if you switch tabs.</li>
+      <li><b>Plan ahead:</b> while Tilefish thinks you can set out tiles for your next move; they stay where they are if Tilefish's word leaves the squares free, and are checked as soon as it is your turn.</li>
       <li><b>Hints and reviews</b> come from Tilefish's search. Winning chances are estimates (simulation) unless marked solved; moves within about one percent are effectively equal. Reviews judge each move with only what its player could see.</li>
+      <li><b>Game review:</b> each move gets a class by the winning chance it gave up against Tilefish's choice:
+        <span class="cls-legend"><span class="cls brilliant">!!</span> Brilliant (the best move, giving up 12+ points of score for a better game) · <span class="cls great">!</span> Great (the only strong move) · <span class="cls best">&#9733;</span> Best · Excellent (within 1%) · Good (under 3%) · <span class="cls inaccuracy">?!</span> Inaccuracy (3–6%) · <span class="cls mistake">?</span> Mistake (6–12%) · <span class="cls blunder">??</span> Blunder (12% or more).</span>
+        Where a game is settled or the endgame is solved, points given up count instead. The better move is drawn on the board, dashed, with its coordinate and an arrow for its direction; point at any move in the list to see it there, or click to keep it. Accuracy is the average over a player's moves (100 for Tilefish's choice).
+        <kbd>&larr;</kbd> <kbd>&rarr;</kbd> step through the game, <kbd>&uarr;</kbd> <kbd>&darr;</kbd> jump between key moves, <kbd>B</kbd> shows the best move, <kbd>Home</kbd> <kbd>End</kbd> go to the start and the end.</li>
       <li><b>Notation:</b> <i>8D WORD</i> is across from row 8, column D; <i>D8 WORD</i> is down. Letters in brackets were already on the board; lower case is a blank.</li>
     </ul>
   </div>
