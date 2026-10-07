@@ -48,6 +48,8 @@ Tilefish().then((m) => {
   for (let g = 0; g < games; g++) {
     let r = ui("new " + (g % 2 ? "second" : "first") + " " + (11 + g));
     check(r.ok && r.state.rack.length === 7 && r.state.bag === 86, "new game deals 7 tiles each");
+    const list = ui("moves 12");
+    check(list.ok && list.moves.length === 12 && list.moves[0].equity >= list.moves[11].equity, "moves lists the static best first");
     let turns = 0, phases = new Set();
     while (!r.state.over && turns < 80) {
       if (r.state.yourTurn) {
@@ -73,6 +75,11 @@ Tilefish().then((m) => {
     const last = s.history[s.history.length - 1];
     check(last.total === (last.who === "you" ? s.you : s.bot), "the last total matches the score");
     check(!ui("move pass").ok && !ui("bot").ok, "no moves after the end");
+    // The commands behind the easier levels, the word preview and the analysis board.
+    const ms = ui("moves 5");
+    check(!ms.ok && /over/.test(ms.error), "no move list once the game is over");
+    const j = ui("judge 0 " + ui("record").moves[0] + " 0");
+    check(j.ok && j.score > 0 && j.words.length > 0 && j.words.every((w) => w.ok), "judge checks the first move again: " + JSON.stringify(j));
     // The game review's verdicts: the move's own estimate, the scores and the alternatives,
     // in the simulated middle game and in the solved endgame alike.
     for (const n of [0, s.history.length - 1]) {
