@@ -66,7 +66,8 @@ British English in Oxford spelling) and a clock:
 - **Practice** with hints (Tilefish's best moves, with what each keeps and an estimated winning
   chance), take-backs and a pause button. The game is marked as assisted if you use them.
 - **Two players** at one screen, with the rack hidden between turns.
-- **Analyse** a pasted position (CGP) or a game record (`.gcg`, or a Tilefish game file).
+- **Analyse** a pasted position (CGP), a game record (`.gcg`, or a Tilefish game file), or a
+  board you set up by hand (click a square and type, or tap the letters; then the racks and scores).
 
 Five strengths, from Beginner and Easy (which pick weaker moves on purpose, for learning) to
 Casual, Strong and Champion; a **daily puzzle** (find the best move), more puzzles of that kind

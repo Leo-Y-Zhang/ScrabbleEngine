@@ -217,7 +217,7 @@ function viewSeat(state) {
 const humanTurn = () => S && !S.over && !G.over && reviewAt < 0 && !puzzleDone() && (G.mode === "duo" || S.turn === G.human);
 // Tiles can be set out while Tilefish thinks, as a plan for your next move; they are
 // checked, and can be played, once its move is on the board.
-const canArrange = () => !!exploring || (S && !S.over && !G.over && reviewAt < 0 && !concealed && !puzzleDone() && (G.mode === "duo" ? humanTurn() : true));
+const canArrange = () => !!setup || !!exploring || (S && !S.over && !G.over && reviewAt < 0 && !concealed && !puzzleDone() && (G.mode === "duo" ? humanTurn() : true));
 const puzzleDone = () => G && G.mode === "puzzle" && G.puzzle && (G.puzzle.solved || G.puzzle.revealed);
 const assistAllowed = () => G && (G.mode === "practice" || G.mode === "analysis");
 function sideName(side) {
@@ -475,7 +475,7 @@ function renderBoard(fresh) {
   for (let s = 0; s < N * N; s++) {
     const d = squares[s];
     d.textContent = "";
-    d.classList.toggle("cursor", !!cursor && cursor.sq === s && !occupied(s) && canArrange());
+    d.classList.toggle("cursor", !!cursor && cursor.sq === s && (!occupied(s) || !!setup) && canArrange());
     d.classList.toggle("down", !!cursor && cursor.down);
     d.classList.toggle("lastsq", last.has(s) && filled(s) && !(marks && preview));
     d.classList.toggle("mine", lastMine);
@@ -2372,6 +2372,7 @@ function renderExports() {
     add("Save GCG", async () => { const r = await ui("gcg"); download("tilefish-" + G.id + ".gcg", r.gcg); });
   }
   if (shareable(G)) add("Copy game link", () => shareGame(G));
+  if (G.mode === "analysis" && S && reviewAt < 0) add("Edit this position", () => openSetup({ board: S.board, rack: S.rack, you: S.you, them: S.bot }));
   if (G.mode === "puzzle") return;
   if (G.mode !== "review") add("Save Tilefish file", () => download("tilefish-" + G.id + ".json", JSON.stringify(snapshotForSave(), null, 1), "application/json"));
   add("Copy position", async () => {
@@ -2592,6 +2593,11 @@ boardEl.addEventListener("click", async (e) => {
   const sqEl = e.target.closest(".sq");
   if (!sqEl || !canArrange()) return;
   const sq = +sqEl.dataset.sq;
+  if (setup) {  // any square, filled or not: typing replaces its tile
+    cursor = cursor && cursor.sq === sq ? { sq, down: !cursor.down } : { sq, down: false };
+    renderSetup();
+    return;
+  }
   if (occupied(sq)) return;
   if (selected >= 0) { if (await place(selected, sq)) { render(); checkPending(); } return; }
   cursor = cursor && cursor.sq === sq ? { sq, down: !cursor.down } : { sq, down: false };
@@ -2613,6 +2619,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.ctrlKey || e.metaKey || e.altKey || /input|textarea/i.test(e.target.tagName)) return;
+  if (setup) return setupKey(e);
   const k = e.key;
   if (exploring && k === "Escape") { e.preventDefault(); if (pending.size) { recall(); render(); checkPending(); } else exitExplore(); return; }
   if (reviewAt >= 0 && !exploring) {
@@ -2900,6 +2907,7 @@ async function withLoading(lex, fn) {
   }
 }
 function resetView() {
+  if (setup) closeSetup();
   S = null; shownBoard = null; rack = []; pending = new Map(); order = []; last = new Set(); reviewAt = -1;
   rvBoards = null; preview = null; analysing = null; rvFresh = null; exploring = null; hintState = null; inferState = null;
   $("rating").hidden = true;
@@ -2956,12 +2964,178 @@ async function openAnalysis() {
   await withLoading(G.lexicon, async () => {
     const r = await ui("cgp " + G.cgp);
     if (!r.ok) throw new Error(r.error);
-    G.human = r.state.turn;
-    const st = (await ui("seat " + G.human)).state;
-    showState(st, null);
-    render();
+    await analysisFrom(r.state);
   });
 }
+async function analysisFrom(state) {
+  G.human = state.turn;
+  const st = (await ui("seat " + G.human)).state;
+  showState(st, null);
+  render();
+}
+
+// ---------- setting up a board by hand (Analyse) ----------
+// The board is edited in the page: click a square and type, or tap the letters under the
+// board (a phone has no keyboard here); Shift or the blank key makes a blank.  The racks and
+// scores go with it into a CGP for `ui cgp`, which checks the position.
+const TILE_COUNT = { A: 9, B: 2, C: 2, D: 4, E: 12, F: 2, G: 3, H: 2, I: 9, J: 1, K: 1, L: 4, M: 2, N: 6, O: 8, P: 2, Q: 1, R: 6, S: 4, T: 6, U: 4, V: 2, W: 2, X: 1, Y: 2, Z: 1, "?": 2 };
+let setup = null;  // {board: 225 squares, "." or a letter (lower case: a blank), blank: next letter is a blank}
+function openSetup(from) {
+  epoch++;
+  resetView();
+  G = null;
+  setup = { board: new Array(N * N).fill("."), blank: false };
+  if (from) for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) setup.board[r * N + c] = from.board[r][c];
+  $("setup-rack").value = from ? from.rack : "";
+  $("setup-opp").value = "";
+  $("setup-you").value = from ? from.you : 0;
+  $("setup-them").value = from ? from.them : 0;
+  cursor = { sq: 7 * N + 7, down: false };
+  $("app").classList.add("setting-up");
+  // beside the board where there is room, else under it
+  if (matchMedia("(min-width: 901px)").matches) $("side").prepend($("setup")); else $("rack").after($("setup"));
+  $("setup").hidden = false;
+  $("mini").hidden = true;
+  renderSetup();
+}
+function closeSetup() {
+  setup = null;
+  cursor = null;
+  $("app").classList.remove("setting-up");
+  $("setup").hidden = true;
+}
+function setupRows() {
+  const rows = [];
+  for (let r = 0; r < N; r++) rows.push(setup.board.slice(r * N, r * N + N).join(""));
+  return rows;
+}
+const rackText = (id) => $(id).value.toUpperCase().replace(/[^A-Z?]/g, "").slice(0, 7);
+// Too many of a tile, counting the board and both racks (a blank on the board counts as "?").
+function setupProblem() {
+  const n = {};
+  const add = (ch) => { n[ch] = (n[ch] || 0) + 1; };
+  for (const ch of setup.board) if (ch !== ".") add(ch === ch.toLowerCase() ? "?" : ch);
+  for (const ch of rackText("setup-rack") + rackText("setup-opp")) add(ch);
+  for (const ch of Object.keys(n)) if (n[ch] > TILE_COUNT[ch]) return "Too many " + (ch === "?" ? "blanks" : ch + "'s") + ": " + n[ch] + " of " + TILE_COUNT[ch] + ".";
+  return null;
+}
+function setupCgp() {
+  const rows = setupRows().map((row) => row.replace(/\.+/g, (m) => String(m.length)));
+  const score = (id) => Math.max(0, Math.min(2000, Math.round(+$(id).value || 0)));
+  return rows.join("/") + " " + rackText("setup-rack") + "/" + rackText("setup-opp") + " " + score("setup-you") + "/" + score("setup-them") + " 0";
+}
+function renderSetup() {
+  shownBoard = setupRows();
+  renderBoard();
+  const keys = $("setup-keys");
+  if (!keys.firstChild) {
+    for (const L of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+      const b = document.createElement("button");
+      b.className = "skey";
+      b.textContent = L;
+      b.dataset.key = L;
+      keys.appendChild(b);
+    }
+    for (const [k, label, title] of [["blank", "Blank", "The next letter is a blank (or hold Shift)"], ["back", "⌫", "Step back and clear"], ["del", "Clear", "Clear this square"]]) {
+      const b = document.createElement("button");
+      b.className = "skey wide";
+      b.textContent = label;
+      b.title = title;
+      b.dataset.key = k;
+      keys.appendChild(b);
+    }
+    keys.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-key]");
+      if (!b || !setup) return;
+      const k = b.dataset.key;
+      if (k === "blank") setup.blank = !setup.blank;
+      else if (k === "back") setupBack();
+      else if (k === "del") setupSet(cursor ? cursor.sq : -1, ".");
+      else setupType(k, false);
+      renderSetup();
+    });
+  }
+  keys.querySelector('[data-key="blank"]').classList.toggle("on", setup.blank);
+  const tiles = setup.board.filter((ch) => ch !== ".").length, problem = setupProblem();
+  $("setup-check").className = "setup-check" + (problem ? " bad" : "");
+  $("setup-check").textContent = problem || tiles + " tile" + (tiles === 1 ? "" : "s") + " on the board; " + (100 - tiles) + " in the bag and on the racks." +
+    (rackText("setup-rack").length ? "" : " Give your rack to analyse.");
+  $("setup-go").disabled = !!problem || !rackText("setup-rack").length;
+}
+function setupSet(sq, ch) {
+  if (sq < 0) return;
+  setup.board[sq] = ch;
+}
+function setupStep(dir) {
+  if (!cursor) return;
+  const r = Math.floor(cursor.sq / N), c = cursor.sq % N;
+  if (cursor.down ? r + dir >= 0 && r + dir < N : c + dir >= 0 && c + dir < N) cursor.sq += dir * (cursor.down ? N : 1);
+}
+function setupType(L, shift) {
+  if (!cursor) return;
+  const blank = setup.blank || shift;
+  setupSet(cursor.sq, blank ? L.toLowerCase() : L.toUpperCase());
+  setup.blank = false;
+  sfx.place();
+  setupStep(1);
+}
+function setupBack() {
+  if (!cursor) return;
+  if (setup.board[cursor.sq] === ".") setupStep(-1);
+  setupSet(cursor.sq, ".");
+}
+function setupKey(e) {
+  const k = e.key;
+  if (/^[a-z]$/i.test(k)) { e.preventDefault(); setupType(k, e.shiftKey); }
+  else if (k === "Backspace") { e.preventDefault(); setupBack(); }
+  else if (k === "Delete") { e.preventDefault(); if (cursor) setupSet(cursor.sq, "."); }
+  else if (k === "Escape") { cursor = null; }
+  else if (k === "Enter" && e.target.tagName !== "BUTTON") { e.preventDefault(); setupGo(); return; }
+  else if (k.startsWith("Arrow") && cursor) {
+    e.preventDefault();
+    const r = Math.floor(cursor.sq / N), c = cursor.sq % N;
+    if (k === "ArrowRight" && c < N - 1) cursor = { sq: cursor.sq + 1, down: false };
+    if (k === "ArrowLeft" && c > 0) cursor = { sq: cursor.sq - 1, down: false };
+    if (k === "ArrowDown" && r < N - 1) cursor = { sq: cursor.sq + N, down: true };
+    if (k === "ArrowUp" && r > 0) cursor = { sq: cursor.sq - N, down: true };
+  } else return;
+  renderSetup();
+}
+async function setupGo() {
+  if (!setup || setupProblem() || !rackText("setup-rack").length) return;
+  const cgp = setupCgp(), lex = loadedLex || settings.lexicon;
+  $("setup-go").disabled = true;
+  $("setup-check").textContent = "Checking the position…";
+  try {
+    if (!worker) startWorker();
+    await loadLexicon(lex);
+    epoch++;
+    const r = await ui("cgp " + cgp);
+    if (!r.ok) throw new Error(r.error);
+    closeSetup();
+    G = Object.assign(newGameObject(), { mode: "analysis", lexicon: lex, cgp, clockMin: 0, assisted: true });
+    await analysisFrom(r.state);
+  } catch (err) {
+    if (!setup) return;
+    $("setup-check").className = "setup-check bad";
+    $("setup-check").textContent = capital(err.message) + ".";
+    $("setup-go").disabled = false;
+  }
+}
+["setup-rack", "setup-opp", "setup-you", "setup-them"].forEach((id) => {
+  $(id).addEventListener("input", () => { if (setup) renderSetup(); });
+  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); setupGo(); } });
+});
+$("setup-go").onclick = setupGo;
+$("setup-clear").onclick = () => { if (!setup) return; setup.board.fill("."); cursor = { sq: 7 * N + 7, down: false }; renderSetup(); };
+$("setup-cancel").onclick = () => { closeSetup(); render(); openStart(); };
+$("btn-setup").onclick = async () => {
+  const lex = settings.lexicon;
+  await withLoading(lex, async () => {
+    if (busy) await restartEngine();
+  });
+  if (loadedLex === lex) openSetup(null);
+};
 $("file-in").onchange = async (e) => {
   const f = e.target.files[0];
   if (!f) return;
