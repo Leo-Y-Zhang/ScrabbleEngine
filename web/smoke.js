@@ -56,6 +56,8 @@ Tilefish().then((m) => {
         const h = ui("hint 0.2");
         check(h.ok && h.hint.moves.length > 0, "hint returns candidates");
         phases.add(h.hint.method);
+        if (h.hint.exact && /endgame/.test(h.hint.method))
+          check(Array.isArray(h.hint.line) && h.hint.line[0] === h.hint.best, "a solved endgame's hint gives its best line: " + JSON.stringify(h.hint.line));
         const c = ui("check " + h.hint.best);
         check(c.ok || /^(exch|pass)/.test(h.hint.best), "the engine's own hint passes check: " + h.hint.best + " " + c.error);
         r = ui("move " + h.hint.best);
@@ -86,6 +88,8 @@ Tilefish().then((m) => {
       const v = ui("review " + n + " 0.2");
       check(v.ok && typeof v.bestScore === "number" && typeof v.playedScore === "number" && v.alts.length > 0 && typeof v.playedWin === "number",
         "review of move " + (n + 1) + " has the played move's estimate and alternatives: " + JSON.stringify(v).slice(0, 300));
+      if (v.exact) check(Array.isArray(v.line) && v.line[0] === v.best && Array.isArray(v.playedLine) && v.playedLine[0] === v.played,
+        "a solved endgame's review gives the best line and the line after the move played: " + JSON.stringify(v).slice(0, 300));
     }
     console.log("game " + (g + 1) + ": " + s.you + "-" + s.bot + " in " + turns + " turns; hint methods: " + [...phases].join(", "));
     // Take-back and replay: the exact move record rebuilds the identical game (the seed fixes

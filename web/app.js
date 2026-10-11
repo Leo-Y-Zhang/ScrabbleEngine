@@ -1203,7 +1203,8 @@ function renderHint() {
         " · value " + (+m.value).toFixed(1) + (m.pruned ? " · dropped early" : "") + "</span></button>";
     }
   }
-  html += '<div class="hint-foot"><span>' + (hs.step >= 3 ? "Win chances are estimates; ≈ marks moves within 1%." : "Each step tells a little more.") + "</span>" +
+  if (hs.step >= 3 && h.exact && h.line && h.line.length) html += '<p class="coach-line hint-line"><span class="lbl">Best play to the end:</span> ' + lineHtml(h.line, S.turn) + "</p>";
+  html += '<div class="hint-foot"><span>' + (hs.step >= 3 ? (h.exact ? "Solved exactly: the last figure is the end result of each move." : "Win chances are estimates; ≈ marks moves within 1%.") : "Each step tells a little more.") + "</span>" +
     (hs.step < 3 ? '<button class="ctl small" id="hint-more">' + (hs.step === 1 ? "Where?" : "Show the moves") + "</button>"
       : !h.exact ? '<button class="link strong" id="hint-longer">Analyse longer</button>' : "") + "</div>";
   box.innerHTML = html;
@@ -1441,6 +1442,11 @@ function leaveOf(rack, text) {
 }
 const moveLabel = (t) => (isPass(t) ? "Pass" : isExch(t) ? "Exchange " + t.replace(/^exch\s*/i, "") : pretty(t));
 const isBingo = (t) => !isExch(t) && tilesOf(t).length === 7;
+// An endgame line (the exact solver's best play from a position), each move with its player.
+function lineHtml(line, mover) {
+  return '<span class="ln">' + line.map((mv, i) => '<span class="ln-move"><span class="dim">' + esc(sideName((mover + i) % 2)) + "</span> " + esc(moveLabel(mv)) + "</span>")
+    .join(' <span class="ln-sep" aria-hidden="true">›</span> ') + "</span>";
+}
 const sgn = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(Math.round(x));
 const pp = (x) => (100 * x).toFixed(Math.abs(x) < 0.1 ? 1 : 0) + "%";
 
@@ -1748,6 +1754,10 @@ function coachHtml(v, k, opts) {
   let html = '<div class="coach ' + cls + '"><div class="coach-head">' + badge(cls, "lg") + "<div><b>" + esc(moveLabel(v.played)) + "</b> is " + info.say +
     '<div class="coach-sub">' + (opts && opts.explore ? "your try" : esc(sideName(side)) + " · move " + (k + 1) + " · rack " + esc(v.rack.replace(/\?/g, "·"))) + "</div></div></div>";
   html += '<p class="coach-text">' + lines.join(" ") + '</p><p class="coach-chance">' + esc(chance) + "</p>";
+  if (v.exact && v.line && v.line.length) {
+    html += '<p class="coach-line"><span class="lbl">Best play to the end:</span> ' + lineHtml(v.line, side) + "</p>";
+    if (!v.same && v.playedLine && v.playedLine.length > 1) html += '<p class="coach-line"><span class="lbl">After the move played:</span> ' + lineHtml(v.playedLine, side) + "</p>";
+  }
   // the moves Tilefish considered, the one played among them
   const alts = (v.alts || []).slice(0, 5);
   const bestValue = (num(v.playedValue) || 0) + (+v.valueLoss || 0);
@@ -2037,12 +2047,13 @@ async function findPuzzle(base) {
 }
 // Endgame puzzles: a static game played on past the empty bag until the two racks hold
 // 11 tiles or fewer (no blanks), so the exact solver usually settles it in well under a
-// second; a position it has not solved in 2 s is passed over.  Kept when the obvious move,
+// second; a position it has not solved in 1.2 s is passed over.  Kept when the obvious move,
 // the highest-scoring one, ends at least 4 points worse than the best play; else the one
-// where it costs most of up to 24 tried.
+// where it costs most of those tried (up to 24, or 4 s once one is found).
 async function findEndgame(base) {
   let chosen = null, gainOf = -1, at = -1;
-  for (let a = 0; a < 24 && gainOf < 4; a++) {
+  const t0 = Date.now();
+  for (let a = 0; a < 24 && gainOf < 4 && !(chosen && Date.now() - t0 > 4000); a++) {
     const seed = base + a;
     let r = await ui("new first " + seed);
     at = seed;
@@ -2060,7 +2071,7 @@ async function findEndgame(base) {
       st = (await ui("state")).state;
     }
     if (st.over || st.rack.length < 3 || st.rack.length + st.unseen.length > 11 || st.rack.includes("?") || st.unseen.includes("?")) continue;
-    const h = await ui("hint 2");
+    const h = await ui("hint 1.2");
     if (!h.ok || !h.hint.exact || !h.hint.moves.length || isPass(h.hint.moves[0].move)) continue;
     const plays = h.hint.moves.filter((m) => !isPass(m.move));
     const topScore = Math.max(...plays.map((m) => m.score));
@@ -2105,6 +2116,7 @@ async function openPuzzle(daily, kind) {
     G.record = pz.moves.map((m, i) => ({ move: m, side: i % 2, used: [0, 0] }));
     G.puzzle.answer = pz.hint.moves[0].move;
     G.puzzle.alts = pz.hint.moves.slice(0, 5);
+    G.puzzle.line = pz.hint.exact && pz.hint.line ? pz.hint.line : null;
     const st = (await ui("state")).state;
     S = null;
     showState(st, null);
@@ -2192,6 +2204,7 @@ function renderPuzzle() {
         html += '<div class="pz-result no">' + badge(cls, "lg") + "<div><b>Not quite.</b> " + esc(moveLabel(v.played)) + " ends " + ends(v) + ", " +
           (+v.valueLoss).toFixed(0) + " point" + (Math.round(+v.valueLoss) === 1 ? "" : "s") + " worse than the best play. " +
           ((v.playedScore || 0) > (v.bestScore || 0) ? "Scoring the most now is not the answer." : "Think about going out, and about what the opponent can still play.") + "</div></div>";
+        if (v.playedLine && v.playedLine.length > 1) html += '<p class="coach-line"><span class="lbl">What would follow:</span> ' + lineHtml(v.playedLine, G.human) + "</p>";
       } else {
         html += '<div class="pz-result no">' + badge(cls, "lg") + "<div><b>Not quite.</b> " + esc(moveLabel(v.played)) + " is " + CLASS_INFO[cls].say +
           " (" + pp(Math.max(0, v.winLoss)) + " less winning chance). " + (isBingo(v.best) && !isBingo(v.played) ? "Look for a bingo." :
@@ -2206,6 +2219,8 @@ function renderPuzzle() {
       badge(i ? STEP_CLASSES[eg ? stepOf(Math.max(0, top.value - a.value), POINT_STEPS) : stepOf(Math.max(0, top.win - a.win), WIN_STEPS)] : "best", "sm") +
       '<span class="mv">' + esc(moveLabel(a.move)) + '</span><span class="sc">' + (a.score ? "+" + a.score : "") + '</span><span class="wp">' +
       (eg ? sgn(a.value) : isFinite(a.win) ? pct(a.win) : "") + "</span></button></li>").join("") + "</ol>";
+    const best = pz.last && pz.last.exact && pz.last.line && pz.last.line.length ? pz.last.line : pz.line;
+    if (eg && best && best.length) html += '<p class="coach-line"><span class="lbl">Best play to the end:</span> ' + lineHtml(best, G.human) + "</p>";
     if (eg) html += '<p class="pz-note dim">The last figure is where each move ends: points ahead (or behind) by the end of the game.</p>';
   }
   html += '<div class="coach-acts">' + (!pz.solved && !pz.revealed && pz.tries ? '<button class="ctl" id="pz-answer">Show the answer</button>' : "") +

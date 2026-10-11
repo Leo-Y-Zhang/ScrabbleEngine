@@ -1291,6 +1291,16 @@ inline std::string move_str(const Board& b, const Move& m) {
   if (m.type == MT_EXCHANGE) return "exch " + m.used().str();
   return move_coord(m) + " " + move_word(b, m);
 }
+// A line of moves from a position (an endgame's principal variation), each written on the
+// board as it stands when it is played.
+inline std::vector<std::string> line_str(const Lexicon& lex, Board b, const std::vector<Move>& line) {
+  std::vector<std::string> out;
+  for (const Move& m : line) {
+    out.push_back(move_str(b, m));
+    if (m.type == MT_PLACE) b.place(lex, m);
+  }
+  return out;
+}
 
 inline bool parse_coord(const std::string& tok, int& row, int& col, int& dir) {
   if (tok.empty()) return false;
@@ -5403,6 +5413,7 @@ struct Decision {
   double seconds = 0;
   bool exact = false;               // proven result (solved endgame / exhaustive pre-endgame)
   std::string info;                 // telemetry, one JSON object (protocol mode prints it as "info ...")
+  std::vector<std::string> line;    // endgame: the best line from here, as far as it is known
 };
 
 // Numbers for telemetry JSON (NaN and infinities become null).
@@ -5465,12 +5476,9 @@ class Engine {
         << std::fixed << std::setprecision(2) << er.seconds << "s";
       D.report.push_back(o.str());
       if (!er.pv.empty()) {
+        D.line = line_str(*lex_, P.board, er.pv);
         std::string line = "  principal variation:";
-        Board b = P.board;
-        for (const auto& m : er.pv) {
-          line += "  " + move_str(b, m);
-          if (m.type == MT_PLACE) b.place(*lex_, m);
-        }
+        for (const auto& m : D.line) line += "  " + m;
         D.report.push_back(line);
       }
       return D;
@@ -6787,7 +6795,13 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
         << ",\"value\":" << json_num(r.value, 2) << ",\"win\":" << json_num(r.win, 4)
         << ",\"iterations\":" << r.iterations << ",\"pruned\":" << (r.pruned ? "true" : "false") << '}';
     }
-    o << "]}";
+    o << ']';
+    if (!D.line.empty()) {
+      o << ",\"line\":[";
+      for (size_t i = 0; i < D.line.size(); ++i) o << (i ? "," : "") << json_str(D.line[i]);
+      o << ']';
+    }
+    o << '}';
     return o.str();
   }
 
@@ -7264,7 +7278,21 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       c.threads = c.sim.threads = threads;
       c.sim.time_limit = c.endgame_time = c.peg_time = secs;
       const Position P = Position::from_game(game);
-      const Decision D = eng().choose(P, c, false);
+      Decision D = eng().choose(P, c, false);
+      if (D.exact && P.bag_n == 0 && D.rows.size() > 1) {  // exact values for the rows shown
+        std::vector<std::pair<Move, int>> rows;
+        for (const auto& r : D.rows) rows.push_back({r.move, (int)std::lround(r.value)});
+        refine_endgame(P, rows, secs);
+        D.rows.clear();
+        for (const auto& r : rows) {
+          DecisionRow row;
+          row.move = r.first;
+          row.value = r.second;
+          const int f = P.spread() + r.second;
+          row.win = f > 0 ? 1.0 : (f == 0 ? 0.5 : 0.0);
+          D.rows.push_back(row);
+        }
+      }
       std::cout << "{\"ok\":true,\"hint\":" << decision_json(P, D) << "}" << std::endl;
       return;
     } else if (sub != "state") {
@@ -7521,7 +7549,69 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
     double played_win = NAN, played_value = NAN;
     bool has_top = false;
     ReviewAlt top;
+    // Endgames: the best line from the position, and the line after the move played.
+    std::vector<std::string> line, played_line;
   };
+  // A solved endgame proves only its best move's value: the other root moves keep the
+  // bounds the search stopped at.  For the moves a page shows (`ui hint`, `ui review`),
+  // this solves the position after the move, so its value is exact too.  The engine's own
+  // choice of move never calls it.  False if that solve did not finish in `secs`.
+  bool endgame_value_after(const Position& P, const Move& m, double secs, int& value) {
+    if (m.type == MT_PLACE && m.ntiles == P.rack.n) {
+      value = m.score + 2 * P.unseen.face();
+      return true;
+    }
+    Board nb = P.board;
+    if (m.type == MT_PLACE) nb.place(lex, m);
+    Rack mine = P.rack;
+    if (m.type == MT_PLACE) mine.sub_all(m.used());
+    EndgameParams ep;
+    ep.time_limit = secs;
+    ep.threads = threads;
+    const EndgameResult ea = eng().endgame().solve(nb, P.unseen, mine, (m.type == MT_PLACE && m.score) ? 0 : P.zeros + 1, ep);
+    value = (m.type == MT_PLACE ? m.score : 0) - ea.value;
+    return ea.solved;
+  }
+  // Exact values for the root moves of a solved endgame that a page shows: rows[0] is the
+  // proven best; the next four, and the highest-scoring play, are made exact, within
+  // `secs`.  A value not yet made exact is an upper bound (the search failed low on it),
+  // so refining the highest such value and sorting again finds the true next four.
+  // Rows end best first; `known` is a move whose exact value is already known.
+  void refine_endgame(const Position& P, std::vector<std::pair<Move, int>>& rows, double secs, const Move* known = nullptr,
+                      int known_value = 0) {
+    if (rows.size() < 2) return;
+    std::vector<char> exact(rows.size(), 0);
+    exact[0] = 1;
+    const double until = now_s() + secs;
+    auto refine = [&](size_t r) {
+      int ev;
+      if (known && rows[r].first.same_as(*known)) ev = known_value;
+      else if (now_s() >= until || !endgame_value_after(P, rows[r].first, std::max(0.05, until - now_s()), ev)) return false;
+      rows[r].second = ev;
+      exact[r] = 1;
+      return true;
+    };
+    size_t top = 0;
+    for (size_t r = 0; r < rows.size(); ++r)
+      if (rows[r].first.type == MT_PLACE && (rows[top].first.type != MT_PLACE || rows[r].first.score > rows[top].first.score)) top = r;
+    if (top) refine(top);
+    for (;;) {
+      std::vector<size_t> idx(rows.size() - 1);
+      std::iota(idx.begin(), idx.end(), 1);
+      std::stable_sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return rows[a].second > rows[b].second; });
+      std::vector<std::pair<Move, int>> nr{rows[0]};
+      std::vector<char> ne{1};
+      for (size_t i : idx) {
+        nr.push_back(rows[i]);
+        ne.push_back(exact[i]);
+      }
+      rows.swap(nr);
+      exact.swap(ne);
+      size_t r = 1;
+      while (r < rows.size() && r < 5 && exact[r]) ++r;
+      if (r >= rows.size() || r >= 5 || !refine(r)) break;
+    }
+  }
   bool review_position(const Position& P, Move actual, double secs, ReviewVerdict& v) {
     MoveGen gen(&lex, &leaves);
     const EvalCtx ctx = Simulator::ctx_for(P);
@@ -7536,6 +7626,8 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       ep.threads = threads;
       const EndgameResult er = eng().endgame().solve(P.board, P.rack, P.unseen, P.zeros, ep);
       best = er.best;
+      v.line = line_str(lex, P.board, er.pv);
+      v.played_line = {move_str(P.board, actual)};
       int va;
       if (actual.type == MT_PLACE && actual.ntiles == P.rack.n) {
         va = actual.score + 2 * P.unseen.face();
@@ -7546,6 +7638,7 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
         if (actual.type == MT_PLACE) mine.sub_all(actual.used());
         const EndgameResult ea = eng().endgame().solve(nb, P.unseen, mine, (actual.type == MT_PLACE && actual.score) ? 0 : P.zeros + 1, ep);
         va = (actual.type == MT_PLACE ? actual.score : 0) - ea.value;
+        for (const auto& m : line_str(lex, nb, ea.pv)) v.played_line.push_back(m);
       }
       eq_loss = std::max(0, er.value - va);
       v.method = er.solved ? "endgame (solved)" : "endgame (best found)";
@@ -7559,6 +7652,7 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       v.played_value = va;
       std::vector<std::pair<Move, int>> root = er.root;
       std::stable_sort(root.begin(), root.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+      if (er.solved) refine_endgame(P, root, secs, &actual, va);  // exact values for the moves shown
       for (size_t r = 0; r < root.size() && r < 5; ++r)
         v.alts.push_back({move_str(P.board, root[r].first), root[r].first.type == MT_PLACE ? root[r].first.score : 0,
                           res(root[r].second), (double)root[r].second});
@@ -7648,7 +7742,14 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
     for (size_t k = 0; k < v.alts.size(); ++k)
       o << (k ? "," : "") << "{\"move\":" << json_str(v.alts[k].move) << ",\"score\":" << v.alts[k].score
         << ",\"win\":" << json_num(v.alts[k].win, 4) << ",\"value\":" << json_num(v.alts[k].value, 2) << "}";
-    o << "]}";
+    o << ']';
+    for (const auto* L : {&v.line, &v.played_line}) {
+      if (L->empty()) continue;
+      o << (L == &v.line ? ",\"line\":[" : ",\"playedLine\":[");
+      for (size_t i = 0; i < L->size(); ++i) o << (i ? "," : "") << json_str((*L)[i]);
+      o << ']';
+    }
+    o << '}';
     return o.str();
   }
 
