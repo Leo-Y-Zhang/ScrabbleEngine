@@ -590,7 +590,8 @@ function renderSide() {
   const tr = tracker(counts);
   $("unseen-notes").innerHTML = '<div class="tr-sum"><span><b>' + tr.vowels + "</b> vowels</span><span><b>" + tr.cons + "</b> consonants</span>" +
     (tr.blanks ? "<span><b>" + tr.blanks + "</b> blank" + (tr.blanks > 1 ? "s" : "") + "</span>" : "") + "</div>" +
-    (tr.notes.length ? '<ul class="tr-notes">' + tr.notes.map((n) => "<li>" + esc(n) + "</li>").join("") + "</ul>" : "");
+    (tr.notes.length ? '<ul class="tr-notes">' + tr.notes.map((n) => "<li>" + esc(n) + "</li>").join("") + "</ul>" : "") + inferHtml();
+  if ($("btn-infer")) $("btn-infer").onclick = estimateRack;
   const un = $("unseen");
   un.textContent = "";
   for (const ch of Object.keys(counts).sort()) {
@@ -601,6 +602,48 @@ function renderSide() {
   }
   $("unseen-count").textContent = S.unseen.length + " · " + tr.vowels + " vowels";
   renderExports();
+}
+// Practice and Analyse: what the opponent probably kept from its last play (`ui infer`,
+// the inference the simulation itself uses), each tile's chance beside its chance in a
+// plain draw from the tiles unseen then.  Using it marks the game as assisted, as a hint does.
+let inferState = null;  // {at, busy} while it runs, then {at, r}
+function inferAvailable() {
+  if (!G || !assistAllowed() || !humanTurn() || busy || !S || !S.bag || reviewAt >= 0) return false;
+  const h = S.history[S.history.length - 1];
+  return !!h && h.type === "play" && h.tiles < 7 && moverOf(S.history.length - 1) !== S.seat;  // a bingo keeps nothing
+}
+async function estimateRack() {
+  if (!inferAvailable()) return;
+  const at = S.history.length, my = epoch;
+  inferState = { at, busy: true };
+  G.assisted = true;
+  renderSide();
+  let r;
+  try { r = await ui("infer " + secs(1)); } catch (e) { inferState = null; return; }
+  if (my !== epoch || !S || S.history.length !== at) return;
+  inferState = { at, r };
+  save();
+  renderSide();
+}
+function inferHtml() {
+  if (!S || reviewAt >= 0) return "";
+  const st = inferState && inferState.at === S.history.length ? inferState : null;
+  const opp = sideName(1 - S.seat);
+  if (st && st.busy) return '<div class="infer dim">Estimating ' + esc(opp) + "'s rack…</div>";
+  if (st && st.r) {
+    const r = st.r;
+    if (!r.ok) return '<div class="infer dim">' + esc(capital(r.error)) + ".</div>";
+    const name = (t) => (t === "?" ? "blank" : t);
+    const list = (ts) => ts.map((t) => "<b>" + name(t.tile) + "</b> " + pct(t.p) + ' <span class="dim">(' + pct(t.base) + ")</span>").join(", ");
+    const up = r.tiles.filter((t) => t.p - t.base >= 0.04).sort((a, b) => b.p - b.base - (a.p - a.base)).slice(0, 4);
+    const down = r.tiles.filter((t) => t.base - t.p >= 0.04).sort((a, b) => b.base - b.p - (a.base - a.p)).slice(0, 4);
+    let h = '<div class="infer"><div class="infer-head">' + esc(opp) + " kept " + r.kept + " tile" + (r.kept === 1 ? "" : "s") + " after " + esc(pretty(r.move)) + ".</div>";
+    if (up.length) h += '<div class="infer-row"><span class="dim">Likelier than by chance:</span> ' + list(up) + "</div>";
+    if (down.length) h += '<div class="infer-row"><span class="dim">Less likely:</span> ' + list(down) + "</div>";
+    if (!up.length && !down.length) h += '<div class="infer-row">Its play says little about the tiles it kept.</div>';
+    return h + '<div class="infer-row dim">An estimate: racks with which its play was a good choice count for more. In brackets, the chance in a plain draw.</div></div>';
+  }
+  return inferAvailable() ? '<button class="link strong infer-btn" id="btn-infer">Estimate ' + esc(opp) + "'s rack</button>" : "";
 }
 // What the unseen tiles (the bag and the opponent's rack) mean for your next moves.
 function tracker(counts) {
@@ -2858,7 +2901,7 @@ async function withLoading(lex, fn) {
 }
 function resetView() {
   S = null; shownBoard = null; rack = []; pending = new Map(); order = []; last = new Set(); reviewAt = -1;
-  rvBoards = null; preview = null; analysing = null; rvFresh = null; exploring = null; hintState = null;
+  rvBoards = null; preview = null; analysing = null; rvFresh = null; exploring = null; hintState = null; inferState = null;
   $("rating").hidden = true;
   $("puzzle").hidden = true;
   $("evalbar").hidden = true;

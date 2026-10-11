@@ -475,6 +475,10 @@ textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 .tr-sum b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .tr-notes { margin: 6px 0 0; padding-left: 16px; color: var(--ink-2); }
 .tr-notes li::marker { color: var(--c-inaccuracy); }
+.infer { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 13px; line-height: 1.5; }
+.infer-head { font-weight: 600; margin-bottom: 2px; }
+.infer-row { margin-top: 3px; }
+.infer-btn { margin-top: 8px; font-size: 13px; }
 
 /* ---------- Games and Stats ---------- */
 .tabs { display: flex; gap: 4px; margin: 6px 0 12px; border-bottom: 1px solid var(--line); }
