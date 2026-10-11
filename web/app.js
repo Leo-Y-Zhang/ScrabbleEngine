@@ -728,7 +728,7 @@ function statusForTurn() {
   }
   if (G.paused) return setStatus("The clock is paused.");
   if (!humanTurn()) return setStatus("&nbsp;");
-  if (exchanging) return setStatus("Pick the tiles to put back in the bag.");
+  if (exchanging) return setStatus("Pick the tiles to put back in the bag (click them, or type their letters).");
   const who = G.mode === "duo" ? sideName(S.turn) + " to move." : "Your move.";
   if (!pending.size) return setStatus(who + (G.mode === "puzzle" ? ' <span class="dim">Find the best move.</span>' : lastMoveNote()));
   setStatus(pendingStatus());
@@ -2072,7 +2072,7 @@ const SOLVED = new Set(["brilliant", "great", "best", "excellent"]);
 function puzzleLog() { return store.json("puzzles", {}); }
 function puzzleStreak() {
   const log = puzzleLog();
-  const solved = (d) => { const e = log[dayKey(d)]; return e && e.solved; };
+  const solved = (d) => { const e = log[dayKey(d)]; return e && e.solved && !e.late; };  // an earlier day's puzzle solved later does not count
   const d = new Date();
   if (!solved(d)) d.setDate(d.getDate() - 1);
   let n = 0;
@@ -2155,10 +2155,10 @@ async function findEndgame(base) {
   }
   return chosen;
 }
-async function openPuzzle(daily, kind) {
+async function openPuzzle(daily, kind, day) {
   kind = daily ? "move" : kind || store.get("puzzleKind", "move");
   if (!daily) store.set("puzzleKind", kind);
-  const lex = settings.lexicon, key = daily ? dayKey(new Date()) : null;
+  const lex = settings.lexicon, key = daily ? day || dayKey(new Date()) : null;
   const base = daily ? daySeed(key) : 1000 + Math.floor(Math.random() * 2 ** 29) * 8;
   G = { id: Date.now().toString(36), version: 1, mode: "puzzle", lexicon: lex, level: "strong", clockMin: 0, overtime: "naspa", think: "", seed: 0,
     firstSide: 0, human: 0, record: [], used: [0, 0], running: -1, since: 0, paused: false, pauseNote: "", assisted: false, over: false, result: null,
@@ -2241,7 +2241,8 @@ function logPuzzle() {
   const pz = G.puzzle;
   const log = puzzleLog(), key = pz.daily || "free:" + G.id;
   const prev = log[key] || {};
-  log[key] = { solved: prev.solved || pz.solved, tries: pz.tries, revealed: !pz.solved && pz.revealed, lex: G.lexicon, at: new Date().toISOString(), kind: pz.kind || "move" };
+  log[key] = { solved: prev.solved || pz.solved, tries: pz.tries, revealed: !pz.solved && pz.revealed, lex: G.lexicon, at: new Date().toISOString(), kind: pz.kind || "move",
+    late: prev.solved ? !!prev.late : !!pz.daily && pz.daily !== dayKey(new Date()) };
   store.put("puzzles", log);
 }
 // The daily puzzle's result as a few lines of text, a mark for each try: no position,
@@ -2258,6 +2259,7 @@ async function sharePuzzle() {
   }
   try { await navigator.clipboard.writeText(text); toast("Result copied.", true); } catch (e) { toast(text, true); }
 }
+let pastOpen = false;
 function renderPuzzle() {
   const box = $("puzzle"), pz = G && G.puzzle;
   if (!pz) { box.hidden = true; return; }
@@ -2308,6 +2310,16 @@ function renderPuzzle() {
   html += '<div class="coach-acts">' + (!pz.solved && !pz.revealed && pz.tries ? '<button class="ctl" id="pz-answer">Show the answer</button>' : "") +
     (pz.daily && (pz.solved || pz.revealed) ? '<button class="ctl" id="pz-share">Share result</button>' : "") +
     '<span class="ctl-gap"></span><button class="ctl primary" id="pz-next">' + (pz.solved || pz.revealed ? "Next puzzle" : "Skip") + "</button></div>";
+  // The last fortnight's daily puzzles, each from its date, so any of them can be played again.
+  if (pz.daily) {
+    const log = puzzleLog(), days = [];
+    for (let i = 1; i <= 14; i++) { const d = new Date(); d.setDate(d.getDate() - i); days.push(d); }
+    html += '<details class="pz-past"' + (pastOpen ? " open" : "") + '><summary>Earlier daily puzzles</summary><div class="pz-days">' + days.map((d) => {
+      const k = dayKey(d), e = log[k], mark = e ? (e.solved ? "✓" : e.revealed ? "✗" : "·") : "";
+      return '<button data-day="' + k + '" class="' + (k === pz.daily ? "on " : "") + (e && e.solved ? "ok" : e && e.revealed ? "no" : "") + '" title="' +
+        esc(d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })) + '">' + d.getDate() + '<span>' + mark + "</span></button>";
+    }).join("") + "</div></details>";
+  }
   html += '<div class="pz-kind"><span class="dim">Puzzles:</span><div class="seg" role="radiogroup" aria-label="Kind of puzzle">' +
     [["move", "Best move"], ["endgame", "Endgame"]].map(([k, l]) => '<button data-kind="' + k + '" role="radio" aria-checked="' + (k === (pz.kind || "move")) + '" class="' + (k === (pz.kind || "move") ? "on" : "") + '">' + l + "</button>").join("") +
     "</div></div></div>";
@@ -2316,6 +2328,9 @@ function renderPuzzle() {
   if ($("pz-share")) $("pz-share").onclick = sharePuzzle;
   $("pz-next").onclick = () => openPuzzle(false, pz.kind || "move");
   box.querySelectorAll(".pz-kind button").forEach((b) => (b.onclick = () => { if (!busy) openPuzzle(false, b.dataset.kind); }));
+  box.querySelectorAll(".pz-days button").forEach((b) => (b.onclick = () => { if (!busy) openPuzzle(true, "move", b.dataset.day); }));
+  const past = box.querySelector(".pz-past");
+  if (past) past.ontoggle = () => { pastOpen = past.open; };
   box.querySelectorAll("[data-pzmove]").forEach((b) => (b.onclick = async () => {
     if (!puzzleDone()) return;
     const was = [pz.solved, pz.revealed];
@@ -2674,7 +2689,8 @@ document.addEventListener("keydown", (e) => {
     else if (k === "Escape") { if (preview) setPreview(null); else leaveReview(); }
     return;
   }
-  if (/^[a-z]$/i.test(k)) { e.preventDefault(); typeLetter(k); }
+  if (exchanging && humanTurn() && (/^[a-z]$/i.test(k) || k === "?")) { e.preventDefault(); toggleExchange(k); }
+  else if (/^[a-z]$/i.test(k)) { e.preventDefault(); typeLetter(k); }
   else if (k === "Backspace") { e.preventDefault(); backspace(); }
   else if (k === "Enter" && e.target.tagName !== "BUTTON") { e.preventDefault(); submit(); }
   else if (k === "Escape") { recall(); hidePanels(); exchanging = false; xsel = new Set(); cursor = null; render(); }
@@ -2689,6 +2705,19 @@ document.addEventListener("keydown", (e) => {
     render();
   }
 });
+// Exchange by keyboard: a letter (or ? for a blank) picks the next such tile on the rack,
+// or puts one back when they are all picked.
+function toggleExchange(key) {
+  const L = key === "?" ? "?" : key.toUpperCase();
+  let i = rack.findIndex((r, j) => r && r.ch === L && !xsel.has(j));
+  if (i >= 0) xsel.add(i);
+  else {
+    i = rack.map((r, j) => (r && r.ch === L && xsel.has(j) ? j : -1)).filter((j) => j >= 0).pop();
+    if (i == null) { toast("You have no " + (L === "?" ? "blank" : L) + "."); return; }
+    xsel.delete(i);
+  }
+  render();
+}
 function shuffle() {
   if (!rack.length || (reviewAt >= 0 && !exploring)) return;
   const idx = rack.map((_, i) => i);
