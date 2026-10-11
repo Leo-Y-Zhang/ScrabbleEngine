@@ -22,6 +22,14 @@ jobs:
         run: sh web/build.sh
       - name: Play games through the browser build
         run: node web/smoke.js 2
+      - name: Drive the page in a browser
+        # Playwright without its own browser download: web/ui-test.js falls back to the
+        # runner's Chrome.
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: |
+          npm install --no-save --no-package-lock --silent playwright@1.56.1
+          node web/ui-test.js
       - name: Native and browser builds agree on fixed work
         run: |
           g++ -O2 -std=c++17 -pthread tilefish.cpp -o tf_native
