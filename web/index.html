@@ -153,7 +153,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
 
 <div class="sheet" id="start" role="dialog" aria-modal="true" aria-labelledby="start-title">
   <div class="card">
-    <h2 class="card-title" id="start-title">Tilefish</h2>
+    <div class="card-head"><h2 class="card-title" id="start-title">Tilefish</h2><button class="link" id="btn-start-close" hidden>Close</button></div>
     <p class="card-sub">Play, practise and analyse Scrabble against a strong engine.</p>
     <button class="puzzle-cta" id="btn-start-puzzle"><span class="pz-ico" aria-hidden="true">?</span><span><b>Daily puzzle</b><span class="dim"> Find the best move in one position.</span></span><span class="pz-go" aria-hidden="true">›</span></button>
     <div class="resume" id="resume" hidden>
@@ -303,7 +303,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
       <li><kbd>Enter</kbd> plays, <kbd>Esc</kbd> brings this turn's tiles back, <kbd>Backspace</kbd> removes the last one, <kbd>Space</kbd> shuffles, arrow keys move the cursor. In <i>Exchange</i>, typing a letter (or <kbd>?</kbd> for a blank) picks that tile.</li>
       <li><b>Words are checked automatically</b> as you place tiles: a word that is not in the list cannot be played, so there are no challenges here. That differs from tournament play, where an invalid word can be played and challenged off.</li>
       <li><b>Clocks</b> are total time per player. With <i>Overtime penalty</i>, as in the NASPA rules of 1 December 2016, each started minute past zero costs 10 points, and more than 10 minutes of overtime loses the game (100 points off; the opponent is raised to a one-point win if needed). With <i>Lose on time</i>, the game ends when a clock reaches zero. Tilefish's thinking runs on its own clock.</li>
-      <li><b>Practice</b> allows hints, take-backs and pausing; the game is marked as assisted if you use them. <b>Play</b> has none, and its clock keeps running if you switch tabs.</li>
+      <li><b>Practice</b> allows hints, take-backs and pausing; the game is marked as assisted if you use them. <b>Play</b> has none, and its clock keeps running if you switch tabs; after a reload it runs on as soon as the game is back (the time the page was closed is not counted).</li>
       <li><b>Plan ahead:</b> while Tilefish thinks you can set out tiles for your next move; they stay where they are if Tilefish's word leaves the squares free, and are checked as soon as it is your turn.</li>
       <li><b>As you place tiles</b> every word the move makes is listed under the board with its points and bonus squares; a word that is not in the list turns red, on the board too.</li>
       <li><b>Rack:</b> <i>Sort</i> puts it in order (A to Z, then vowels first); a quick sideways flick along the rack shuffles it. On a phone, the magnifier (or a double tap on the board) zooms in so tiles are easier to place.</li>
