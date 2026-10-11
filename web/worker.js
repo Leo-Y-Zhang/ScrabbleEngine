@@ -2,7 +2,8 @@
 // board stays responsive while Tilefish thinks.  Messages: {id, load: LEXICON} and
 // {id, run: "commands"}; each is answered with {id, out} or {id, error}, one at a time
 // and in the order they came.  {prefetch: LEXICON} downloads a list's files into the
-// browser's cache in the background, without touching the engine.
+// browser's cache in the background, without touching the engine; {id, onDevice: true}
+// answers with the lists already in that cache.
 // The page starts this worker as worker.js?v=CODE&d=DATA (web/build.sh), and every file
 // loaded here carries the same versions, so a browser never mixes files of two releases.
 const Q = new URLSearchParams(self.location.search);
@@ -72,8 +73,15 @@ if ((self.name || "").startsWith("em-pthread")) {
       } catch (e) {
         cache = null;  // no Cache Storage (private window, file://): just download
       }
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("could not download " + url.split("/").pop().split("?")[0] + " (" + res.status + ")");
+      const file = url.split("/").pop().split("?")[0];
+      let res;
+      try {
+        res = await fetch(url);
+      } catch (e) {
+        throw new Error(self.navigator && navigator.onLine === false ? "no connection, and this word list is not kept on this device yet"
+          : "could not download " + file + "; check the connection");
+      }
+      if (!res.ok) throw new Error("could not download " + file + " (" + res.status + ")");
       // Content-Length counts the bytes on the wire, which is what arrives here unless
       // the server compressed the response itself.
       const len = +res.headers.get("content-length") || 0;
@@ -93,7 +101,18 @@ if ((self.name || "").startsWith("em-pthread")) {
       for (const p of parts) { bytes.set(p, at); at += p.length; }
       d.size = d.got;
       if (cache) {
-        try { await cache.put(url, new Response(bytes)); } catch (e) { /* quota: fine */ }
+        try {
+          await cache.put(url, new Response(bytes));
+          // A file of this site carries the version of the data (?d=): older versions of
+          // the same file are no longer needed.
+          const u = new URL(url, self.location.href);
+          if (u.search) {
+            for (const k of await cache.keys()) {
+              const o = new URL(k.url);
+              if (o.origin === u.origin && o.pathname === u.pathname && o.search !== u.search) await cache.delete(k);
+            }
+          }
+        } catch (e) { /* quota: fine */ }
       }
       return bytes;
     })();
@@ -192,8 +211,25 @@ if ((self.name || "").startsWith("em-pthread")) {
   // the first is still under way, and two loads could finish in either order.  A prefetch
   // only fills the cache, so it runs at once, beside the queue.
   let queue = Promise.resolve();
+  // {id, onDevice: true}: the word lists whose files are all kept by this browser, so they
+  // load without a connection.  Answered at once, beside the queue.
+  async function onDevice() {
+    const out = [];
+    try {
+      const cache = await caches.open("tilefish-data-1");
+      for (const name of Object.keys(LISTS)) {
+        const hits = await Promise.all(LISTS[name].files.map(([, url]) => cache.match(url)));
+        if (hits.every(Boolean)) out.push(name);
+      }
+    } catch (e) { /* no Cache Storage: nothing is kept */ }
+    return out;
+  }
   onmessage = (e) => {
     const data = e.data;
+    if (data.onDevice) {
+      onDevice().then((out) => postMessage({ id: data.id, out }));
+      return;
+    }
     if (data.prefetch) {
       const list = LISTS[data.prefetch];
       if (list) for (const [, url, size] of list.files) download(url, size).bytes.catch(() => {});

@@ -86,7 +86,9 @@ alternative to see it on the board, set out your own move in any position and ha
 jump between key moves, or retry a position with the same tiles to come. Games save themselves in the
 browser and resume after a reload, and they export as GCG or as a Tilefish file. The
 browser version thinks on every core (up to eight) in browsers that allow it, and on one
-core elsewhere; the download below uses every core and has the full command-line analysis. Which word lists are used, and on what terms: [LEXICONS.md](LEXICONS.md).
+core elsewhere; the download below uses every core and has the full command-line analysis. Once
+opened, the page also works **offline**, with every word list you have played with on that
+device, and browsers that offer it can install it as an app. Which word lists are used, and on what terms: [LEXICONS.md](LEXICONS.md).
 
 **On your computer:**
 
@@ -176,7 +178,9 @@ the current folder or in its own. Type `help` to list the commands, and run
 `node web/smoke.js` plays whole games through the build. The free word lists are served
 compiled to `.kwg` (`savekwg FILE`), which the browser loads several times faster than it
 builds them from text, and every file the page loads carries a version, so a browser never
-mixes files from two releases. The page drives the engine with
+mixes files from two releases. `web/coi-sw.js` keeps a copy of each file as it is fetched
+(the latest version only), so the page opens without a connection; `web/worker.js` keeps
+the word lists. The page drives the engine with
 the `ui` commands (`ui new`, `ui move 8D WORD`, `ui bot`, `ui hint`, `ui state`), which
 answer in JSON, so any other front-end can use them too.
 

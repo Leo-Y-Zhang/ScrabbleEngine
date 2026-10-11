@@ -20,7 +20,9 @@ em++ $EM -pthread -sEXPORT_NAME=TilefishMT -sINITIAL_MEMORY=256MB -sMAXIMUM_MEMO
   -sPTHREAD_POOL_SIZE='Math.min(8,(typeof navigator!="undefined"&&navigator.hardwareConcurrency)||2)+1'
 # (the engine never starts more search threads at once than worker.js gives it, one per
 # core up to 8, so a pool that size plus one never has to start a worker mid-search)
-cp web/index.html web/style.css web/app.js web/worker.js web/coi-sw.js "$OUT/"
+cp web/index.html web/style.css web/app.js web/worker.js web/coi-sw.js web/manifest.webmanifest "$OUT/"
+# The app's icons and manifest, so a browser can install the page as an app.
+mkdir -p "$OUT/icons" && cp web/icons/* "$OUT/icons/"
 # The fonts are served from the site itself, never from a third-party font server.
 mkdir -p "$OUT/fonts" && cp web/fonts/* "$OUT/fonts/"
 cp ENABLE.txt ENABLE.win CSW24.win NWL23.win OXENDICT.txt OXENDICT.klv2 OXENDICT.win "$OUT/data/"
