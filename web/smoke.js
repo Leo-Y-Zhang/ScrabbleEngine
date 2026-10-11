@@ -50,7 +50,7 @@ Tilefish().then((m) => {
     check(r.ok && r.state.rack.length === 7 && r.state.bag === 86, "new game deals 7 tiles each");
     const list = ui("moves 12");
     check(list.ok && list.moves.length === 12 && list.moves[0].equity >= list.moves[11].equity, "moves lists the static best first");
-    let turns = 0, phases = new Set();
+    let turns = 0, phases = new Set(), inferred = false;
     while (!r.state.over && turns < 80) {
       if (r.state.yourTurn) {
         const h = ui("hint 0.2");
@@ -65,6 +65,14 @@ Tilefish().then((m) => {
       } else {
         r = ui("bot sim:time=0.2");
         check(r.ok, "engine move: " + r.error);
+        const last = r.state.history[r.state.history.length - 1];
+        if (!inferred && !r.state.over && r.state.bag > 0 && last.type === "play" && last.tiles < 7) {
+          // What the engine probably kept: chances for the tiles, beside a plain draw's.
+          inferred = true;
+          const inf = ui("infer 0.3");
+          check(inf.ok && inf.kept === 7 - last.tiles && inf.tiles.length > 0 && inf.tiles.every((t) => t.p >= 0 && t.p <= 1 && t.base >= 0 && t.base <= 1) &&
+            inf.leaves.length > 0 && inf.leaves.every((l) => l.leave.length === inf.kept), "infer estimates the tiles kept: " + JSON.stringify(inf).slice(0, 300));
+        }
       }
       turns++;
     }

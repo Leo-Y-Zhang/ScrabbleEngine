@@ -75,7 +75,8 @@ it, as the exact endgame solver finds); and your **stats** over
 time. Click a square and type, drag tiles, or tap a tile and then a square; Enter plays. As
 you place tiles, every word the move makes is listed with its points and bonus squares, and a
 word not in the list turns red on the board. Practice rates each move once Tilefish has
-answered and gives hints in steps (a nudge, then where, then the moves). Clocks are
+answered and gives hints in steps (a nudge, then where, then the moves), and can estimate what
+Tilefish kept from its last play (which tiles that play makes likelier than a plain draw). Clocks are
 total time per player: 5, 10, 15 or 25 minutes or your own figure, with the NASPA overtime
 penalty (rules of 1 December 2016) or loss on time. While Tilefish thinks you can already set
 out your next word. After a game, the **game review** works like a chess site's: Tilefish

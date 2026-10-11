@@ -7057,6 +7057,7 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
   //   ui move MOVE                   the human plays MOVE
   //   ui bot [SPEC]                  the engine plays its move (SPEC as for `player`)
   //   ui hint [SECS]                 the engine's analysis of the human's position
+  //   ui infer [SECS]                what the opponent probably kept from its last play
   //   ui force MOVE                  MOVE for whoever is to move (replaying a saved game)
   //   ui seat 0|1                    whose view the state shows (two players at one screen)
   //   ui undo                        take back the last move, draws included
@@ -7294,6 +7295,54 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
         }
       }
       std::cout << "{\"ok\":true,\"hint\":" << decision_json(P, D) << "}" << std::endl;
+      return;
+    } else if (sub == "infer") {
+      // What the opponent probably kept from its last play, by the same inference the
+      // simulation uses (racks with which that play was a good choice are likelier): the
+      // likeliest leaves and each tile's chance of being among the tiles kept.
+      if (game.over || game.turn != ui_human) return fail("an estimate needs your turn");
+      const double secs = args.size() > 1 ? std::max(0.1, std::atof(args[1].c_str())) : 1.0;
+      const Position P = Position::from_game(game);
+      InferenceParams ip = cfg.inf;
+      ip.time_limit = secs;
+      const OppModel M = eng().inference().infer(P, ip);
+      if (M.empty()) return fail("there is nothing to infer from the opponent's last move");
+      std::map<std::string, double> by_leave;
+      double letter[NLET] = {0}, prev = 0;
+      const double total = M.cum.back();
+      for (size_t i = 0; i < M.leaves.size(); ++i) {
+        const double w = M.cum[i] - prev;
+        prev = M.cum[i];
+        by_leave[M.leaves[i].str()] += w;
+        for (int L = 0; L < NLET; ++L)
+          if (M.leaves[i].c[L]) letter[L] += w;
+      }
+      std::vector<std::pair<double, std::string>> top;
+      for (const auto& kv : by_leave) top.push_back({kv.second / total, kv.first});
+      std::stable_sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+      std::vector<std::pair<double, int>> tiles;
+      for (int L = 0; L < NLET; ++L)
+        if (letter[L] > 0) tiles.push_back({letter[L] / total, L});
+      std::stable_sort(tiles.begin(), tiles.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+      // Each tile's chance before the play is taken into account: kept tiles drawn at
+      // random from the tiles unseen then (as the inference's own prior).
+      Rack avail = unseen_from(P.board_before_opp, P.rack);
+      avail.sub_all(P.opp_last.used());
+      const int kept = RACK_SIZE - P.opp_last.used().n;
+      auto chance = [&](int L) {  // 1 - C(n - c, k) / C(n, k)
+        double none = 1;
+        for (int i = 0; i < kept; ++i) none *= (double)(avail.n - avail.c[L] - i) / (double)(avail.n - i);
+        return 1 - std::max(0.0, none);
+      };
+      std::cout << "{\"ok\":true,\"move\":" << json_str(move_str(P.board_before_opp, P.opp_last))
+                << ",\"kept\":" << kept << ",\"leaves\":[";
+      for (size_t i = 0; i < top.size() && i < 8; ++i)
+        std::cout << (i ? "," : "") << "{\"leave\":" << json_str(top[i].second) << ",\"p\":" << json_num(top[i].first, 4) << "}";
+      std::cout << "],\"tiles\":[";
+      for (size_t i = 0; i < tiles.size(); ++i)
+        std::cout << (i ? "," : "") << "{\"tile\":" << json_str(std::string(1, rack_char(tiles[i].second))) << ",\"p\":" << json_num(tiles[i].first, 4)
+                  << ",\"base\":" << json_num(chance(tiles[i].second), 4) << "}";
+      std::cout << "],\"racks\":" << by_leave.size() << "}" << std::endl;
       return;
     } else if (sub != "state") {
       return fail("unknown ui command: " + sub);
