@@ -257,7 +257,26 @@ textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 .advanced { margin: 4px 0 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 .advanced > summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 10px; }
 .check { display: flex; gap: 8px; align-items: center; font-size: 13.5px; }
-.analysis-in .row { margin-top: 8px; }
+.analysis-in .row { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+/* Setting up a board by hand: the editor takes the place of the rack and controls. */
+.app.setting-up #rack, .app.setting-up #controls, .app.setting-up #secondary, .app.setting-up #status, .app.setting-up #review-nav { display: none; }
+.app.setting-up .side > :not(.setup) { display: none; }
+.setup { margin-top: 12px; display: grid; gap: 10px; font-size: 14px; min-width: 0; max-width: 100%; }
+.side > .setup { margin-top: 0; }
+.setup-head .dim { display: block; font-size: 13px; }
+.setup-keys { display: grid; grid-template-columns: repeat(13, 1fr); gap: 4px; }
+.skey { aspect-ratio: 1; padding: 0; border-radius: 5px; border: 1px solid var(--tile-edge); background: linear-gradient(var(--tile-hi), var(--tile)); color: var(--tile-ink); font: 700 clamp(13px, 3.4vw, 17px)/1 Archivo, system-ui, sans-serif; box-shadow: 0 1px 0 var(--tile-edge); }
+.skey.wide { grid-column: span 3; aspect-ratio: auto; padding: 7px 0; font-size: 13px; }
+.skey.wide.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.skey:active { transform: translateY(1px); box-shadow: none; }
+.setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.setup-grid label { display: grid; gap: 3px; font-size: 12.5px; color: var(--ink-2); min-width: 0; }
+.setup-grid input { width: 100%; min-width: 0; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); font-size: 15px; text-transform: uppercase; letter-spacing: .04em; }
+.setup-grid input[type=number], .setup-grid input::placeholder { text-transform: none; letter-spacing: 0; }
+.setup-check { font-size: 13px; color: var(--ink-2); }
+.setup-check.bad { color: var(--warn); }
+.setup-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.setup-acts .ctl-gap { flex: 1; display: block; }
 .ctl.file { display: inline-block; position: relative; overflow: hidden; }
 .ctl.file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .resume { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-2); font-size: 14px; }

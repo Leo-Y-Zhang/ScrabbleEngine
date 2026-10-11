@@ -86,6 +86,23 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
         <button class="link" id="btn-pause">Pause</button>
         <button class="link" id="btn-resign">Resign</button>
       </div>
+      <div class="setup" id="setup" hidden>
+        <div class="setup-head"><b>Set up a position</b> <span class="dim">Click a square and type, or tap the letters below; click the square again to go down.</span></div>
+        <div class="setup-keys" id="setup-keys" role="group" aria-label="Letters to place"></div>
+        <div class="setup-grid">
+          <label>Your rack <input id="setup-rack" maxlength="7" autocomplete="off" spellcheck="false" placeholder="AEINRST"></label>
+          <label>Opponent's rack <input id="setup-opp" maxlength="7" autocomplete="off" spellcheck="false" placeholder="if known"></label>
+          <label>Your score <input id="setup-you" type="number" inputmode="numeric" min="0" max="2000" value="0"></label>
+          <label>Opponent's score <input id="setup-them" type="number" inputmode="numeric" min="0" max="2000" value="0"></label>
+        </div>
+        <div class="setup-check" id="setup-check" aria-live="polite"></div>
+        <div class="setup-acts">
+          <button class="ctl" id="setup-clear">Clear board</button>
+          <button class="ctl" id="setup-cancel">Cancel</button>
+          <span class="ctl-gap"></span>
+          <button class="ctl primary" id="setup-go">Analyse</button>
+        </div>
+      </div>
       <div class="review-nav" id="review-nav" hidden>
         <button class="ctl" id="rv-first" aria-label="Start of the game">&laquo;</button>
         <button class="ctl" id="rv-prev" aria-label="Previous move">&lsaquo;</button>
@@ -223,7 +240,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
     <div class="analysis-in" data-for="analysis">
       <label class="label" for="cgp-in">Position (CGP), or open a game record</label>
       <textarea id="cgp-in" rows="3" spellcheck="false" placeholder="15/15/15/15/15/15/15/5CAT7/15/15/15/15/15/15/15 AEINRST/ 5/0 0"></textarea>
-      <div class="row"><label class="ctl file">Open .gcg or Tilefish file<input type="file" id="file-in" accept=".gcg,.json,.txt"></label></div>
+      <div class="row"><label class="ctl file">Open .gcg or Tilefish file<input type="file" id="file-in" accept=".gcg,.json,.txt"></label><button class="ctl" id="btn-setup">Set up a board by hand</button></div>
     </div>
     <p class="summary" id="summary"></p>
     <button class="start" id="btn-start">Start game</button>
@@ -298,6 +315,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
         <kbd>&larr;</kbd> <kbd>&rarr;</kbd> step through the game, <kbd>&uarr;</kbd> <kbd>&darr;</kbd> jump between key moves, <kbd>B</kbd> shows the best move, <kbd>Home</kbd> <kbd>End</kbd> go to the start and the end.</li>
       <li><b>Game links:</b> <i>Copy game link</i> (beside a finished game, at its end, or under <i>Games</i>) puts the whole game in a link. Whoever opens it sees the game in the review, replayed and judged in their own browser; the link holds the moves, and nothing is stored anywhere else.</li>
       <li><b>Offline:</b> once opened, the page works without a connection, with every word list you have played with on this device (the start screen says which). Your browser can install it as an app: <i>Install</i> above where it offers that, or <i>Add to Home Screen</i> in the share menu on an iPhone or iPad.</li>
+      <li><b>Set up a board by hand</b> (Analyse): click a square and type, or tap the letters under the board; Shift with a letter, or the blank key, makes a blank (lower case). Backspace steps back and clears; arrow keys move. Then give your rack, the opponent's if you know it, and the scores, and <i>Analyse</i>.</li>
       <li><b>Notation:</b> <i>8D WORD</i> is across from row 8, column D; <i>D8 WORD</i> is down. Letters in brackets were already on the board; lower case is a blank.</li>
     </ul>
   </div>
