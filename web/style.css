@@ -266,6 +266,7 @@ textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 .start:disabled { opacity: .6; cursor: default; }
 .end-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .end-actions .start { grid-column: 1 / 3; }
+.end-share { display: block; margin: 12px auto 0; }
 .loading { margin-top: 14px; }
 .loading-bar { height: 6px; border-radius: 6px; background: var(--line); overflow: hidden; }
 .loading-fill { height: 100%; width: 0; background-color: var(--accent); transition: width .2s; }

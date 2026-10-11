@@ -84,7 +84,9 @@ why in Scrabble terms (a missed bingo, points, the tiles kept), and shows each p
 accuracy, a graph of the winning chances and a bar beside the board. Point at any
 alternative to see it on the board, set out your own move in any position and have it judged,
 jump between key moves, or retry a position with the same tiles to come. Games save themselves in the
-browser and resume after a reload, and they export as GCG or as a Tilefish file. The
+browser and resume after a reload, and they export as GCG, as a Tilefish file, or as a link
+that opens the finished game in the review for whoever you send it to (the link holds the moves;
+nothing is stored anywhere else). The
 browser version thinks on every core (up to eight) in browsers that allow it, and on one
 core elsewhere; the download below uses every core and has the full command-line analysis. Once
 opened, the page also works **offline**, with every word list you have played with on that
