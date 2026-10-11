@@ -172,12 +172,12 @@ if ((self.name || "").startsWith("em-pthread")) {
     for (const [file] of files) rm(at(file));
     const [main, leaves, win] = files;
     engine.FS.writeFile(at(main[0]), main[1]);
-    tell({ progress: 0.72, stage: "words", ms: 250 + main[1].length / 6000, next: 0.88 });
+    tell({ progress: 0.72, stage: "words", ms: 150 + main[1].length / 9000, next: 0.9 });
     await new Promise((r) => setTimeout(r, 0));  // let that message go out first
     const out = run("lexicon " + at(main[0]));
     if (!/words/.test(out)) throw new Error(out.trim() || "the word list did not load");
     engine.FS.writeFile(at(leaves[0]), leaves[1]);
-    tell({ progress: 0.88, stage: "leaves", ms: 150 + leaves[1].length / 9000, next: 0.98 });
+    tell({ progress: 0.9, stage: "leaves", ms: 60 + leaves[1].length / 40000, next: 0.98 });
     await new Promise((r) => setTimeout(r, 0));
     const lv = run("leaves " + at(leaves[0]));
     if (!/leave values/.test(lv)) throw new Error(lv.trim() || "the leave values did not load");
