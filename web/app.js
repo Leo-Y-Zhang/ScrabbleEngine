@@ -20,7 +20,7 @@ const NOTES = {
   beginner: "Plays short, everyday words, scores modestly and rarely bingos: a gentle game for learning.",
   easy: "A friendly club player: sound moves, the odd bingo, and now and then a slip.",
   casual: "Plays at once, from its evaluation of each move, with exact endgames. Already strong.",
-  strong: "Simulates its best candidates for a few seconds a move (less on a multi-core device, where it searches more).",
+  strong: "Simulates its 15 best candidates up to 600 times each: about a second a move on one core, less on several.",
   champion: "Its full search, up to 10 seconds a move (about half that on a multi-core device, searching more).",
   play: "A game against Tilefish with no help. Your clock keeps running if you switch tabs.",
   practice: "Against Tilefish with hints, take-backs and a pause button. Games where you use them are marked as assisted.",
@@ -1471,7 +1471,14 @@ async function enterReview(n, opts) {
   render();
   renderReviewPanel();
   scrollLogTo(reviewAt);
-  if (opts && opts.analyse && !Object.keys(G.verdicts || {}).length) analyseGame(reviewSecs());
+  // A Practice game arrives with only your own moves rated (as you played them): the
+  // review judges the rest and keeps those ratings, so they read as they did in the game.
+  if (opts && opts.analyse && unjudged().length) analyseGame(reviewSecs(), Object.keys(G.verdicts || {}).length > 0);
+}
+// The moves the review should judge (every move once the game is over) that have no verdict.
+function unjudged() {
+  const sides = judgedSides();
+  return S.history.map((h, k) => k).filter((k) => sides.includes(moverOf(k)) && !verdictAt(k));
 }
 function showReviewBoard(was) {
   shownBoard = rvBoards[reviewAt];
@@ -1888,16 +1895,15 @@ function summaryHtml() {
   }
   return html + "</tbody></table></details>";
 }
-async function analyseGame(sec) {
+async function analyseGame(sec, keep) {
   if (!S || busy) return;
   if (G.gcg == null && !G.record.length) return;
   await reviewBoards();
   const my = epoch;
   busy = true;
-  G.verdicts = {};
+  if (!keep) G.verdicts = {};
   preview = null;
-  const sides = judgedSides();
-  const todo = S.history.map((h, k) => k).filter((k) => sides.includes(moverOf(k)));
+  const todo = unjudged();
   analysing = { done: 0, total: todo.length };
   render();
   renderReviewPanel();
