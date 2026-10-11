@@ -222,6 +222,7 @@ const puzzleDone = () => G && G.mode === "puzzle" && G.puzzle && (G.puzzle.solve
 const assistAllowed = () => G && (G.mode === "practice" || G.mode === "analysis");
 function sideName(side) {
   if (!G) return "";
+  if (G.mode === "review" && (G.from === "play" || G.from === "practice")) return side === G.human ? "Player" : "Tilefish";  // a shared game
   if (G.mode === "duo" || G.mode === "review") return "Player " + (side + 1);
   if (G.mode === "puzzle") return side === G.human ? "You" : "Opponent";
   return side === G.human ? "You" : "Tilefish";
@@ -1121,6 +1122,7 @@ function showEnd() {
   if (G.assisted) parts.push("Assisted game.");
   $("end-detail").textContent = parts.join(" ");
   $("btn-review").hidden = !G.record.length && !G.gcg;
+  $("btn-end-share").hidden = !shareable(G);
   setTimeout(() => { $("end").hidden = false; $("btn-review").focus(); }, 500);
 }
 function archive() {
@@ -2241,6 +2243,7 @@ function renderExports() {
   if (G.over || G.mode === "review" || assistAllowed()) {
     add("Save GCG", async () => { const r = await ui("gcg"); download("tilefish-" + G.id + ".gcg", r.gcg); });
   }
+  if (shareable(G)) add("Copy game link", () => shareGame(G));
   if (G.mode === "puzzle") return;
   if (G.mode !== "review") add("Save Tilefish file", () => download("tilefish-" + G.id + ".json", JSON.stringify(snapshotForSave(), null, 1), "application/json"));
   add("Copy position", async () => {
@@ -2249,6 +2252,109 @@ function renderExports() {
   });
   if (reviewable() && reviewAt < 0 && S && S.history.length) add("Game review", () => enterReview(S.history.length, { analyse: G.over || G.mode === "review" }));
 }
+
+// ---------- game links ----------
+// A finished game travels in the link itself, after #game=: the word list, the seed and
+// the moves (or the imported record), deflated and in base64url.  Whoever opens it gets
+// the game in the review, replayed and judged by their own browser; nothing is stored
+// anywhere else.  What a link carries goes to the engine only as checked moves (the
+// engine takes ';' between commands) or as a file to import.
+const MOVE_RE = /^(pass|exch [A-Z?]{1,7}|(\d{1,2}[A-O]|[A-O]\d{1,2}) [A-Za-z()]{1,30})$/;
+const LINK_MAX = 256 * 1024;  // bytes, unpacked
+const shareable = (g) => !!g && (g.over || g.mode === "review") && !g.cgp && (!!g.gcg || g.record.length > 0);
+function b64url(u8) {
+  let s = "";
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function unb64url(s) {
+  const b = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+  const u = new Uint8Array(b.length);
+  for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+  return u;
+}
+async function readCapped(stream) {
+  const reader = stream.getReader(), parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > LINK_MAX) { reader.cancel(); throw new Error("too long"); }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
+async function packGame(g) {
+  const p = { v: 1, l: g.lexicon, m: g.from || g.mode, h: g.human };
+  if (g.gcg) p.g = g.gcg;
+  else { p.s = g.seed; p.r = g.record.map((e) => e.move); }
+  if (g.result) p.x = { f: g.result.final, w: g.result.winner, r: g.result.reason };
+  const raw = new TextEncoder().encode(JSON.stringify(p));
+  try {
+    const z = await readCapped(new Blob([raw]).stream().pipeThrough(new CompressionStream("deflate-raw")));
+    return "z" + b64url(z);
+  } catch (e) {
+    return "j" + b64url(raw);  // no CompressionStream here: the link is just longer
+  }
+}
+async function unpackGame(text) {
+  let bytes = unb64url(text.slice(1));
+  if (text[0] === "z") bytes = await readCapped(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw")));
+  else if (text[0] !== "j" || bytes.length > LINK_MAX) throw new Error("not a game link");
+  const p = JSON.parse(new TextDecoder().decode(bytes));
+  if (!p || p.v !== 1 || !LEX_NAME[p.l]) throw new Error("not a game link");
+  const g = { id: Date.now().toString(36), version: 1, mode: "review", from: ["play", "practice", "duo", "review"].includes(p.m) ? p.m : "review",
+    lexicon: p.l, level: "strong", clockMin: 0, overtime: "naspa", think: "", seed: 0, firstSide: 0, human: p.h === 1 ? 1 : 0, record: [],
+    used: [0, 0], running: -1, since: 0, paused: false, pauseNote: "", assisted: false, over: true, result: null,
+    startedAt: new Date().toISOString(), verdicts: {}, shared: true };
+  if (typeof p.g === "string") {
+    g.gcg = p.g;
+    g.from = "review";
+  } else {
+    if (!Number.isInteger(p.s) || p.s < 0 || p.s >= 2 ** 53) throw new Error("not a game link");
+    if (!Array.isArray(p.r) || !p.r.length || p.r.length > 150 || !p.r.every((m) => typeof m === "string" && MOVE_RE.test(m))) throw new Error("not a game link");
+    g.seed = p.s;
+    g.record = p.r.map((move, k) => ({ move, side: k % 2, used: [0, 0] }));
+  }
+  const x = p.x;
+  if (x && Array.isArray(x.f) && x.f.length === 2 && x.f.every(Number.isFinite) && [-1, 0, 1].includes(x.w))
+    g.result = { final: x.f, winner: x.w, reason: ["out", "resign", "time"].includes(x.r) ? x.r : "out", penalties: [0, 0], endedAt: g.startedAt };
+  return g;
+}
+async function shareGame(g) {
+  let url;
+  try { url = location.href.split("#")[0] + "#game=" + (await packGame(g)); } catch (e) { toast("This game could not be put in a link."); return; }
+  if (navigator.share && matchMedia("(pointer: coarse)").matches) {
+    try { await navigator.share({ title: "A game of Scrabble on Tilefish", url }); return; } catch (e) { if (e && e.name === "AbortError") return; }
+  }
+  try { await navigator.clipboard.writeText(url); }
+  catch (e) {
+    const t = document.createElement("textarea");
+    t.value = url;
+    document.body.appendChild(t);
+    t.select();
+    try { document.execCommand("copy"); } catch (e2) { /* nothing more to try */ }
+    t.remove();
+  }
+  toast("Link copied: whoever opens it sees this game in the review.", true);
+}
+// Opens a game from the address (#game=...), once: the address is then cleared, so a
+// reload or a new game is not taken back to it.  (Only once the game is open: on a first
+// visit the page may reload itself to run on every core, and the link must survive that.)
+async function openLink() {
+  const m = location.hash.match(/^#game=([jz][A-Za-z0-9_-]+)$/);
+  if (!m) return;
+  const clear = () => { if (location.hash.slice(1) === "game=" + m[1]) history.replaceState(null, "", location.href.split("#")[0]); };
+  let g;
+  try { g = await unpackGame(m[1]); } catch (e) { clear(); toast("This game link could not be read."); return; }
+  await openSaved(g, true);
+  clear();
+}
+window.addEventListener("hashchange", openLink);
 
 // ---------- pointer: tap, drag and drop ----------
 let drag = null;
@@ -2472,6 +2578,7 @@ $("btn-pass").onclick = () => {
 };
 $("btn-new").onclick = () => openStart();
 $("btn-end-new").onclick = () => { $("end").hidden = true; openStart(); };
+$("btn-end-share").onclick = () => shareGame(G);
 $("btn-review").onclick = () => { $("end").hidden = true; enterReview(S.history.length, { analyse: true }); };
 $("btn-rematch").onclick = () => {
   $("end").hidden = true;
@@ -2546,11 +2653,13 @@ function openGames(tab) {
     acts.className = "acts";
     const rv = document.createElement("button"); rv.className = "link strong"; rv.textContent = "Review";
     rv.onclick = async () => { $("games").hidden = true; await openSaved(g.game, true); };
+    const ln = document.createElement("button"); ln.className = "link"; ln.textContent = "Copy link"; ln.hidden = !shareable(g.game);
+    ln.onclick = () => shareGame(g.game);
     const ex = document.createElement("button"); ex.className = "link"; ex.textContent = "Save file";
     ex.onclick = () => download("tilefish-" + g.id + ".json", JSON.stringify(g.game, null, 1), "application/json");
     const del = document.createElement("button"); del.className = "link"; del.textContent = "Delete";
     del.onclick = () => { const l = store.json("games", []); l.splice(i, 1); store.put("games", l); openGames(); };
-    acts.append(rv, ex, del);
+    acts.append(rv, ln, ex, del);
     li.append(info, acts);
     ol.appendChild(li);
   });
@@ -2790,4 +2899,5 @@ render();
 if (ENGINE_OK) {
   if (!worker) startWorker();
   if (store.get("lexicon", null) || BUNDLED.has(settings.lexicon)) prefetch(settings.lexicon);
+  openLink();
 }

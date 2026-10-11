@@ -259,6 +259,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
       <button class="ctl" id="btn-rematch">Rematch</button>
       <button class="ctl" id="btn-end-new">New game</button>
     </div>
+    <button class="link end-share" id="btn-end-share">Copy a link to this game</button>
   </div>
 </div>
 
@@ -295,6 +296,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
         <span class="cls-legend"><span class="cls brilliant">!!</span> Brilliant (the best move, giving up 12+ points of score for a better game) · <span class="cls great">!</span> Great (the only strong move) · <span class="cls best">&#9733;</span> Best · Excellent (within 1%) · Good (under 3%) · <span class="cls inaccuracy">?!</span> Inaccuracy (3–6%) · <span class="cls mistake">?</span> Mistake (6–12%) · <span class="cls blunder">??</span> Blunder (12% or more).</span>
         Where a game is settled or the endgame is solved, points given up count instead. The better move is drawn on the board, dashed, with its coordinate and an arrow for its direction; point at any move in the list to see it there, or click to keep it. Accuracy is the average over a player's moves (100 for Tilefish's choice). <i>Try a move</i> sets out your own move in any reviewed position and judges it.
         <kbd>&larr;</kbd> <kbd>&rarr;</kbd> step through the game, <kbd>&uarr;</kbd> <kbd>&darr;</kbd> jump between key moves, <kbd>B</kbd> shows the best move, <kbd>Home</kbd> <kbd>End</kbd> go to the start and the end.</li>
+      <li><b>Game links:</b> <i>Copy game link</i> (beside a finished game, at its end, or under <i>Games</i>) puts the whole game in a link. Whoever opens it sees the game in the review, replayed and judged in their own browser; the link holds the moves, and nothing is stored anywhere else.</li>
       <li><b>Offline:</b> once opened, the page works without a connection, with every word list you have played with on this device (the start screen says which). Your browser can install it as an app: <i>Install</i> above where it offers that, or <i>Add to Home Screen</i> in the share menu on an iPhone or iPad.</li>
       <li><b>Notation:</b> <i>8D WORD</i> is across from row 8, column D; <i>D8 WORD</i> is down. Letters in brackets were already on the board; lower case is a blank.</li>
     </ul>
