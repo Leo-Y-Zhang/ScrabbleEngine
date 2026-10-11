@@ -2670,6 +2670,41 @@ rackEl.addEventListener("pointerdown", (e) => {
   startDrag(e, { slot: +t.dataset.slot });
 });
 
+// ---------- dialogs and keyboard focus ----------
+// A card that opens (start, end, games, help, blank, handover) takes the keyboard focus and
+// keeps Tab inside itself while it is open.  Games and Help give the focus back where it was
+// when they close; the others lead into the game, so they let it go (Enter must play a word,
+// not press the button that opened them).
+const FOCUSABLE = 'button:not([disabled]):not([hidden]), input:not([disabled]), textarea, summary, [tabindex]:not([tabindex="-1"])';
+function visibleIn(el) { return [...el.querySelectorAll(FOCUSABLE)].filter((x) => x.offsetParent !== null || x === document.activeElement); }
+const sheetOpener = new Map();
+let focusOutside = null;  // the last element focused outside every card
+document.addEventListener("focusin", (e) => { if (!e.target.closest(".sheet")) focusOutside = e.target; });
+document.querySelectorAll(".sheet").forEach((sheet) => {
+  new MutationObserver(() => {
+    if (!sheet.hidden) {
+      if (!sheetOpener.has(sheet)) sheetOpener.set(sheet, focusOutside);
+      requestAnimationFrame(() => { if (!sheet.hidden && !sheet.contains(document.activeElement)) { const f = visibleIn(sheet)[0]; if (f) f.focus({ preventScroll: true }); } });
+    } else {
+      const back = sheetOpener.get(sheet);
+      sheetOpener.delete(sheet);
+      const inside = document.activeElement === document.body || sheet.contains(document.activeElement);
+      if (sheet.id === "games" || sheet.id === "help") { if (back && back.isConnected && inside) back.focus({ preventScroll: true }); }
+      else if (sheet.contains(document.activeElement)) document.activeElement.blur();
+    }
+  }).observe(sheet, { attributes: true, attributeFilter: ["hidden"] });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab") return;
+  const sheet = [...document.querySelectorAll(".sheet")].find((x) => !x.hidden);
+  if (!sheet) return;
+  const items = visibleIn(sheet);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && (document.activeElement === first || !sheet.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (document.activeElement === last || !sheet.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+}, true);
+
 // ---------- keyboard ----------
 const sheetOpen = () => ["start", "end", "blank-picker", "handover", "games", "help"].some((id) => !$(id).hidden);
 document.addEventListener("keydown", (e) => {

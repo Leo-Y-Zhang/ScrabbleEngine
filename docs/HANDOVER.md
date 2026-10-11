@@ -1,6 +1,39 @@
-# Handover (state at 6 October 2026)
+# Handover (state at 11 October 2026)
 
 Read this first in a new session, then `experiments/README.md` sections 9–13.
+
+**11 October: a day on the browser version and the engine's interfaces (PRs #35–#48).**
+No registered experiment ran and **the default search is unchanged** (fixed-work checksum
+`349.2837`, natively and in the browser build). What changed:
+
+- *Engine, without changing a decision:* word lists load about twice as fast (#37: a leave
+  file loads into an empty table instead of over the built-in model, the `.klv2` reader builds
+  no strings, the anagram indexes use a radix sort; saved leave tables byte-identical, games
+  identical). `ui hint`, `ui review` and `go … json` give a solved endgame's best line
+  (`line`, and `playedLine` in a review), and `ui hint`/`ui review` make the values of the five
+  moves they show exact (#40: the solver proves only the best move's value; the others were
+  upper bounds, 57 of 100 too high). New `ui infer [SECS]` reports what the opponent probably
+  kept, by the inference the simulation already uses (#41). None of these paths is used by the
+  engine's own choice of move.
+- *Browser:* works offline once opened and installs as an app (#36, `web/coi-sw.js` keeps a
+  copy of each file; `web/manifest.webmanifest`, `web/icons/`); finished games as links that
+  open in the review (#38, `#game=` holds the moves, checked before they reach the engine,
+  which takes `;` between commands); endgame puzzles solved by the exact solver, preferring a
+  single answer (#39, #43); the best play to the end of a solved endgame in reviews, hints and
+  puzzles (#40); "Estimate Tilefish's rack" in Practice (#41); a board editor in Analyse and
+  "Analyse from here" in the review (#42, #44); back up and restore of games and stats (#44);
+  the last fortnight's daily puzzles and a shareable result (#43, #45); exchange by keyboard
+  (#45); the cards (start, end, games, help) take the keyboard focus and keep Tab inside
+  (#48); fixes: a Practice game's review now judges both sides (#35), clocks run again after a
+  reload in Play and the start screen can be closed (#46).
+- *Tests:* CI now drives the page itself (#47, `web/ui-test.js`: Playwright with the runner's
+  Chrome plays a Practice game, reviews it, opens its link, solves both kinds of puzzle and
+  analyses a board set up by hand, failing on any page error). The smoke test also checks
+  endgame lines and `ui infer`; the self-test checks the radix sort and the leave table's
+  shortcuts.
+
+Next steps are unchanged (below); for the browser, one idea not done: a daily endgame puzzle
+(it needs a solve that finishes the same on slow devices).
 
 **Added later on 4 October (section 11, no new games):** a reanalysis with the new
 `tools/latebias.py` found that Macondo's own late-game estimates run as high as
