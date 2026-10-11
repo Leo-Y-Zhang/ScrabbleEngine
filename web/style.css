@@ -451,6 +451,9 @@ textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 .pz-tries span { width: 10px; height: 10px; border-radius: 50%; background: var(--c-best); opacity: .85; }
 .pz-tries span.used { background: var(--line); }
 .pz-tries em { font-style: normal; margin-left: 4px; }
+.pz-kind { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; }
+.pz-kind .seg { flex: 1; }
+.pz-note { margin: 6px 0 0; font-size: 12.5px; }
 .streak { font-size: 12px; font-weight: 600; color: var(--c-mistake); }
 .streak::before { content: "● "; }
 .puzzle-cta { display: flex; align-items: center; gap: 12px; width: 100%; margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; text-align: left;

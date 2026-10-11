@@ -69,7 +69,9 @@ British English in Oxford spelling) and a clock:
 - **Analyse** a pasted position (CGP) or a game record (`.gcg`, or a Tilefish game file).
 
 Five strengths, from Beginner and Easy (which pick weaker moves on purpose, for learning) to
-Casual, Strong and Champion; a **daily puzzle** (find the best move); and your **stats** over
+Casual, Strong and Champion; a **daily puzzle** (find the best move), more puzzles of that kind
+and **endgame puzzles** (the bag empty, the opponent's tiles known, only the best play solves
+it, as the exact endgame solver finds); and your **stats** over
 time. Click a square and type, drag tiles, or tap a tile and then a square; Enter plays. As
 you place tiles, every word the move makes is listed with its points and bonus squares, and a
 word not in the list turns red on the board. Practice rates each move once Tilefish has
