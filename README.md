@@ -277,8 +277,11 @@ readyok
 
 Each `go ... json` answer is one line of JSON: the method used (simulation, pre-endgame,
 endgame), whether the result is proven exact, and for every candidate its score,
-leave, static equity, simulated/solved value and win probability. This is enough to
-drive a live win-probability bar for a broadcast, or a web front-end.
+leave, static equity, simulated/solved value and win probability. A solved endgame also gives
+`line`, the best play to the end; there only the best move's value is proven, and the
+others' are upper bounds (`ui hint` and `ui review`, which the browser version uses, solve
+the five shown exactly and give the line after the move played as `playedLine`). This is
+enough to drive a live win-probability bar for a broadcast, or a web front-end.
 
 For engine-vs-engine play there is a UCI-style exchange:
 
