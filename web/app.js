@@ -260,7 +260,7 @@ function clockMinutes() {
 }
 function describe(g) {
   const parts = [];
-  parts.push({ play: "Play", practice: "Practice", duo: "Two players", analysis: "Analysis", review: "Review", puzzle: g.puzzle && g.puzzle.daily ? "Daily puzzle" : "Puzzle" }[g.mode] || g.mode);
+  parts.push({ play: "Play", practice: "Practice", duo: "Two players", analysis: "Analysis", review: "Review", puzzle: g.puzzle && g.puzzle.daily ? "Daily puzzle" : g.puzzle && g.puzzle.kind === "endgame" ? "Endgame puzzle" : "Puzzle" }[g.mode] || g.mode);
   if (g.mode !== "duo" && g.mode !== "review" && g.mode !== "puzzle") parts.push(capital(g.level));
   parts.push(LEX_NAME[g.lexicon] || g.lexicon);
   if (g.mode !== "review" && g.mode !== "analysis" && g.mode !== "puzzle")
@@ -2035,23 +2035,68 @@ async function findPuzzle(base) {
   chosen.hint = h.hint;
   return chosen;
 }
-async function openPuzzle(daily) {
+// Endgame puzzles: a static game played on past the empty bag until the two racks hold
+// 11 tiles or fewer (no blanks), so the exact solver usually settles it in well under a
+// second; a position it has not solved in 2 s is passed over.  Kept when the obvious move,
+// the highest-scoring one, ends at least 4 points worse than the best play; else the one
+// where it costs most of up to 24 tried.
+async function findEndgame(base) {
+  let chosen = null, gainOf = -1, at = -1;
+  for (let a = 0; a < 24 && gainOf < 4; a++) {
+    const seed = base + a;
+    let r = await ui("new first " + seed);
+    at = seed;
+    for (let i = 0; i < 60 && r.ok && !r.state.over && r.state.bag > 0; i++) {
+      await ui("seat " + (1 - r.state.turn));
+      r = await ui("bot static");
+    }
+    if (!r.ok || r.state.over || r.state.bag !== 0) continue;
+    await ui("seat " + r.state.turn);
+    let st = (await ui("state")).state;
+    for (let i = 0; i < 8 && !st.over && st.rack.length + st.unseen.length > 11; i++) {
+      await ui("seat " + (1 - st.turn));
+      r = await ui("bot static");
+      await ui("seat " + r.state.turn);
+      st = (await ui("state")).state;
+    }
+    if (st.over || st.rack.length < 3 || st.rack.length + st.unseen.length > 11 || st.rack.includes("?") || st.unseen.includes("?")) continue;
+    const h = await ui("hint 2");
+    if (!h.ok || !h.hint.exact || !h.hint.moves.length || isPass(h.hint.moves[0].move)) continue;
+    const plays = h.hint.moves.filter((m) => !isPass(m.move));
+    const topScore = Math.max(...plays.map((m) => m.score));
+    const greedy = plays.find((m) => m.score === topScore);
+    const gain = h.hint.moves[0].value - greedy.value;
+    if (gain > gainOf) {
+      chosen = { seed, turn: st.turn, moves: (await ui("record")).moves, hint: h.hint };
+      gainOf = gain;
+    }
+  }
+  if (chosen && chosen.seed !== at) {  // the engine moved on to later tries: back to the one chosen
+    await ui("new first " + chosen.seed);
+    for (const mv of chosen.moves) await ui("force " + mv);
+    await ui("seat " + chosen.turn);
+  }
+  return chosen;
+}
+async function openPuzzle(daily, kind) {
+  kind = daily ? "move" : kind || store.get("puzzleKind", "move");
+  if (!daily) store.set("puzzleKind", kind);
   const lex = settings.lexicon, key = daily ? dayKey(new Date()) : null;
   const base = daily ? daySeed(key) : 1000 + Math.floor(Math.random() * 2 ** 29) * 8;
   G = { id: Date.now().toString(36), version: 1, mode: "puzzle", lexicon: lex, level: "strong", clockMin: 0, overtime: "naspa", think: "", seed: 0,
     firstSide: 0, human: 0, record: [], used: [0, 0], running: -1, since: 0, paused: false, pauseNote: "", assisted: false, over: false, result: null,
-    startedAt: new Date().toISOString(), verdicts: {}, puzzle: { daily: key, tries: 0, solved: false, revealed: false, answer: null, alts: [], last: null } };
+    startedAt: new Date().toISOString(), verdicts: {}, puzzle: { daily: key, kind, tries: 0, solved: false, revealed: false, answer: null, alts: [], last: null } };
   resetView();
   if (loadedLex !== lex) openStart();
   $("puzzle").hidden = false;
-  $("puzzle").innerHTML = '<div class="panel-head"><span>' + (daily ? "Daily puzzle" : "Puzzle") + '</span></div><div class="puzzle-body"><p class="dim">Setting up the position…</p></div>';
+  $("puzzle").innerHTML = '<div class="panel-head"><span>' + (daily ? "Daily puzzle" : kind === "endgame" ? "Endgame puzzle" : "Puzzle") + '</span></div><div class="puzzle-body"><p class="dim">Setting up the position…</p></div>';
   await withLoading(lex, async () => {
     if (busy) await restartEngine();
     epoch++;
     const my = epoch;
     busy = true;
     setStatus("Setting up the puzzle", "thinking");
-    const pz = await findPuzzle(base);
+    const pz = kind === "endgame" ? await findEndgame(base) : await findPuzzle(base);
     busy = false;
     if (my !== epoch) return;
     if (!pz) throw new Error("no puzzle could be set up; try again");
@@ -2074,13 +2119,15 @@ async function puzzleCheck() {
   render();
   setStatus("Judging your move", "thinking");
   let r;
-  try { r = await ui("review " + k + " " + secs(1.5)); } catch (e) { return; }
+  const eg = pz.kind === "endgame";
+  try { r = await ui("review " + k + " " + (eg ? 6 : secs(1.5))); } catch (e) { return; }
   busy = false;
   if (my !== epoch || G.mode !== "puzzle") return;
   pz.tries++;
   pz.last = r.ok ? r : null;
   const cls = r.ok ? classify(r) : null;
-  if (cls && SOLVED.has(cls)) {
+  // An endgame is solved only by a move that ends as well as the best (within half a point).
+  if (r.ok && (eg && r.exact ? r.same || Math.max(0, +r.valueLoss || 0) < 0.5 : cls && SOLVED.has(cls))) {
     pz.solved = true;
     sfx.good();
     logPuzzle();
@@ -2114,41 +2161,62 @@ function logPuzzle() {
   const pz = G.puzzle;
   const log = puzzleLog(), key = pz.daily || "free:" + G.id;
   const prev = log[key] || {};
-  log[key] = { solved: prev.solved || pz.solved, tries: pz.tries, revealed: !pz.solved && pz.revealed, lex: G.lexicon, at: new Date().toISOString() };
+  log[key] = { solved: prev.solved || pz.solved, tries: pz.tries, revealed: !pz.solved && pz.revealed, lex: G.lexicon, at: new Date().toISOString(), kind: pz.kind || "move" };
   store.put("puzzles", log);
 }
 function renderPuzzle() {
   const box = $("puzzle"), pz = G && G.puzzle;
   if (!pz) { box.hidden = true; return; }
   box.hidden = false;
+  const eg = pz.kind === "endgame";
   const streak = puzzleStreak();
-  let html = '<div class="panel-head"><span>' + (pz.daily ? "Daily puzzle · " + new Date(pz.daily + "T12:00:00").toLocaleDateString([], { day: "numeric", month: "long" }) : "Puzzle") +
+  const opp = S && S.bag === 0 ? S.unseen.split("").sort().join("") : "";
+  let html = '<div class="panel-head"><span>' + (pz.daily ? "Daily puzzle · " + new Date(pz.daily + "T12:00:00").toLocaleDateString([], { day: "numeric", month: "long" }) : eg ? "Endgame puzzle" : "Puzzle") +
     "</span>" + (streak ? '<span class="streak" title="Daily puzzles solved in a row">' + streak + " day streak</span>" : "") + "</div><div class=\"puzzle-body\">";
+  // the line a move ends with, in an endgame: points ahead by the end from here
+  const ends = (v) => (num(v.playedValue) != null ? sgn(v.playedValue) : "");
   if (pz.solved) {
     const v = pz.last, cls = classify(v);
     html += '<div class="pz-result ok">' + badge(cls, "lg") + "<div><b>Solved" + (pz.tries > 1 ? " in " + pz.tries + " tries" : " first time") + ".</b> " +
-      esc(moveLabel(v.played)) + " is " + CLASS_INFO[cls].say + (v.same ? ": Tilefish's choice too." : ", within 1% of " + esc(moveLabel(v.best)) + ".") + "</div></div>";
+      esc(moveLabel(v.played)) + (eg && v.exact ? " is the best play: " + ends(v) + " by the end of the game, with both sides at their best." :
+        " is " + CLASS_INFO[cls].say + (v.same ? ": Tilefish's choice too." : ", within 1% of " + esc(moveLabel(v.best)) + ".")) + "</div></div>";
   } else if (pz.revealed) {
     html += '<div class="pz-result">' + "<div><b>The answer:</b> " + esc(moveLabel(pz.last && !pz.last.same ? pz.last.best : pz.answer)) + ", shown on the board.</div></div>";
   } else {
-    html += '<p class="pz-task">Find the best move for your rack. Your move is judged by the winning chance it keeps; within 1% of the best solves it.</p>';
+    html += eg ? '<p class="pz-task">The bag is empty' + (opp ? " and the opponent holds <b>" + esc(opp) + "</b>" : "") +
+        ". Find the move that ends the game best: the most points ahead, or the fewest behind, when both sides then play perfectly.</p>"
+      : '<p class="pz-task">Find the best move for your rack. Your move is judged by the winning chance it keeps; within 1% of the best solves it.</p>';
     if (pz.last) {
       const v = pz.last, cls = classify(v);
-      html += '<div class="pz-result no">' + badge(cls, "lg") + "<div><b>Not quite.</b> " + esc(moveLabel(v.played)) + " is " + CLASS_INFO[cls].say +
-        " (" + pp(Math.max(0, v.winLoss)) + " less winning chance). " + (isBingo(v.best) && !isBingo(v.played) ? "Look for a bingo." :
-          (v.bestScore || 0) > (v.playedScore || 0) ? "The best move scores more." : "Think about what you keep.") + "</div></div>";
+      if (eg && v.exact) {
+        html += '<div class="pz-result no">' + badge(cls, "lg") + "<div><b>Not quite.</b> " + esc(moveLabel(v.played)) + " ends " + ends(v) + ", " +
+          (+v.valueLoss).toFixed(0) + " point" + (Math.round(+v.valueLoss) === 1 ? "" : "s") + " worse than the best play. " +
+          ((v.playedScore || 0) > (v.bestScore || 0) ? "Scoring the most now is not the answer." : "Think about going out, and about what the opponent can still play.") + "</div></div>";
+      } else {
+        html += '<div class="pz-result no">' + badge(cls, "lg") + "<div><b>Not quite.</b> " + esc(moveLabel(v.played)) + " is " + CLASS_INFO[cls].say +
+          " (" + pp(Math.max(0, v.winLoss)) + " less winning chance). " + (isBingo(v.best) && !isBingo(v.played) ? "Look for a bingo." :
+            (v.bestScore || 0) > (v.playedScore || 0) ? "The best move scores more." : "Think about what you keep.") + "</div></div>";
+      }
     }
     html += '<div class="pz-tries">' + [0, 1, 2].map((i) => '<span class="' + (i < pz.tries ? "used" : "") + '"></span>').join("") + "<em>" + (3 - pz.tries) + " tr" + (3 - pz.tries === 1 ? "y" : "ies") + " left</em></div>";
   }
   if ((pz.solved || pz.revealed) && pz.alts.length) {
-    html += '<ol class="alts2 pz-alts">' + pz.alts.slice(0, 4).map((a, i) => '<li><button data-pzmove="' + esc(a.move) + '">' + badge(i ? STEP_CLASSES[stepOf(Math.max(0, pz.alts[0].win - a.win), WIN_STEPS)] : "best", "sm") +
-      '<span class="mv">' + esc(moveLabel(a.move)) + '</span><span class="sc">' + (a.score ? "+" + a.score : "") + '</span><span class="wp">' + (isFinite(a.win) ? pct(a.win) : "") + "</span></button></li>").join("") + "</ol>";
+    const top = pz.alts[0];
+    html += '<ol class="alts2 pz-alts">' + pz.alts.slice(0, 4).map((a, i) => '<li><button data-pzmove="' + esc(a.move) + '">' +
+      badge(i ? STEP_CLASSES[eg ? stepOf(Math.max(0, top.value - a.value), POINT_STEPS) : stepOf(Math.max(0, top.win - a.win), WIN_STEPS)] : "best", "sm") +
+      '<span class="mv">' + esc(moveLabel(a.move)) + '</span><span class="sc">' + (a.score ? "+" + a.score : "") + '</span><span class="wp">' +
+      (eg ? sgn(a.value) : isFinite(a.win) ? pct(a.win) : "") + "</span></button></li>").join("") + "</ol>";
+    if (eg) html += '<p class="pz-note dim">The last figure is where each move ends: points ahead (or behind) by the end of the game.</p>';
   }
   html += '<div class="coach-acts">' + (!pz.solved && !pz.revealed && pz.tries ? '<button class="ctl" id="pz-answer">Show the answer</button>' : "") +
-    '<span class="ctl-gap"></span><button class="ctl primary" id="pz-next">' + (pz.solved || pz.revealed ? "Next puzzle" : "Skip") + "</button></div></div>";
+    '<span class="ctl-gap"></span><button class="ctl primary" id="pz-next">' + (pz.solved || pz.revealed ? "Next puzzle" : "Skip") + "</button></div>";
+  html += '<div class="pz-kind"><span class="dim">Puzzles:</span><div class="seg" role="radiogroup" aria-label="Kind of puzzle">' +
+    [["move", "Best move"], ["endgame", "Endgame"]].map(([k, l]) => '<button data-kind="' + k + '" role="radio" aria-checked="' + (k === (pz.kind || "move")) + '" class="' + (k === (pz.kind || "move") ? "on" : "") + '">' + l + "</button>").join("") +
+    "</div></div></div>";
   box.innerHTML = html;
   if ($("pz-answer")) $("pz-answer").onclick = showAnswer;
-  $("pz-next").onclick = () => openPuzzle(false);
+  $("pz-next").onclick = () => openPuzzle(false, pz.kind || "move");
+  box.querySelectorAll(".pz-kind button").forEach((b) => (b.onclick = () => { if (!busy) openPuzzle(false, b.dataset.kind); }));
   box.querySelectorAll("[data-pzmove]").forEach((b) => (b.onclick = async () => {
     if (!puzzleDone()) return;
     const was = [pz.solved, pz.revealed];
@@ -2215,7 +2283,9 @@ function renderStats() {
   if (bestGame) html += '<p class="stat-line">Highest score <b>' + bestGame.me + "</b>" + (bestMove ? " · best move <b>" + esc(pretty(bestMove.move)) + "</b> for " + bestMove.score : "") + "</p>";
   if (pz.length) {
     const solved = pz.filter((e) => e.solved).length;
-    html += '<p class="stat-line">Puzzles solved <b>' + solved + "</b> of " + pz.length + " · daily streak <b>" + puzzleStreak() + "</b></p>";
+    const egs = pz.filter((e) => e.kind === "endgame");
+    html += '<p class="stat-line">Puzzles solved <b>' + solved + "</b> of " + pz.length + (egs.length ? " (endgames " + egs.filter((e) => e.solved).length + " of " + egs.length + ")" : "") +
+      " · daily streak <b>" + puzzleStreak() + "</b></p>";
   }
   html += '<button class="link" id="stats-reset">Clear stats</button>';
   box.innerHTML = html;
