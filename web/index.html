@@ -12,6 +12,8 @@
 <meta property="og:title" content="Tilefish: play Scrabble against a strong engine">
 <meta property="og:description" content="Play, practise and analyse in your browser. Free and open source; nothing to install.">
 <meta name="twitter:card" content="summary">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link href="fonts/fonts.css" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='5' fill='%23ecd096' stroke='%23b8955a' stroke-width='2'/%3E%3Ctext x='15' y='23' font-family='Arial' font-weight='800' font-size='18' text-anchor='middle' fill='%232a2116'%3ET%3C/text%3E%3C/svg%3E">
@@ -44,6 +46,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
       <button class="link" id="btn-puzzle">Puzzle</button>
       <button class="link" id="btn-games">Games</button>
       <button class="link" id="btn-focus" aria-pressed="false">Focus</button>
+      <button class="link" id="btn-install" hidden>Install</button>
       <button class="link" id="btn-help" aria-label="Help and shortcuts">Help</button>
     </nav>
   </header>
@@ -292,6 +295,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
         <span class="cls-legend"><span class="cls brilliant">!!</span> Brilliant (the best move, giving up 12+ points of score for a better game) · <span class="cls great">!</span> Great (the only strong move) · <span class="cls best">&#9733;</span> Best · Excellent (within 1%) · Good (under 3%) · <span class="cls inaccuracy">?!</span> Inaccuracy (3–6%) · <span class="cls mistake">?</span> Mistake (6–12%) · <span class="cls blunder">??</span> Blunder (12% or more).</span>
         Where a game is settled or the endgame is solved, points given up count instead. The better move is drawn on the board, dashed, with its coordinate and an arrow for its direction; point at any move in the list to see it there, or click to keep it. Accuracy is the average over a player's moves (100 for Tilefish's choice). <i>Try a move</i> sets out your own move in any reviewed position and judges it.
         <kbd>&larr;</kbd> <kbd>&rarr;</kbd> step through the game, <kbd>&uarr;</kbd> <kbd>&darr;</kbd> jump between key moves, <kbd>B</kbd> shows the best move, <kbd>Home</kbd> <kbd>End</kbd> go to the start and the end.</li>
+      <li><b>Offline:</b> once opened, the page works without a connection, with every word list you have played with on this device (the start screen says which). Your browser can install it as an app: <i>Install</i> above where it offers that, or <i>Add to Home Screen</i> in the share menu on an iPhone or iPad.</li>
       <li><b>Notation:</b> <i>8D WORD</i> is across from row 8, column D; <i>D8 WORD</i> is down. Letters in brackets were already on the board; lower case is a blank.</li>
     </ul>
   </div>

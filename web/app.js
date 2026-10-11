@@ -142,6 +142,18 @@ function prefetch(lex) {
   if (!worker) startWorker();
   worker.postMessage({ prefetch: lex });
 }
+// The word lists this browser keeps (worker.js), which load without a connection; the
+// start screen says which, and marks the others while the device is offline.
+let onDevice = new Set();
+const offline = () => navigator.onLine === false;
+async function refreshOnDevice() {
+  if (!ENGINE_OK) return;
+  if (!worker) startWorker();
+  try { onDevice = new Set(await call({ onDevice: true })); } catch (e) { return; }
+  if (!$("start").hidden) syncStart();
+}
+window.addEventListener("online", () => { if (!$("start").hidden) syncStart(); });
+window.addEventListener("offline", () => { if (!$("start").hidden) syncStart(); });
 // Throw away the running search (if any) and rebuild the engine's game from the record.
 async function restartEngine() {
   epoch++;
@@ -2475,6 +2487,18 @@ $("btn-focus").onclick = () => {
   $("btn-focus").textContent = on ? "Exit focus" : "Focus";
 };
 store.del("focus");  // earlier versions kept Focus on from one visit to the next
+// Installing the page as an app, where the browser offers it.
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installPrompt = e; $("btn-install").hidden = false; });
+window.addEventListener("appinstalled", () => { installPrompt = null; $("btn-install").hidden = true; });
+$("btn-install").onclick = async () => {
+  if (!installPrompt) return;
+  const p = installPrompt;
+  installPrompt = null;
+  $("btn-install").hidden = true;
+  p.prompt();
+  try { await p.userChoice; } catch (e) { /* dismissed */ }
+};
 $("btn-help").onclick = () => { $("help").hidden = false; $("btn-help-close").focus(); };
 $("btn-help-close").onclick = () => { $("help").hidden = true; };
 $("btn-games").onclick = () => openGames();
@@ -2541,6 +2565,11 @@ function openStart() {
   if (cur && !cur.over) $("resume-text").textContent = describe(cur) + ", " + cur.record.length + " moves";
   $("start").hidden = false;
   syncStart();
+  refreshOnDevice();
+}
+function lexNote(lex) {
+  if (onDevice.has(lex)) return NOTES[lex].replace(/ About \d+ MB, downloaded once and kept by this browser\./, "") + " Kept on this device, so it loads without a connection.";
+  return NOTES[lex] + (offline() ? " You are offline, and it is not on this device yet." : "");
 }
 function syncStart() {
   document.querySelectorAll(".seg").forEach((seg) => {
@@ -2550,7 +2579,8 @@ function syncStart() {
   document.querySelectorAll("[data-for]").forEach((el) => { el.hidden = !el.dataset.for.split(" ").includes(settings.mode); });
   $("mode-note").textContent = NOTES[settings.mode];
   $("level-note").textContent = NOTES[settings.level];
-  $("lex-note").textContent = NOTES[settings.lexicon];
+  $("lex-note").textContent = lexNote(settings.lexicon);
+  document.querySelectorAll('.seg[data-name="lexicon"] button').forEach((b) => b.classList.toggle("off", offline() && !onDevice.has(b.dataset.v)));
   $("ot-note").textContent = NOTES[settings.overtime];
   $("custom-row").hidden = settings.clock !== "custom";
   $("custom-min").value = settings.customMin;
@@ -2624,7 +2654,9 @@ async function withLoading(lex, fn) {
     $("start").hidden = true;
   } catch (err) {
     setBar(0);
-    $("loading-text").textContent = capital(err.message) + (ENGINE_OK && !BUNDLED.has(lex) ? ". ENABLE works without a download." : ".");
+    const kept = [...onDevice].map((l) => LEX_NAME[l] || l);
+    $("loading-text").textContent = capital(err.message) + (!ENGINE_OK ? "." : offline() ? (kept.length ? ". Kept on this device: " + kept.join(", ") + "." : ".")
+      : !BUNDLED.has(lex) ? ". ENABLE works without a download." : ".");
   } finally {
     $("loading").classList.remove("busy");
     btn.disabled = false;
@@ -2756,6 +2788,6 @@ render();
 // The engine starts compiling at once, and the word list chosen last time (or one that
 // comes with the page) starts downloading, so Start has little left to wait for.
 if (ENGINE_OK) {
-  startWorker();
+  if (!worker) startWorker();
   if (store.get("lexicon", null) || BUNDLED.has(settings.lexicon)) prefetch(settings.lexicon);
 }

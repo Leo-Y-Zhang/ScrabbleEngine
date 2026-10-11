@@ -26,7 +26,8 @@ Read `docs/HANDOVER.md` before engine or experiment work.
   http://localhost:8000 (Playwright with the preinstalled Chromium works headless).
 - `web/build.sh` versions every file the page loads; never hand-edit `web/dist`. It makes
   two engines: `tilefish.js` (one core) and `tilefish-mt.js` (a search thread per core,
-  up to 8). `web/coi-sw.js` makes the page cross-origin isolated so the second can run;
+  up to 8). `web/coi-sw.js` makes the page cross-origin isolated so the second can run (and keeps
+  a copy of each file, so the page opens offline);
   `web/worker.js` falls back to the first wherever it cannot. The page shortens timed
   searches on several cores (`speed()` in `app.js`), so levels, hints and reviews answer
   sooner while still searching more than one core did.
