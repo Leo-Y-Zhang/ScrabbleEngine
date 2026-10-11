@@ -43,6 +43,7 @@ const PREMIUM = (() => {
   return m;
 })();
 const PREMIUM_LABEL = { tw: "3W", dw: "2W", tl: "3L", dl: "2L", star: "★" };
+const PREMIUM_SAY = { tw: "triple word", dw: "double word", tl: "triple letter", dl: "double letter", star: "centre star, double word" };
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -480,6 +481,10 @@ function renderBoard(fresh) {
     d.classList.toggle("lastsq", last.has(s) && filled(s) && !(marks && preview));
     d.classList.toggle("mine", lastMine);
     d.classList.toggle("badword", !!bad && bad.has(s));
+    // What a screen reader says for the square: its name and what is on it.
+    const name = Math.floor(s / N) + 1 + COLS[s % N], ch = filled(s) ? at(s) : pending.has(s) ? pending.get(s).ch : "";
+    d.setAttribute("aria-label", name + (ch ? ", " + ch.toUpperCase() + (ch === ch.toLowerCase() ? " (blank)" : "") + (pending.has(s) ? ", placed this turn" : "")
+      : PREMIUM[s] ? ", " + PREMIUM_SAY[PREMIUM[s]] : ""));
     if (filled(s)) {
       let cls = last.has(s) ? "last" + (lastMine ? " mine" : "") : "";
       if (fresh && fresh.has(s)) cls += " fresh";
@@ -545,7 +550,7 @@ function renderSide() {
     } else if (ptsEl.dataset.game !== G.id) ptsEl.removeAttribute("data-gain");
     ptsEl.dataset.game = G.id;
     ptsEl.textContent = val;
-    $("card-" + c).classList.toggle("turn", !S.over && !G.over && S.turn === side && reviewAt < 0);
+    $("card-" + c).classList.toggle("turn", !S.over && !G.over && S.turn === side && reviewAt < 0 && !puzzleDone());
     $("clock-" + c).hidden = !G.clockMin;
   }
   const mini = $("mini");
@@ -2090,13 +2095,14 @@ async function findPuzzle(base) {
 }
 // Endgame puzzles: a static game played on past the empty bag until the two racks hold
 // 11 tiles or fewer (no blanks), so the exact solver usually settles it in well under a
-// second; a position it has not solved in 1.2 s is passed over.  Kept when the obvious move,
-// the highest-scoring one, ends at least 4 points worse than the best play; else the one
-// where it costs most of those tried (up to 24, or 4 s once one is found).
+// second; a position it has not solved in 1.2 s is passed over.  Kept when the best play is
+// the only one that good and the obvious move, the highest-scoring one, ends at least 4
+// points worse; else the one where the obvious move costs most of those tried (up to 24,
+// or 4 s once one is found), a single best play breaking ties.
 async function findEndgame(base) {
-  let chosen = null, gainOf = -1, at = -1;
+  let chosen = null, quality = -1, at = -1, done = false;
   const t0 = Date.now();
-  for (let a = 0; a < 24 && gainOf < 4 && !(chosen && Date.now() - t0 > 4000); a++) {
+  for (let a = 0; a < 24 && !done && !(chosen && Date.now() - t0 > 4000); a++) {
     const seed = base + a;
     let r = await ui("new first " + seed);
     at = seed;
@@ -2120,9 +2126,12 @@ async function findEndgame(base) {
     const topScore = Math.max(...plays.map((m) => m.score));
     const greedy = plays.find((m) => m.score === topScore);
     const gain = h.hint.moves[0].value - greedy.value;
-    if (gain > gainOf) {
+    const single = h.hint.moves.length < 2 || h.hint.moves[1].value < h.hint.moves[0].value;
+    const q = 2 * gain + (single ? 1 : 0);
+    if (q > quality) {
       chosen = { seed, turn: st.turn, moves: (await ui("record")).moves, hint: h.hint };
-      gainOf = gain;
+      quality = q;
+      done = single && gain >= 4;
     }
   }
   if (chosen && chosen.seed !== at) {  // the engine moved on to later tries: back to the one chosen
@@ -2182,7 +2191,9 @@ async function puzzleCheck() {
   pz.last = r.ok ? r : null;
   const cls = r.ok ? classify(r) : null;
   // An endgame is solved only by a move that ends as well as the best (within half a point).
-  if (r.ok && (eg && r.exact ? r.same || Math.max(0, +r.valueLoss || 0) < 0.5 : cls && SOLVED.has(cls))) {
+  const ok = r.ok && (eg && r.exact ? r.same || Math.max(0, +r.valueLoss || 0) < 0.5 : cls && SOLVED.has(cls));
+  pz.marks = (pz.marks || "") + (ok ? "y" : "n");
+  if (ok) {
     pz.solved = true;
     sfx.good();
     logPuzzle();
@@ -2218,6 +2229,20 @@ function logPuzzle() {
   const prev = log[key] || {};
   log[key] = { solved: prev.solved || pz.solved, tries: pz.tries, revealed: !pz.solved && pz.revealed, lex: G.lexicon, at: new Date().toISOString(), kind: pz.kind || "move" };
   store.put("puzzles", log);
+}
+// The daily puzzle's result as a few lines of text, a mark for each try: no position,
+// so it gives nothing away to someone who has not solved it yet.
+async function sharePuzzle() {
+  const pz = G && G.puzzle;
+  if (!pz || !pz.daily) return;
+  const marks = (pz.marks || "").split("").map((m) => (m === "y" ? "🟩" : "🟥")).join("") + (pz.revealed && !pz.solved ? "⬛" : "");
+  const day = new Date(pz.daily + "T12:00:00").toLocaleDateString([], { day: "numeric", month: "long" });
+  const text = "Tilefish daily puzzle, " + day + " (" + (LEX_NAME[G.lexicon] || G.lexicon) + ")\n" + marks + " " +
+    (pz.solved ? "solved " + (pz.tries === 1 ? "first time" : "in " + pz.tries + " tries") : "not solved") + "\n" + location.href.split(/[?#]/)[0];
+  if (navigator.share && matchMedia("(pointer: coarse)").matches) {
+    try { await navigator.share({ text }); return; } catch (e) { if (e && e.name === "AbortError") return; }
+  }
+  try { await navigator.clipboard.writeText(text); toast("Result copied.", true); } catch (e) { toast(text, true); }
 }
 function renderPuzzle() {
   const box = $("puzzle"), pz = G && G.puzzle;
@@ -2267,12 +2292,14 @@ function renderPuzzle() {
     if (eg) html += '<p class="pz-note dim">The last figure is where each move ends: points ahead (or behind) by the end of the game.</p>';
   }
   html += '<div class="coach-acts">' + (!pz.solved && !pz.revealed && pz.tries ? '<button class="ctl" id="pz-answer">Show the answer</button>' : "") +
+    (pz.daily && (pz.solved || pz.revealed) ? '<button class="ctl" id="pz-share">Share result</button>' : "") +
     '<span class="ctl-gap"></span><button class="ctl primary" id="pz-next">' + (pz.solved || pz.revealed ? "Next puzzle" : "Skip") + "</button></div>";
   html += '<div class="pz-kind"><span class="dim">Puzzles:</span><div class="seg" role="radiogroup" aria-label="Kind of puzzle">' +
     [["move", "Best move"], ["endgame", "Endgame"]].map(([k, l]) => '<button data-kind="' + k + '" role="radio" aria-checked="' + (k === (pz.kind || "move")) + '" class="' + (k === (pz.kind || "move") ? "on" : "") + '">' + l + "</button>").join("") +
     "</div></div></div>";
   box.innerHTML = html;
   if ($("pz-answer")) $("pz-answer").onclick = showAnswer;
+  if ($("pz-share")) $("pz-share").onclick = sharePuzzle;
   $("pz-next").onclick = () => openPuzzle(false, pz.kind || "move");
   box.querySelectorAll(".pz-kind button").forEach((b) => (b.onclick = () => { if (!busy) openPuzzle(false, b.dataset.kind); }));
   box.querySelectorAll("[data-pzmove]").forEach((b) => (b.onclick = async () => {
