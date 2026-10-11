@@ -181,7 +181,9 @@ the current folder or in its own. Type `help` to list the commands, and run
 
 **Browser version**: `sh web/build.sh` (needs [Emscripten](https://emscripten.org)) builds
 `web/dist`; `python3 -m http.server -d web/dist` serves it at http://localhost:8000.
-`node web/smoke.js` plays whole games through the build. The free word lists are served
+`node web/smoke.js` plays whole games through the build, and `node web/ui-test.js` drives
+the page itself in a browser (Playwright) through a game, its review and link, the puzzles
+and the board editor. The free word lists are served
 compiled to `.kwg` (`savekwg FILE`), which the browser loads several times faster than it
 builds them from text, and every file the page loads carries a version, so a browser never
 mixes files from two releases. `web/coi-sw.js` keeps a copy of each file as it is fetched

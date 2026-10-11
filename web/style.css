@@ -277,6 +277,7 @@ textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 .setup-check.bad { color: var(--warn); }
 .backup-row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; }
 .backup-row .dim { flex: 1 1 220px; }
+@media (max-width: 480px) { .backup-row .dim { flex-basis: 100%; } }
 .file-link { cursor: pointer; position: relative; }
 .file-link input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
 .setup-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

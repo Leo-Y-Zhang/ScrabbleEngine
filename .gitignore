@@ -4,3 +4,4 @@ tilefish.exe
 /work/
 __pycache__/
 web/dist/
+node_modules/

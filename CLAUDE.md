@@ -22,7 +22,10 @@ Read `docs/HANDOVER.md` before engine or experiment work.
   `checksum 349.2837`, and the browser build must print the same (CI compares them). A
   speed-up that changes it changes the search, and needs a registered experiment.
 - Browser: `sh web/build.sh` (Emscripten 6.0.11; install with emsdk if missing), then
-  `node web/smoke.js 2`, then try it: `python3 -m http.server -d web/dist` and open
+  `node web/smoke.js 2`, then `node web/ui-test.js` (drives the page in a browser through a
+  game, the review, a game link, the puzzles and the board editor; needs
+  `npm install --no-save playwright@1.56.1`, or the preinstalled one with
+  `NODE_PATH=/opt/node22/lib/node_modules`; CI runs it with the runner's Chrome), then try it: `python3 -m http.server -d web/dist` and open
   http://localhost:8000 (Playwright with the preinstalled Chromium works headless).
 - `web/build.sh` versions every file the page loads; never hand-edit `web/dist`. It makes
   two engines: `tilefish.js` (one core) and `tilefish-mt.js` (a search thread per core,
