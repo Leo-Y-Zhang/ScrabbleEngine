@@ -275,6 +275,10 @@ textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 .setup-grid input[type=number], .setup-grid input::placeholder { text-transform: none; letter-spacing: 0; }
 .setup-check { font-size: 13px; color: var(--ink-2); }
 .setup-check.bad { color: var(--warn); }
+.backup-row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; }
+.backup-row .dim { flex: 1 1 220px; }
+.file-link { cursor: pointer; position: relative; }
+.file-link input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
 .setup-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .setup-acts .ctl-gap { flex: 1; display: block; }
 .ctl.file { display: inline-block; position: relative; overflow: hidden; }

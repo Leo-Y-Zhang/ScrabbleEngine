@@ -1826,6 +1826,7 @@ function coachHtml(v, k, opts) {
   if (!v.same) html += '<button class="ctl" id="rv-best" title="Show the best move on the board (B)">' + (preview && preview.move === v.best ? "Show played" : "Show best") + "</button>";
   if (rvBoards) html += '<button class="ctl" id="rv-try" title="Set out your own move in this position and have it judged">Try a move</button>';
   if (reviewAt > 0 && reviewAt <= G.record.length && !G.gcg && !G.cgp) html += '<button class="ctl" id="rv-retry" title="Play from the position before this move, with the same tiles to come">Retry</button>';
+  if (rvBoards && !analysing) html += '<button class="ctl" id="rv-analyse" title="Open the position before this move in Analyse, where you can change it, get hints and play on">Analyse from here</button>';
   html += '<span class="ctl-gap"></span><span class="keynav"><button class="ctl" id="rv-kprev" title="Previous key move (↑)" aria-label="Previous key move">‹</button><span class="dim">Key</span><button class="ctl" id="rv-knext" title="Next key move (↓)" aria-label="Next key move">›</button></span></div>';
   return html + "</div>";
 }
@@ -1833,6 +1834,7 @@ function wireCoach(v, k) {
   const box = $("review");
   if ($("rv-best")) $("rv-best").onclick = () => togglePreview(v.best);
   if ($("rv-retry")) $("rv-retry").onclick = () => tryAgain(reviewAt - 1);
+  if ($("rv-analyse")) $("rv-analyse").onclick = () => analyseFromReview(k);
   if ($("rv-try")) $("rv-try").onclick = () => startExplore(k);
   if ($("rv-kprev")) { $("rv-kprev").onclick = () => jumpKey(-1); $("rv-kprev").disabled = keyMove(-1) < 0; }
   if ($("rv-knext")) { $("rv-knext").onclick = () => jumpKey(1); $("rv-knext").disabled = keyMove(1) < 0; }
@@ -1846,6 +1848,18 @@ function wireCoach(v, k) {
 }
 // The analysis board: the position before a move, with the mover's rack, where any move
 // can be set out and judged as the review judges the one played (`ui judge`).
+// The position before move k, with its mover's rack and both scores, in the board editor
+// (Analyse), from where it can be changed, analysed and played on.
+function analyseFromReview(k) {
+  const v = verdictAt(k);
+  if (!rvBoards || !rvBoards[k]) return;
+  const side = moverOf(k), score = [0, 0], seen = [false, false];
+  for (let i = k - 1; i >= 0 && !(seen[0] && seen[1]); i--) {
+    const s = moverOf(i);
+    if (!seen[s]) { score[s] = S.history[i].total; seen[s] = true; }
+  }
+  openSetup({ board: rvBoards[k], rack: v ? v.rack : "", you: score[side], them: score[1 - side] });
+}
 function startExplore(k) {
   const v = verdictAt(k);
   if (!v || !rvBoards) return;
@@ -2791,6 +2805,36 @@ function stopClocksForFailure() {
   G.since = 0;
   G.pauseNote = "engine restarting";
 }
+
+// ---------- backup ----------
+// Everything the page keeps (finished games, stats, puzzle results, the unfinished game) in
+// one file, and back: a restore adds what the file has to what this browser has.
+const BACKUP_KEYS = ["games", "stats", "puzzles", "current"];
+$("btn-backup").onclick = () => {
+  const data = { app: "tilefish", version: 1, saved: new Date().toISOString() };
+  for (const k of BACKUP_KEYS) data[k] = store.json(k, null);
+  download("tilefish-backup-" + dayKey(new Date()) + ".json", JSON.stringify(data), "application/json");
+};
+$("restore-in").onchange = async (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  let d;
+  try { d = JSON.parse(await f.text()); } catch (err) { d = null; }
+  if (!d || d.app !== "tilefish" || d.version !== 1) { toast("That file is not a Tilefish backup."); return; }
+  const byId = (a, b) => { const m = new Map(); for (const x of [...(a || []), ...(b || [])]) if (x && x.id != null && !m.has(x.id)) m.set(x.id, x); return [...m.values()]; };
+  const games = byId(store.json("games", []), Array.isArray(d.games) ? d.games : []).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 30);
+  const stats = byId(store.json("stats", []), Array.isArray(d.stats) ? d.stats : []).sort((a, b) => String(a.d).localeCompare(String(b.d))).slice(-500);
+  const pz = store.json("puzzles", {});
+  if (d.puzzles && typeof d.puzzles === "object") for (const [k, v] of Object.entries(d.puzzles)) if (v && typeof v === "object") pz[k] = pz[k] ? Object.assign({}, v, pz[k], { solved: !!(pz[k].solved || v.solved) }) : v;
+  store.put("games", games);
+  store.put("stats", stats);
+  store.put("puzzles", pz);
+  if (d.current && !store.json("current", null)) store.put("current", d.current);
+  const count = (n, one, many) => n + " " + (n === 1 ? one : many);
+  toast("Restored. Here now: " + count(games.length, "game", "games") + ", " + count(stats.length, "result", "results") + ", " + count(Object.keys(pz).length, "puzzle", "puzzles") + ".", true);
+  openGames($("stats-view").hidden ? "games" : "stats");
+};
 
 // ---------- games list ----------
 function showGamesTab(tab) {
