@@ -702,7 +702,7 @@ function renderControls() {
   $("secondary").hidden = !live;
   $("btn-takeback").hidden = !assistAllowed();
   $("btn-takeback").disabled = !G || !G.record.some((e) => humanSide(e.side));
-  $("btn-pause").hidden = !(assistAllowed() && G && G.clockMin);
+  $("btn-pause").hidden = !(G && G.clockMin && (assistAllowed() || G.paused));
   $("btn-pause").textContent = G && G.paused ? "Resume clock" : "Pause clock";
   $("btn-resign").hidden = !G || G.mode === "analysis" || G.mode === "puzzle";
   if (reviewing && S) {
@@ -1002,6 +1002,9 @@ function showState(state, mover) {
 }
 // A move was accepted: record it exactly, charge and switch the clocks, save.
 async function committed(state, mover) {
+  // A pause the page made itself (a restored game, an engine restart) ends with the next move;
+  // one chosen in Practice stays until resumed.
+  if (G.paused && G.pauseNote) { G.paused = false; G.pauseNote = ""; }
   const used = clockUsed();
   const rec = await ui("record");
   const moveText = rec.moves[rec.moves.length - 1];
@@ -1364,7 +1367,7 @@ async function takeback() {
 }
 $("btn-takeback").onclick = takeback;
 $("btn-pause").onclick = () => {
-  if (!G || !G.clockMin || !assistAllowed()) return;
+  if (!G || !G.clockMin || (!assistAllowed() && !G.paused)) return;  // Play: only a restored clock can be resumed
   if (!G.paused) { if (G.running >= 0 && G.since) G.used[G.running] += Date.now() - G.since; G.paused = true; G.since = 0; G.pauseNote = ""; G.assisted = true; }
   else { G.paused = false; G.since = Date.now(); G.pauseNote = ""; }
   save();
@@ -2671,7 +2674,10 @@ rackEl.addEventListener("pointerdown", (e) => {
 const sheetOpen = () => ["start", "end", "blank-picker", "handover", "games", "help"].some((id) => !$(id).hidden);
 document.addEventListener("keydown", (e) => {
   if (sheetOpen()) {
-    if (e.key === "Escape") { for (const id of ["games", "help"]) $(id).hidden = true; }
+    if (e.key === "Escape") {
+      for (const id of ["games", "help", "end"]) $(id).hidden = true;
+      if (!$("start").hidden && !$("btn-start-close").hidden) $("btn-start-close").click();
+    }
     return;
   }
   if (e.ctrlKey || e.metaKey || e.altKey || /input|textarea/i.test(e.target.tagName)) return;
@@ -2904,6 +2910,7 @@ function openGames(tab) {
 
 // ---------- start, resume, import ----------
 function openStart() {
+  $("btn-start-close").hidden = !G && !setup;  // something to go back to
   const cur = store.json("current", null);
   $("resume").hidden = !cur || cur.over;
   if (cur && !cur.over) $("resume-text").textContent = describe(cur) + ", " + cur.record.length + " moves";
@@ -3047,8 +3054,13 @@ async function openSaved(g, review) {
     S = null;
     showState(st, null);
     if (G.over || review) { $("start").hidden = true; await enterReview(S.history.length, { analyse: G.over || G.mode === "review" }); return; }
-    // A restored game starts paused; time while the page was closed is not charged.
-    if (G.clockMin) { G.paused = true; G.pauseNote = "restored"; G.since = 0; }
+    // Time while the page was closed is not charged.  In Practice a restored game waits,
+    // paused, for its Resume button or the next move; in Play, which has no pause, and for two
+    // players, the clock runs on at once.
+    if (G.clockMin) {
+      if (assistAllowed()) { G.paused = true; G.pauseNote = "restored"; G.since = 0; }
+      else { G.paused = false; G.pauseNote = ""; G.since = G.running >= 0 ? Date.now() : 0; }
+    }
     $("banner").hidden = true;
     save();
     render();
@@ -3263,6 +3275,7 @@ $("file-in").onchange = async (e) => {
   });
 };
 $("btn-start").onclick = startGame;
+$("btn-start-close").onclick = () => { $("start").hidden = true; $("loading").hidden = true; };
 
 // Zoom (phones): the board grows inside a window you can pan with a finger, and follows
 // the cursor as you type.  The magnifier button, or a double tap on the board.
