@@ -417,10 +417,40 @@ namespace tf {
 // Only 16-bit fingerprints are stored, in a cache-friendly open-addressing table:
 // a lookup can wrongly answer "yes" (harmless: a looser bound) but never "no"
 // for a key that was inserted.
+// Least-significant-digit radix sort in 16-bit digits (digit(x, 0) the lowest): the same
+// order as std::sort, in a few linear passes.  The lexicon's indexes sort millions of keys
+// every time a word list loads, which std::sort made the slowest part of the load.
+template <class T, class Digit>
+inline void radix_sort(std::vector<T>& a, int ndigits, Digit digit) {
+  std::vector<T> b(a.size());
+  std::vector<u32> cnt((size_t)1 << 16);
+  for (int d = 0; d < ndigits; ++d) {
+    std::fill(cnt.begin(), cnt.end(), 0u);
+    for (const T& x : a) cnt[digit(x, d)]++;
+    if (a.empty() || cnt[digit(a[0], d)] == a.size()) continue;  // one value: nothing moves
+    u32 sum = 0;
+    for (u32& c : cnt) {
+      const u32 t = c;
+      c = sum;
+      sum += t;
+    }
+    for (const T& x : a) b[cnt[digit(x, d)]++] = x;
+    a.swap(b);
+  }
+}
+inline void radix_sort(std::vector<u64>& a) {
+  radix_sort(a, 4, [](u64 x, int d) { return (u32)(x >> (16 * d)) & 0xFFFFu; });
+}
+inline void radix_sort(std::vector<std::pair<u64, u32>>& a) {  // by first, then second
+  radix_sort(a, 6, [](const std::pair<u64, u32>& x, int d) {
+    return d < 2 ? (x.second >> (16 * d)) & 0xFFFFu : (u32)(x.first >> (16 * (d - 2))) & 0xFFFFu;
+  });
+}
+
 class WordFilter {
  public:
   void build(std::vector<u64>& keys) {
-    std::sort(keys.begin(), keys.end());
+    radix_sort(keys);
     keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
     int bits = 10;
     while ((1ull << bits) < keys.size() * 2) ++bits;
@@ -461,7 +491,7 @@ class AnagramMap {
  public:
   // Values are word ids (optionally | letter << 24).  Builds from (key, value) pairs.
   void build(std::vector<std::pair<u64, u32>>& kv) {
-    std::sort(kv.begin(), kv.end());
+    radix_sort(kv);
     size_t distinct = 0;
     for (size_t i = 0; i < kv.size(); ++i) distinct += (i == 0 || kv[i].first != kv[i - 1].first);
     int bits = 10;
@@ -1533,6 +1563,10 @@ namespace tf {
 class LeaveTable {
  public:
   LeaveTable() { init_default(); }
+  // An empty table, to load a file into: fill_default() then completes it, without
+  // working out the model for every leave a file already gives.
+  struct Empty {};
+  explicit LeaveTable(Empty) { clear(); }
 
   static u32 key_of(const int8_t* cnt) {
     u32 key = 0;
@@ -1613,29 +1647,42 @@ class LeaveTable {
   template <class F>
   static void enumerate(int maxsize, F f) {
     int8_t cnt[NLET] = {0};
-    std::function<void(int, int)> rec = [&](int L, int size) {
-      if (L == NLET) {
-        if (size > 0) f(cnt, size);
-        return;
-      }
-      for (int k = 0; k <= TILE_COUNT[L] && size + k <= maxsize; ++k) {
-        cnt[L] = (int8_t)k;
-        rec(L + 1, size + k);
-      }
-      cnt[L] = 0;
-    };
-    rec(0, 0);
+    enumerate_from(cnt, 0, 0, maxsize, f);
+  }
+  // enumerate(6, ...) in the same order, with each leave's key_of() built along the way.
+  template <class F>
+  static void enumerate_keyed(F f) {
+    int8_t cnt[NLET] = {0};
+    keyed_from(cnt, 0, 0, 0u, 0, f);
+  }
+  // The number of feasible leaves of 1..6 tiles (914,624 with the standard tiles).
+  static size_t feasible_count() {
+    static const size_t n = [] {
+      u64 ways[7] = {1, 0, 0, 0, 0, 0, 0};  // multisets of each size from the letters so far
+      for (int L = 0; L < NLET; ++L)
+        for (int s = 6; s >= 1; --s)
+          for (int k = 1; k <= TILE_COUNT[L] && k <= s; ++k) ways[s] += ways[s - k];
+      u64 t = 0;
+      for (int s = 1; s <= 6; ++s) t += ways[s];
+      return (size_t)t;
+    }();
+    return n;
   }
 
   // Built-in model used until a trained table is loaded (see `train`).
   static float model_value(const int8_t* c);
 
   void init_default() {
-    keys_.assign(1u << 21, 0u);
-    vals_.assign(1u << 21, 0.f);
-    mask_ = (u32)keys_.size() - 1;
-    count_ = 0;
-    enumerate(6, [&](const int8_t* cnt, int) { set(key_of(cnt), model_value(cnt)); });
+    clear();
+    enumerate_keyed([&](const int8_t* cnt, u32 key) { set(key, model_value(cnt)); });
+  }
+  // The built-in model for every feasible leave the table lacks: after a load into an empty
+  // table, the same values as init_default() followed by that load.
+  void fill_default() {
+    if (count_ >= feasible_count()) return;
+    enumerate_keyed([&](const int8_t* cnt, u32 key) {
+      if (!has(key)) set(key, model_value(cnt));
+    });
   }
 
   static bool parse_leave(const std::string& s, int8_t* cnt, int& n) {
@@ -1689,11 +1736,15 @@ class LeaveTable {
       err = "not a KLV/KLV2 file (value block has the wrong size)";
       return false;
     }
-    // Enumerate the DAWG's words in order.
-    std::vector<std::string> words;
-    std::string cur;
+    // Enumerate the DAWG's words in order: for each, its key if it is a feasible leave of
+    // 1..6 tiles (else 0), or a tile outside A-Z and the blank.
+    struct Word { u32 key; bool alien; };
+    std::vector<Word> words;
+    words.reserve(nv);
+    int8_t cnt[NLET] = {0};
+    int n = 0, alien = 0;
     bool bad = false;
-    std::function<void(u32, int)> walk = [&](u32 list, int depth) {
+    auto walk = [&](auto&& self, u32 list, int depth) -> void {
       if (!list || bad) return;
       if (depth > 7) {
         bad = true;
@@ -1705,14 +1756,21 @@ class LeaveTable {
           return;
         }
         const u32 v = nodes[i];
-        cur.push_back((char)(v >> 24));
-        if (v & (1u << 23)) words.push_back(cur);
-        walk(v & 0x3FFFFFu, depth + 1);
-        cur.pop_back();
+        const int L = (int)(v >> 24);
+        if (L < NLET) cnt[L]++; else alien++;
+        n++;
+        if (v & (1u << 23)) {
+          bool feasible = n >= 1 && n <= 6 && !alien;
+          for (int k = 0; k < NLET && feasible; ++k) feasible = cnt[k] <= TILE_COUNT[k];
+          words.push_back({feasible ? key_of(cnt) : 0u, alien > 0});
+        }
+        self(self, v & 0x3FFFFFu, depth + 1);
+        if (L < NLET) cnt[L]--; else alien--;
+        n--;
         if (v & (1u << 22)) break;
       }
     };
-    walk(nodes[0] & 0x3FFFFFu, 0);
+    walk(walk, nodes[0] & 0x3FFFFFu, 0);
     if (bad || words.size() != nv) {
       err = fmt("not a KLV file (%zu leaves in the graph, %u values)", words.size(), nv);
       return false;
@@ -1720,16 +1778,9 @@ class LeaveTable {
     std::vector<std::pair<u32, float>> parsed;
     parsed.reserve(nv);
     for (size_t i = 0; i < words.size(); ++i) {
-      int8_t cnt[NLET] = {0};
-      int n = 0;
-      for (char ch : words[i]) {
-        const int L = (u8)ch;
-        if (L >= NLET) {
-          err = "KLV contains tiles outside A-Z/blank (other alphabet?)";
-          return false;
-        }
-        cnt[L]++;
-        ++n;
+      if (words[i].alien) {
+        err = "KLV contains tiles outside A-Z/blank (other alphabet?)";
+        return false;
       }
       float v;
       if (f32) {
@@ -1743,10 +1794,7 @@ class LeaveTable {
         err = "KLV values out of range";
         return false;
       }
-      if (n < 1 || n > 6) continue;
-      bool feasible = true;
-      for (int L = 0; L < NLET; ++L) feasible &= cnt[L] <= TILE_COUNT[L];
-      if (feasible) parsed.push_back({key_of(cnt), v});
+      if (words[i].key) parsed.push_back({words[i].key, v});
     }
     for (const auto& kv : parsed) set(kv.first, kv.second);
     if (loaded) *loaded = parsed.size();
@@ -1808,6 +1856,43 @@ class LeaveTable {
   u32 mask_ = 0;
   size_t count_ = 0;
 
+  void clear() {
+    keys_.assign(1u << 21, 0u);
+    vals_.assign(1u << 21, 0.f);
+    mask_ = (u32)keys_.size() - 1;
+    count_ = 0;
+  }
+  template <class F>
+  static void keyed_from(int8_t* cnt, int L, int size, u32 key, int sh, F& f) {
+    if (L == NLET) {
+      if (size > 0) {
+        for (int k = 0; k < cnt[BLANK]; ++k, sh += 5) key |= 27u << sh;  // blanks go last
+        f((const int8_t*)cnt, key);
+      }
+      return;
+    }
+    for (int k = 0; k <= TILE_COUNT[L] && size + k <= 6; ++k) {
+      cnt[L] = (int8_t)k;
+      keyed_from(cnt, L + 1, size + k, key, sh, f);
+      if (L != BLANK) {
+        key |= (u32)L << sh;
+        sh += 5;
+      }
+    }
+    cnt[L] = 0;
+  }
+  template <class F>
+  static void enumerate_from(int8_t* cnt, int L, int size, int maxsize, F& f) {
+    if (L == NLET) {
+      if (size > 0) f((const int8_t*)cnt, size);
+      return;
+    }
+    for (int k = 0; k <= TILE_COUNT[L] && size + k <= maxsize; ++k) {
+      cnt[L] = (int8_t)k;
+      enumerate_from(cnt, L + 1, size + k, maxsize, f);
+    }
+    cnt[L] = 0;
+  }
   size_t slot(u32 key) const { return (size_t)((key * 2654435761u) ^ (key >> 15)) & mask_; }
   void grow() {
     std::vector<u32> ok = std::move(keys_);
@@ -5713,10 +5798,12 @@ inline MatchResult run_match(const Lexicon& lex, const LeaveTable& lt, const Win
       L->for_each([&](u32 k, float) { keys.push_back(k); });
       for (u32 k : keys) L->set(k, 0.f);
     } else if (!c.leaves_file.empty()) {
-      L.reset(new LeaveTable());
+      L.reset(new LeaveTable(LeaveTable::Empty{}));
       if (!L->load(c.leaves_file, err)) {
         std::cerr << "warning: " << err << " (using the current leaves)\n";
         L.reset();
+      } else {
+        L->fill_default();
       }
     }
     if (!c.win_file.empty()) {
@@ -6557,11 +6644,12 @@ struct App {
   bool load_leaves(const std::string& path) {
     std::string err;
     size_t n = 0;
-    LeaveTable t;
+    LeaveTable t{LeaveTable::Empty{}};
     if (!t.load(path, err, &n)) {
       std::cout << "error: " << err << "\n";
       return false;
     }
+    t.fill_default();
     leaves = std::move(t);
     engine.reset();
     leaves_src = path;
@@ -7987,6 +8075,41 @@ inline void App::cmd_selftest(bool quick) {
     bylen[w.size()].push_back(w);
   });
   check(nw == lex.nwords && bad == 0, fmt("lexicon: %zu words enumerated, all accepted", nw));
+  {
+    // The radix sort behind the lexicon's indexes orders as std::sort does.
+    Rng r(77);
+    std::vector<u64> a(20000);
+    std::vector<std::pair<u64, u32>> b(20000);
+    for (size_t i = 0; i < a.size(); ++i) {
+      a[i] = r.next() >> (i % 3 ? 0 : 40);  // short keys too, so whole digits repeat
+      b[i] = {r.next() >> (i % 2 ? 0 : 50), (u32)(r.next() % 50)};
+    }
+    std::vector<u64> a2 = a;
+    std::vector<std::pair<u64, u32>> b2 = b;
+    radix_sort(a);
+    radix_sort(b);
+    std::sort(a2.begin(), a2.end());
+    std::sort(b2.begin(), b2.end());
+    check(a == a2 && b == b2, "radix sort orders keys and pairs as std::sort does");
+  }
+  {
+    // Leave keys built during the enumeration, the count of feasible leaves, and a load into
+    // an empty table completed by the model, against the plain ways.
+    size_t n = 0, wrong = 0;
+    LeaveTable::enumerate_keyed([&](const int8_t* cnt, u32 key) {
+      ++n;
+      wrong += key != LeaveTable::key_of(cnt);
+    });
+    LeaveTable model, part{LeaveTable::Empty{}};
+    int8_t c[NLET] = {0};
+    c[BLANK] = 1;
+    part.set(LeaveTable::key_of(c), 40.f);
+    part.fill_default();
+    size_t diff = 0;
+    model.for_each([&](u32 k, float v) { diff += part.get(k) != (k == LeaveTable::key_of(c) ? 40.f : v); });
+    check(n == LeaveTable::feasible_count() && n == model.size() && !wrong && part.size() == n && !diff,
+          fmt("leave table: %zu leaves, keys built on the way, a partial load completed by the model", n));
+  }
   {
     // every GADDAG path of a sample of words exists
     size_t tested = 0, missing = 0;
