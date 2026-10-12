@@ -261,7 +261,7 @@ function clockMinutes() {
 }
 function describe(g) {
   const parts = [];
-  parts.push({ play: "Play", practice: "Practice", duo: "Two players", analysis: "Analysis", review: "Review", puzzle: g.puzzle && g.puzzle.daily ? "Daily puzzle" : g.puzzle && g.puzzle.kind === "endgame" ? "Endgame puzzle" : "Puzzle" }[g.mode] || g.mode);
+  parts.push({ play: "Play", practice: "Practice", duo: "Two players", analysis: "Analysis", review: "Review", puzzle: g.puzzle ? puzzleName(!!g.puzzle.daily, g.puzzle.kind) : "Puzzle" }[g.mode] || g.mode);
   if (g.mode !== "duo" && g.mode !== "review" && g.mode !== "puzzle") parts.push(capital(g.level));
   parts.push(LEX_NAME[g.lexicon] || g.lexicon);
   if (g.mode !== "review" && g.mode !== "analysis" && g.mode !== "puzzle")
@@ -2080,11 +2080,14 @@ window.addEventListener("resize", () => {
 // 1% of the best counts as solved, and you get three tries.
 const dayKey = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 const daySeed = (key) => 4000000 + Math.round(Date.parse(key + "T00:00:00Z") / 86400000) * 8;
+const egDaySeed = (key) => 9000000 + Math.round(Date.parse(key + "T00:00:00Z") / 86400000) * 64;
+// The log keeps a day's move puzzle under its date and its endgame under "eg:" and the date.
+const dailyKey = (day, kind) => (kind === "endgame" ? "eg:" + day : day);
 const SOLVED = new Set(["brilliant", "great", "best", "excellent"]);
 function puzzleLog() { return store.json("puzzles", {}); }
-function puzzleStreak() {
+function puzzleStreak(kind) {
   const log = puzzleLog();
-  const solved = (d) => { const e = log[dayKey(d)]; return e && e.solved && !e.late; };  // an earlier day's puzzle solved later does not count
+  const solved = (d) => { const e = log[dailyKey(dayKey(d), kind)]; return e && e.solved && !e.late; };  // an earlier day's puzzle solved later does not count
   const d = new Date();
   if (!solved(d)) d.setDate(d.getDate() - 1);
   let n = 0;
@@ -2125,10 +2128,28 @@ async function findPuzzle(base) {
 // the only one that good and the obvious move, the highest-scoring one, ends at least 4
 // points worse; else the one where the obvious move costs most of those tried (up to 24,
 // or 4 s once one is found), a single best play breaking ties.
-async function findEndgame(base) {
+// The daily endgame comes from the date, so every device has to choose the same one: its
+// seeds are tried in a fixed order with no clock, and each position is solved with a budget
+// in search nodes, not seconds (`hint 0 nodes=N`: one thread, an empty table), so which
+// positions are solved, and their values, are the same everywhere; the choice rests on
+// those values alone.  Once chosen it is kept on the device (DAILY_EG_VERSION names the
+// rule, so a puzzle chosen by an older one is not mixed with a newer one's).
+const DAILY_EG_TILES = 10, DAILY_EG_NODES = 100000, DAILY_EG_VERSION = 1;
+function savedDailyEndgame(lex, day) {
+  const e = store.json("dailyEndgames", {})[DAILY_EG_VERSION + " " + lex + " " + day];
+  return e && e.seed != null && Array.isArray(e.moves) && e.hint && Array.isArray(e.hint.moves) && e.hint.moves.length ? e : null;
+}
+function saveDailyEndgame(lex, day, pz) {
+  const all = store.json("dailyEndgames", {}), old = dayKey(new Date(Date.now() - 40 * 86400000));
+  for (const k of Object.keys(all)) if (!k.startsWith(DAILY_EG_VERSION + " ") || k.split(" ").pop() < old) delete all[k];
+  all[DAILY_EG_VERSION + " " + lex + " " + day] = { seed: pz.seed, turn: pz.turn, moves: pz.moves,
+    hint: { exact: pz.hint.exact, line: pz.hint.line, moves: pz.hint.moves.slice(0, 5).map((m) => ({ move: m.move, score: m.score, value: m.value, win: m.win })) } };
+  store.put("dailyEndgames", all);
+}
+async function findEndgame(base, daily) {
   let chosen = null, quality = -1, at = -1, done = false;
-  const t0 = Date.now();
-  for (let a = 0; a < 24 && !done && !(chosen && Date.now() - t0 > 4000); a++) {
+  const t0 = Date.now(), cap = daily ? DAILY_EG_TILES : 11;
+  for (let a = 0; a < 24 && !done && !(!daily && chosen && Date.now() - t0 > 4000); a++) {
     const seed = base + a;
     let r = await ui("new first " + seed);
     at = seed;
@@ -2139,19 +2160,21 @@ async function findEndgame(base) {
     if (!r.ok || r.state.over || r.state.bag !== 0) continue;
     await ui("seat " + r.state.turn);
     let st = (await ui("state")).state;
-    for (let i = 0; i < 8 && !st.over && st.rack.length + st.unseen.length > 11; i++) {
+    for (let i = 0; i < 8 && !st.over && st.rack.length + st.unseen.length > cap; i++) {
       await ui("seat " + (1 - st.turn));
       r = await ui("bot static");
       await ui("seat " + r.state.turn);
       st = (await ui("state")).state;
     }
-    if (st.over || st.rack.length < 3 || st.rack.length + st.unseen.length > 11 || st.rack.includes("?") || st.unseen.includes("?")) continue;
-    const h = await ui("hint 1.2");
+    if (st.over || st.rack.length < 3 || st.rack.length + st.unseen.length > cap || st.rack.includes("?") || st.unseen.includes("?")) continue;
+    const h = await ui(daily ? "hint 0 nodes=" + DAILY_EG_NODES : "hint 1.2");
     if (!h.ok || !h.hint.exact || !h.hint.moves.length || isPass(h.hint.moves[0].move)) continue;
     const plays = h.hint.moves.filter((m) => !isPass(m.move));
     const topScore = Math.max(...plays.map((m) => m.score));
-    const greedy = plays.find((m) => m.score === topScore);
-    const gain = h.hint.moves[0].value - greedy.value;
+    // the obvious move: the highest-scoring play (the best of them when several score the most;
+    // the engine makes each of their values exact)
+    const greedy = Math.max(...plays.filter((m) => m.score === topScore).map((m) => m.value));
+    const gain = h.hint.moves[0].value - greedy;
     const single = h.hint.moves.length < 2 || h.hint.moves[1].value < h.hint.moves[0].value;
     const q = 2 * gain + (single ? 1 : 0);
     if (q > quality) {
@@ -2167,25 +2190,38 @@ async function findEndgame(base) {
   }
   return chosen;
 }
+// A puzzle's name: the daily ones (a move and an endgame each day), or a free one.
+function puzzleName(daily, kind) {
+  return daily ? (kind === "endgame" ? "Daily endgame" : "Daily puzzle") : kind === "endgame" ? "Endgame puzzle" : "Puzzle";
+}
 async function openPuzzle(daily, kind, day) {
-  kind = daily ? "move" : kind || store.get("puzzleKind", "move");
+  kind = kind || (daily ? "move" : store.get("puzzleKind", "move"));
   if (!daily) store.set("puzzleKind", kind);
   const lex = settings.lexicon, key = daily ? day || dayKey(new Date()) : null;
-  const base = daily ? daySeed(key) : 1000 + Math.floor(Math.random() * 2 ** 29) * 8;
+  const base = daily ? (kind === "endgame" ? egDaySeed(key) : daySeed(key)) : 1000 + Math.floor(Math.random() * 2 ** 29) * 8;
+  const wasBusy = busy;
   G = { id: Date.now().toString(36), version: 1, mode: "puzzle", lexicon: lex, level: "strong", clockMin: 0, overtime: "naspa", think: "", seed: 0,
     firstSide: 0, human: 0, record: [], used: [0, 0], running: -1, since: 0, paused: false, pauseNote: "", assisted: false, over: false, result: null,
     startedAt: new Date().toISOString(), verdicts: {}, puzzle: { daily: key, kind, tries: 0, solved: false, revealed: false, answer: null, alts: [], last: null } };
   resetView();
   if (loadedLex !== lex) openStart();
   $("puzzle").hidden = false;
-  $("puzzle").innerHTML = '<div class="panel-head"><span>' + (daily ? "Daily puzzle" : kind === "endgame" ? "Endgame puzzle" : "Puzzle") + '</span></div><div class="puzzle-body"><p class="dim">Setting up the position…</p></div>';
+  $("puzzle").innerHTML = '<div class="panel-head"><span>' + puzzleName(daily, kind) + '</span></div><div class="puzzle-body"><p class="dim">Setting up the position…</p></div>';
   await withLoading(lex, async () => {
-    if (busy) await restartEngine();
+    if (wasBusy) await restartEngine();  // (resetView has cleared busy)
     epoch++;
     const my = epoch;
     busy = true;
     setStatus("Setting up the puzzle", "thinking");
-    const pz = kind === "endgame" ? await findEndgame(base) : await findPuzzle(base);
+    let pz = daily && kind === "endgame" ? savedDailyEndgame(lex, key) : null;
+    if (pz) {  // chosen before on this device: back to its position
+      await ui("new first " + pz.seed);
+      for (const mv of pz.moves) await ui("force " + mv);
+      await ui("seat " + pz.turn);
+    } else {
+      pz = kind === "endgame" ? await findEndgame(base, !!daily) : await findPuzzle(base);
+      if (pz && daily && kind === "endgame" && my === epoch) saveDailyEndgame(lex, key, pz);
+    }
     busy = false;
     if (my !== epoch) return;
     if (!pz) throw new Error("no puzzle could be set up; try again");
@@ -2251,7 +2287,7 @@ async function showAnswer() {
 }
 function logPuzzle() {
   const pz = G.puzzle;
-  const log = puzzleLog(), key = pz.daily || "free:" + G.id;
+  const log = puzzleLog(), key = pz.daily ? dailyKey(pz.daily, pz.kind) : "free:" + G.id;
   const prev = log[key] || {};
   log[key] = { solved: prev.solved || pz.solved, tries: pz.tries, revealed: !pz.solved && pz.revealed, lex: G.lexicon, at: new Date().toISOString(), kind: pz.kind || "move",
     late: prev.solved ? !!prev.late : !!pz.daily && pz.daily !== dayKey(new Date()) };
@@ -2264,7 +2300,7 @@ async function sharePuzzle() {
   if (!pz || !pz.daily) return;
   const marks = (pz.marks || "").split("").map((m) => (m === "y" ? "🟩" : "🟥")).join("") + (pz.revealed && !pz.solved ? "⬛" : "");
   const day = new Date(pz.daily + "T12:00:00").toLocaleDateString([], { day: "numeric", month: "long" });
-  const text = "Tilefish daily puzzle, " + day + " (" + (LEX_NAME[G.lexicon] || G.lexicon) + ")\n" + marks + " " +
+  const text = "Tilefish " + puzzleName(true, pz.kind).toLowerCase() + ", " + day + " (" + (LEX_NAME[G.lexicon] || G.lexicon) + ")\n" + marks + " " +
     (pz.solved ? "solved " + (pz.tries === 1 ? "first time" : "in " + pz.tries + " tries") : "not solved") + "\n" + location.href.split(/[?#]/)[0];
   if (navigator.share && matchMedia("(pointer: coarse)").matches) {
     try { await navigator.share({ text }); return; } catch (e) { if (e && e.name === "AbortError") return; }
@@ -2277,10 +2313,10 @@ function renderPuzzle() {
   if (!pz) { box.hidden = true; return; }
   box.hidden = false;
   const eg = pz.kind === "endgame";
-  const streak = puzzleStreak();
+  const streak = puzzleStreak(pz.kind);
   const opp = S && S.bag === 0 ? S.unseen.split("").sort().join("") : "";
-  let html = '<div class="panel-head"><span>' + (pz.daily ? "Daily puzzle · " + new Date(pz.daily + "T12:00:00").toLocaleDateString([], { day: "numeric", month: "long" }) : eg ? "Endgame puzzle" : "Puzzle") +
-    "</span>" + (streak ? '<span class="streak" title="Daily puzzles solved in a row">' + streak + " day streak</span>" : "") + "</div><div class=\"puzzle-body\">";
+  let html = '<div class="panel-head"><span>' + puzzleName(!!pz.daily, pz.kind) + (pz.daily ? " · " + new Date(pz.daily + "T12:00:00").toLocaleDateString([], { day: "numeric", month: "long" }) : "") +
+    "</span>" + (streak ? '<span class="streak" title="' + (eg ? "Daily endgames" : "Daily puzzles") + ' solved in a row">' + streak + " day streak</span>" : "") + "</div><div class=\"puzzle-body\">";
   // the line a move ends with, in an endgame: points ahead by the end from here
   const ends = (v) => (num(v.playedValue) != null ? sgn(v.playedValue) : "");
   if (pz.solved) {
@@ -2326,21 +2362,22 @@ function renderPuzzle() {
   if (pz.daily) {
     const log = puzzleLog(), days = [];
     for (let i = 1; i <= 14; i++) { const d = new Date(); d.setDate(d.getDate() - i); days.push(d); }
-    html += '<details class="pz-past"' + (pastOpen ? " open" : "") + '><summary>Earlier daily puzzles</summary><div class="pz-days">' + days.map((d) => {
-      const k = dayKey(d), e = log[k], mark = e ? (e.solved ? "✓" : e.revealed ? "✗" : "·") : "";
+    html += '<details class="pz-past"' + (pastOpen ? " open" : "") + '><summary>' + (eg ? "Earlier daily endgames" : "Earlier daily puzzles") + '</summary><div class="pz-days">' + days.map((d) => {
+      const k = dayKey(d), e = log[dailyKey(k, pz.kind)], mark = e ? (e.solved ? "✓" : e.revealed ? "✗" : "·") : "";
       return '<button data-day="' + k + '" class="' + (k === pz.daily ? "on " : "") + (e && e.solved ? "ok" : e && e.revealed ? "no" : "") + '" title="' +
         esc(d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })) + '">' + d.getDate() + '<span>' + mark + "</span></button>";
     }).join("") + "</div></details>";
   }
-  html += '<div class="pz-kind"><span class="dim">Puzzles:</span><div class="seg" role="radiogroup" aria-label="Kind of puzzle">' +
+  html += '<div class="pz-kind"><span class="dim">' + (pz.daily ? "Daily:" : "Puzzles:") + '</span><div class="seg" role="radiogroup" aria-label="Kind of puzzle">' +
     [["move", "Best move"], ["endgame", "Endgame"]].map(([k, l]) => '<button data-kind="' + k + '" role="radio" aria-checked="' + (k === (pz.kind || "move")) + '" class="' + (k === (pz.kind || "move") ? "on" : "") + '">' + l + "</button>").join("") +
     "</div></div></div>";
   box.innerHTML = html;
   if ($("pz-answer")) $("pz-answer").onclick = showAnswer;
   if ($("pz-share")) $("pz-share").onclick = sharePuzzle;
   $("pz-next").onclick = () => openPuzzle(false, pz.kind || "move");
-  box.querySelectorAll(".pz-kind button").forEach((b) => (b.onclick = () => { if (!busy) openPuzzle(false, b.dataset.kind); }));
-  box.querySelectorAll(".pz-days button").forEach((b) => (b.onclick = () => { if (!busy) openPuzzle(true, "move", b.dataset.day); }));
+  // in a daily puzzle the switch moves between the day's two puzzles
+  box.querySelectorAll(".pz-kind button").forEach((b) => (b.onclick = () => { if (!busy) openPuzzle(!!pz.daily, b.dataset.kind, pz.daily || undefined); }));
+  box.querySelectorAll(".pz-days button").forEach((b) => (b.onclick = () => { if (!busy) openPuzzle(true, pz.kind, b.dataset.day); }));
   const past = box.querySelector(".pz-past");
   if (past) past.ontoggle = () => { pastOpen = past.open; };
   box.querySelectorAll("[data-pzmove]").forEach((b) => (b.onclick = async () => {
@@ -2411,7 +2448,7 @@ function renderStats() {
     const solved = pz.filter((e) => e.solved).length;
     const egs = pz.filter((e) => e.kind === "endgame");
     html += '<p class="stat-line">Puzzles solved <b>' + solved + "</b> of " + pz.length + (egs.length ? " (endgames " + egs.filter((e) => e.solved).length + " of " + egs.length + ")" : "") +
-      " · daily streak <b>" + puzzleStreak() + "</b></p>";
+      " · daily streak <b>" + puzzleStreak("move") + "</b>" + (Object.keys(log).some((k) => k.startsWith("eg:")) ? " · daily endgame streak <b>" + puzzleStreak("endgame") + "</b>" : "") + "</p>";
   }
   html += '<button class="link" id="stats-reset">Clear stats</button>';
   box.innerHTML = html;

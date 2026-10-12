@@ -1,9 +1,9 @@
 // CI check of the page itself, not only the engine: drives the built page (web/dist) in a
 // real browser through what a visitor does, and fails on any page error.  A Practice game
 // is played with the page's own controls (a hint, a take-back), then to the end; the review
-// judges both sides; the game's link opens in a fresh browser; the daily puzzle and an
-// endgame puzzle are solved; the cards keep the keyboard focus; a board set up by hand is
-// analysed.
+// judges both sides; the game's link opens in a fresh browser; the daily puzzle, the day's
+// endgame and another endgame puzzle are solved; the cards keep the keyboard focus; a board
+// set up by hand is analysed.
 //   npm install --no-save playwright@1.56.1   (once; it can use the system's Chrome)
 //   node web/ui-test.js
 "use strict";
@@ -140,9 +140,19 @@ async function launch() {
     }
     check(await p.evaluate(() => G.puzzle.solved && G.puzzle.tries === 2), "the daily puzzle refuses a weak move and takes the answer");
 
-    // An endgame puzzle, solved exactly, with the best line shown.
+    // The day's endgame, from the daily puzzle's switch: solved by its answer, logged apart.
     await p.click('.pz-kind button[data-kind="endgame"]');
-    await p.waitForFunction(() => G.puzzle.kind === "endgame" && G.puzzle.answer && !busy && document.querySelector(".pz-task"), null, { timeout: 90000 });
+    await p.waitForFunction(() => G.puzzle.kind === "endgame" && G.puzzle.daily && G.puzzle.answer && !busy && document.querySelector(".pz-task"), null, { timeout: 300000 });
+    await p.evaluate((m) => showHint(m), await p.evaluate(() => G.puzzle.answer));
+    await p.waitForFunction(() => !document.getElementById("btn-play").disabled, null, { timeout: 10000 });
+    await p.click("#btn-play");
+    await p.waitForFunction(() => !busy && (G.puzzle.solved || G.puzzle.tries > 0), null, { timeout: 60000 });
+    check(await p.evaluate(() => G.puzzle.solved && !!store.json("puzzles", {})["eg:" + G.puzzle.daily] && /Daily endgame/.test(document.querySelector("#puzzle .panel-head").textContent)),
+      "the day's endgame opens from the daily puzzle, is solved by its answer and logged apart");
+
+    // An endgame puzzle (the next one, not a daily one), solved exactly, with the best line shown.
+    await p.click("#pz-next");
+    await p.waitForFunction(() => G.puzzle.kind === "endgame" && !G.puzzle.daily && G.puzzle.answer && !busy && document.querySelector(".pz-task"), null, { timeout: 90000 });
     await p.evaluate((m) => showHint(m), await p.evaluate(() => G.puzzle.answer));
     await p.waitForFunction(() => !document.getElementById("btn-play").disabled, null, { timeout: 10000 });
     await p.click("#btn-play");

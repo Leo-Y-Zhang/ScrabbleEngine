@@ -162,6 +162,12 @@ Tilefish().then((m) => {
       check(st.ok, "multi-core engine move");
     }
     console.log("multi-core: " + st.state.you + "-" + st.state.bot + " after 6 moves each on 2 threads");
+    // An endgame solved with a budget in nodes (the daily endgame) gives the same answer on
+    // the one-core build and on the multi-core build's two threads.
+    const eg = "7V4FAG/7If1RUIN1/7MOZeTTAS/8U5L/4URBANISE2O/8D5P/5Q2R3T1P/4JAGGY3ORE/4ETH5WAD/4L1E4VEX1/M3L1R1COOED2/I1NAY1A4L2F/A1EN2O4D2E/O1NOCK3BITERS/WHEN3TUI4S EEII/ 366/403 0 lex ENABLE;";
+    const egHint = (call) => { call("ui cgp " + eg); const h = JSON.parse(call("ui hint 0 nodes=200000").trim().split("\n").pop()); return h.ok && h.hint.exact && JSON.stringify([h.hint.best, h.hint.line, h.hint.moves.map((x) => [x.move, x.value])]); };
+    const eg1 = egHint(run), eg2 = egHint(mrun);
+    check(eg1 && eg1 === eg2, "an endgame with a node budget is solved the same on one core and on two threads: " + eg1 + " / " + eg2);
     console.log("ok");
     process.exit(0);
   });
