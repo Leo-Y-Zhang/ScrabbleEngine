@@ -1790,3 +1790,20 @@ experiments/playout-screen-frozen.jsonl.gz: seed 9600, 200 deal pairs
 
 This leg's condition under section 14's screen rule: **not met**. The screen's decision needs the other leg too; it is added when that run is recorded.
 
+
+### Recorded automatically: `playout-screen-macondo` (section 14)
+
+Run 38309764633, recorded 2026-10-12 by `tools/report.py`; log `experiments/playout-screen-macondo.jsonl.gz`; 200 of 200 registered deal pairs; run conclusion: success.
+
+```text
+experiments/playout-screen-macondo.jsonl.gz: seed 9200, 200 deal pairs
+  A's score   54.12% (49.38% to 58.88%)
+  A's spread   +22.8 a game (+12.6 to +33.1)
+  control on the same 200 deal pairs (400 first positions checked identical): score 52.25%
+  paired difference, candidate - control: score +1.88 points (-4.25 to +8.12); spread +1.0 (-11.6 to +14.0)
+  rule: score >= 52.25%: met
+  decision: PASSES (point estimates, as registered)
+```
+
+This leg's condition under section 14's screen rule: **met**. The other leg (`playout-screen-frozen`, recorded earlier) was not met, so **the screen FAILS**. The default stays.
+
