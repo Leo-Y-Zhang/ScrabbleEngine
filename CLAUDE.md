@@ -18,6 +18,9 @@ Read `docs/HANDOVER.md` before engine or experiment work.
 ## Build and check
 - Native: `g++ -O2 -std=c++17 -pthread -Wall -Werror tilefish.cpp -o tilefish` (CI also
   builds with clang++ and MSVC), then `./tilefish --threads 2 "selftest quick"`.
+- Sanitizers: CI builds with `-fsanitize=address,undefined` and runs the self-test and
+  `tools/fuzz_ui.py` (the `ui` commands the page sends, fuzzed; it found an out-of-bounds read
+  in the review of imported records). Run it longer with other seeds after changing a `ui` command.
 - Fixed-work checksum: `./tilefish --lexicon ENABLE.txt "benchsim 0 1 3000"` must print
   `checksum 349.2837`, and the browser build must print the same (CI compares them). A
   speed-up that changes it changes the search, and needs a registered experiment.
