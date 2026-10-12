@@ -2,7 +2,7 @@
 
 Read this first in a new session, then `experiments/README.md` sections 9–13.
 
-**11–12 October: work on the browser version and the engine's interfaces (PRs #35–#49).**
+**11–12 October: work on the browser version and the engine's interfaces (PRs #35–#50).**
 No registered experiment ran and **the default search is unchanged** (fixed-work checksum
 `349.2837`, natively and in the browser build). What changed:
 
@@ -32,9 +32,11 @@ No registered experiment ran and **the default search is unchanged** (fixed-work
   now say why they are not judged).
 - *Tests:* CI now drives the page itself (#47, `web/ui-test.js`: Playwright with the runner's
   Chrome plays a Practice game, reviews it, opens its link, solves both kinds of puzzle and
-  analyses a board set up by hand, failing on any page error). The smoke test also checks
-  endgame lines and `ui infer`; the self-test checks the radix sort and the leave table's
-  shortcuts.
+  analyses a board set up by hand, failing on any page error). The sanitizer job also fuzzes
+  the `ui` commands (#50, `tools/fuzz_ui.py`: moves, positions and game records, legal,
+  mutated and random), which is how #49's out-of-bounds read was found. The smoke test also
+  checks endgame lines, `ui infer` and the review of imported records; the self-test checks
+  the radix sort and the leave table's shortcuts.
 
 Next steps are unchanged (below); for the browser, one idea not done: a daily endgame puzzle
 (it needs a solve that finishes the same on slow devices).

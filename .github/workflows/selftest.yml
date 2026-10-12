@@ -102,6 +102,16 @@ jobs:
         env:
           UBSAN_OPTIONS: print_stacktrace=1
         run: ./tilefish_san --threads 2 "selftest quick"
+      - name: Fuzz the page's engine commands under the sanitizers
+        # tools/fuzz_ui.py: legal, mutated and random moves, positions and game records sent to
+        # the `ui` commands, as the page sends them; any report, crash or hang fails the job.
+        run: python3 tools/fuzz_ui.py ./tilefish_san ENABLE.txt 90 1 fuzz-out
+      - name: Keep the fuzz run's commands (they replay the failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-out
+          path: fuzz-out/
   windows-lexicon:
     # get-lexicon.bat started from a PowerShell 7 prompt (docs/windows.md).  cmd.exe passes
     # PowerShell 7's PSModulePath on to Windows PowerShell 5.1, which then loads
