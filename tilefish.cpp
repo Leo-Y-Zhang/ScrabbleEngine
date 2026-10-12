@@ -4206,7 +4206,13 @@ struct EndgameParams {
   int tt_bits = 20;  // 2^20 entries x 40 bytes = 40 MB
   int threads = 1;   // Lazy SMP: helpers share the transposition table
   bool verbose = false;
+  // A budget in search nodes instead of seconds (0: none).  Such a solve runs on one thread
+  // from an empty table with a fixed salt, so whether it finishes, and what it finds, depend
+  // on the position alone: the same on every machine, build and thread count.
+  long max_nodes = 0;
 };
+// The table of a solve with a node budget, cleared for each: small enough to clear quickly.
+constexpr int FIXED_TT_BITS = 18;
 
 struct EndgameResult {
   Move best;
@@ -4297,16 +4303,24 @@ class EndgameSolver {
   EndgameResult solve(const Board& b, const Rack& me, const Rack& opp, int zeros, const EndgameParams& p) {
     EndgameResult R;
     const double t0 = now_s();
-    deadline_ = t0 + p.time_limit;
+    const bool fixed = p.max_nodes > 0;
+    deadline_ = fixed ? 1e300 : t0 + p.time_limit;
+    max_nodes_ = p.max_nodes;
     stop_.store(false);
     resize_tt(p.tt_bits > 0 ? p.tt_bits : default_bits_);
-    salt_ = mix64(++solves_ * 0x9E3779B97F4A7C15ULL);  // entries from earlier solves no longer match
-    gen_ = (u8)solves_;
+    if (fixed) {  // nothing from earlier solves: the table empty, the salt and generation fixed
+      std::fill(tt_.begin(), tt_.end(), TTE());
+      salt_ = 0x9E3779B97F4A7C15ULL;
+      gen_ = 1;
+    } else {
+      salt_ = mix64(++solves_ * 0x9E3779B97F4A7C15ULL);  // entries from earlier solves no longer match
+      gen_ = (u8)solves_;
+    }
     {
       const Rack rr[2] = {me, opp};
       build_root_moves(b, rr);
     }
-    const int nthreads = std::max(1, p.threads);
+    const int nthreads = fixed ? 1 : std::max(1, p.threads);
     std::vector<std::unique_ptr<Worker>> workers;
     for (int i = 0; i < nthreads; ++i) {
       workers.emplace_back(new Worker(lex_));
@@ -4436,6 +4450,7 @@ class EndgameSolver {
   u64 zpass_[8];
   u64 zzero_[8];
   double deadline_ = 0;
+  long max_nodes_ = 0;
   std::atomic<bool> stop_{false};
   u64 salt_ = 0, solves_ = 0;
   u8 gen_ = 0;
@@ -4596,6 +4611,10 @@ class EndgameSolver {
 
   bool out_of_time(Worker& w) {
     if (stop_.load(std::memory_order_relaxed)) return true;
+    if (max_nodes_ && w.nodes >= max_nodes_) {
+      stop_.store(true);
+      return true;
+    }
     if ((++w.ticks & 31) == 0 && now_s() > deadline_) {
       stop_.store(true);
       return true;
@@ -5306,6 +5325,7 @@ struct EngineConfig {
   SimParams sim;
   bool endgame = true;        // exact endgame solver when the bag is empty
   double endgame_time = 8.0;
+  long endgame_nodes = 0;     // > 0: a budget in nodes instead (EndgameParams::max_nodes); hints only
   bool preendgame = true;     // exhaustive 1-tile-in-bag solver
   double peg_time = 8.0;
   int peg_candidates = 16;
@@ -5452,6 +5472,10 @@ class Engine {
       ep.time_limit = cfg.endgame_time;
       ep.threads = std::max(1, cfg.threads);
       ep.verbose = verbose;
+      if (cfg.endgame_nodes > 0) {
+        ep.max_nodes = cfg.endgame_nodes;
+        ep.tt_bits = FIXED_TT_BITS;
+      }
       const EndgameResult er = eg_.solve(P.board, P.rack, P.unseen, P.zeros, ep);
       D.move = er.best;
       D.method = er.solved ? "endgame (solved)" : "endgame (depth " + std::to_string(er.depth) + ")";
@@ -7059,7 +7083,9 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
   //   ui check MOVE                  is MOVE legal for the human, and what it scores
   //   ui move MOVE                   the human plays MOVE
   //   ui bot [SPEC]                  the engine plays its move (SPEC as for `player`)
-  //   ui hint [SECS]                 the engine's analysis of the human's position
+  //   ui hint [SECS] [nodes=N]       the engine's analysis of the human's position (nodes=N: an
+  //                                  endgame solved with N nodes, N more for the exact values
+  //                                  shown: the same answer everywhere)
   //   ui infer [SECS]                what the opponent probably kept from its last play
   //   ui force MOVE                  MOVE for whoever is to move (replaying a saved game)
   //   ui seat 0|1                    whose view the state shows (two players at one screen)
@@ -7285,15 +7311,20 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
     } else if (sub == "hint") {
       if (game.over || game.turn != ui_human) return fail("a hint needs your turn");
       const double secs = args.size() > 1 ? std::max(0.1, std::atof(args[1].c_str())) : 2.0;
+      // nodes=N (an endgame): the solve has a budget of N nodes instead of seconds, and the
+      // exact values shown share N more, so the answer is the same on every device (the
+      // daily endgame).
+      const long nodes = args.size() > 2 && starts_with(args[2], "nodes=") ? std::clamp(std::strtol(args[2].c_str() + 6, nullptr, 10), 0L, 1000000000L) : 0;
       EngineConfig c = cfg;
       c.threads = c.sim.threads = threads;
       c.sim.time_limit = c.endgame_time = c.peg_time = secs;
+      c.endgame_nodes = nodes;
       const Position P = Position::from_game(game);
       Decision D = eng().choose(P, c, false);
       if (D.exact && P.bag_n == 0 && D.rows.size() > 1) {  // exact values for the rows shown
         std::vector<std::pair<Move, int>> rows;
         for (const auto& r : D.rows) rows.push_back({r.move, (int)std::lround(r.value)});
-        refine_endgame(P, rows, secs);
+        refine_endgame(P, rows, secs, nullptr, 0, nodes);
         D.rows.clear();
         for (const auto& r : rows) {
           DecisionRow row;
@@ -7615,7 +7646,8 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
   // bounds the search stopped at.  For the moves a page shows (`ui hint`, `ui review`),
   // this solves the position after the move, so its value is exact too.  The engine's own
   // choice of move never calls it.  False if that solve did not finish in `secs`.
-  bool endgame_value_after(const Position& P, const Move& m, double secs, int& value) {
+  bool endgame_value_after(const Position& P, const Move& m, double secs, int& value, long nodes = 0, long* used = nullptr) {
+    if (used) *used = 0;
     if (m.type == MT_PLACE && m.ntiles == P.rack.n) {
       value = m.score + 2 * P.unseen.face();
       return true;
@@ -7627,33 +7659,48 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
     EndgameParams ep;
     ep.time_limit = secs;
     ep.threads = threads;
+    if (nodes > 0) {
+      ep.max_nodes = nodes;
+      ep.tt_bits = FIXED_TT_BITS;
+    }
     const EndgameResult ea = eng().endgame().solve(nb, P.unseen, mine, (m.type == MT_PLACE && m.score) ? 0 : P.zeros + 1, ep);
     value = (m.type == MT_PLACE ? m.score : 0) - ea.value;
+    if (used) *used = ea.nodes;
     return ea.solved;
   }
   // Exact values for the root moves of a solved endgame that a page shows: rows[0] is the
-  // proven best; the next four, and the highest-scoring play, are made exact, within
-  // `secs`.  A value not yet made exact is an upper bound (the search failed low on it),
-  // so refining the highest such value and sorting again finds the true next four.
-  // Rows end best first; `known` is a move whose exact value is already known.
+  // proven best; the next four, and the highest-scoring play (each of them, when several
+  // score the most), are made exact, within `secs`.  A value not yet made exact is an upper
+  // bound (the search failed low on it), so refining the highest such value and sorting
+  // again finds the true next four.
+  // Rows end best first; `known` is a move whose exact value is already known.  With
+  // `nodes`, the solves share that budget in nodes instead, and there is no clock.
   void refine_endgame(const Position& P, std::vector<std::pair<Move, int>>& rows, double secs, const Move* known = nullptr,
-                      int known_value = 0) {
+                      int known_value = 0, long nodes = 0) {
     if (rows.size() < 2) return;
     std::vector<char> exact(rows.size(), 0);
     exact[0] = 1;
     const double until = now_s() + secs;
+    long left = nodes;
     auto refine = [&](size_t r) {
       int ev;
+      long used = 0;
       if (known && rows[r].first.same_as(*known)) ev = known_value;
-      else if (now_s() >= until || !endgame_value_after(P, rows[r].first, std::max(0.05, until - now_s()), ev)) return false;
+      else if (nodes ? left <= 0 : now_s() >= until) return false;
+      else {
+        const bool ok = endgame_value_after(P, rows[r].first, std::max(0.05, until - now_s()), ev, nodes ? left : 0, &used);
+        left -= used;
+        if (!ok) return false;
+      }
       rows[r].second = ev;
       exact[r] = 1;
       return true;
     };
-    size_t top = 0;
-    for (size_t r = 0; r < rows.size(); ++r)
-      if (rows[r].first.type == MT_PLACE && (rows[top].first.type != MT_PLACE || rows[r].first.score > rows[top].first.score)) top = r;
-    if (top) refine(top);
+    int top_score = -1;
+    for (const auto& row : rows)
+      if (row.first.type == MT_PLACE) top_score = std::max(top_score, (int)row.first.score);
+    for (size_t r = 1; r < rows.size(); ++r)
+      if (rows[r].first.type == MT_PLACE && rows[r].first.score == top_score && !refine(r)) break;
     for (;;) {
       std::vector<size_t> idx(rows.size() - 1);
       std::iota(idx.begin(), idx.end(), 1);
@@ -8391,6 +8438,44 @@ inline void App::cmd_selftest(bool quick) {
       if (bv != er.value || !er.solved) ++wrong;
     }
     check(wrong == 0 && tested > 0, fmt("endgame solver == brute-force minimax on %d endgames", tested));
+  }
+  // A solve with a budget in nodes (the daily endgame) depends on the position alone: the
+  // same result, nodes and verdict on whether it finished, on one thread or several and
+  // whatever was solved before; a budget too small leaves it unsolved.
+  {
+    int n = 0, same = 0, tiny = 0;
+    for (int gi = 0; gi < 40 && n < 3; ++gi) {
+      Rng rr(4242 + gi);
+      Game g;
+      g.reset(rr);
+      while (!g.over && (g.bag.n > 0 || g.rack[0].n + g.rack[1].n > 9)) {
+        Position P = Position::from_game(g);
+        g.apply(lex, gen.generate_best(P.board, P.rack, Simulator::ctx_for(P)), rr);
+      }
+      if (g.over) continue;
+      const Position P = Position::from_game(g);
+      EndgameSolver es(&lex, 20);
+      EndgameParams a;
+      a.max_nodes = 300000;
+      a.tt_bits = FIXED_TT_BITS;
+      const EndgameResult r1 = es.solve(P.board, P.rack, P.unseen, P.zeros, a);
+      EndgameParams other;  // something else first, timed and on two threads
+      other.time_limit = 0.2;
+      other.threads = 2;
+      es.solve(P.board, P.unseen, P.rack, P.zeros, other);
+      EndgameParams b = a;
+      b.threads = 3;
+      const EndgameResult r2 = es.solve(P.board, P.rack, P.unseen, P.zeros, b);
+      bool eq = r1.solved == r2.solved && r1.value == r2.value && r1.nodes == r2.nodes && r1.best.same_as(r2.best) &&
+                r1.root.size() == r2.root.size();
+      for (size_t i = 0; eq && i < r1.root.size(); ++i) eq = r1.root[i].first.same_as(r2.root[i].first) && r1.root[i].second == r2.root[i].second;
+      EndgameParams c = a;
+      c.max_nodes = 10;
+      tiny += es.solve(P.board, P.rack, P.unseen, P.zeros, c).solved;
+      ++n;
+      same += eq;
+    }
+    check(n > 0 && same == n && tiny == 0, fmt("an endgame solve with a node budget is the same on 1 and 3 threads, after other solves (%d endgames)", n));
   }
   // 4. CGP round trip + notation
   {

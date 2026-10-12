@@ -185,7 +185,8 @@ def run(e, t0):
                 nmoves += 1
                 legal = refresh()
         elif k < 0.74:
-            e.cmd("ui %s %s" % (rnd.choice(["hint", "infer"]), rnd.choice(["0.02", "0.01", "0", "-1", "", "x", "1e-9"])))
+            e.cmd("ui %s %s" % (rnd.choice(["hint", "infer"]), rnd.choice(["0.02", "0.01", "0", "-1", "", "x", "1e-9"])) +
+                  rnd.choice(["", "", " nodes=20000", " nodes=0", " nodes=-5", " nodes=x", " nodes=1"]))
         elif k < 0.79:
             e.cmd("ui review %s %s" % (num(), rnd.choice(["0.02", "0", "", "-2"])))
         elif k < 0.87:

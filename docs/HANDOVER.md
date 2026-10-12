@@ -2,7 +2,7 @@
 
 Read this first in a new session, then `experiments/README.md` sections 9–13.
 
-**11–12 October: work on the browser version and the engine's interfaces (PRs #35–#50).**
+**11–12 October: work on the browser version and the engine's interfaces (PRs #35–#51).**
 No registered experiment ran and **the default search is unchanged** (fixed-work checksum
 `349.2837`, natively and in the browser build). What changed:
 
@@ -38,8 +38,18 @@ No registered experiment ran and **the default search is unchanged** (fixed-work
   checks endgame lines, `ui infer` and the review of imported records; the self-test checks
   the radix sort and the leave table's shortcuts.
 
-Next steps are unchanged (below); for the browser, one idea not done: a daily endgame puzzle
-(it needs a solve that finishes the same on slow devices).
+The daily endgame (#51) is chosen the same way on every device: its seeds are tried in a fixed
+order with no clock, and each position is solved with a budget in search nodes, not seconds
+(`ui hint 0 nodes=N`: one thread, a table emptied for each solve, a fixed salt; N nodes for
+the solve and N more shared by the exact values shown, N = 100,000 in `app.js`), so which
+positions are solved, and their values, depend on the position alone. A time limit could not
+do this: some 10-tile endgames take over a minute on one thread, so a slow device would pass
+over positions a fast one solves. Once chosen, a day's endgame is kept on the device
+(`DAILY_EG_VERSION` in its key: change it whenever the rule changes). The self-test and the
+smoke test check that such a solve gives the same answer on one thread and several, after
+other solves.
+
+Next steps are unchanged (below).
 
 **Added later on 4 October (section 11, no new games):** a reanalysis with the new
 `tools/latebias.py` found that Macondo's own late-game estimates run as high as
