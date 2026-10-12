@@ -1268,6 +1268,41 @@ model as before, and a self-test covers it. Section 12's runs were not affected:
 5,678 decisions with inference, the longest took 0.611 s of the 1 s it was allowed, so no
 enumeration was cut short.
 
+## 14. The finalists played out to the end of the game (registered 12 October 2026, before any game)
+
+**Why.** Section 13 found that the middle-game 2-ply choice is settled early: from about
+12,000 candidate-iterations (1.4 s on one thread) the engine picks the move a much longer
+2-ply search prefers, and in the 60 s log the leader at a quarter of the search is the final
+choice in 99.2% of moves. The rest of a 20 s move answers a question already answered.
+Section 10 spent the second half on 4-ply simulation of the top three, which still stops at a
+horizon judged by the win model; it passed against frozen Tilefish and failed against Macondo.
+This candidate asks the finalists a different question: **how the game ends**. After 2-ply
+simulation of all candidates for the first quarter of the move, the top three are played out
+by the static player to the end of the game (up to 40 plies, the most the option allows; a
+middle-game position rarely needs more), with the same common random numbers, and the choice
+is by those results, ranked as the engine ranks (win, then spread). The win model at the
+2-ply horizon sees the spread, the bag and the tiles; a play-out also sees what the board does
+to the rest of the game (lanes opened or closed, the tiles left to draw).
+
+**Candidate:** `champion:deep=3,deepplies=40,deepfrac=0.25`: the options section 10 added,
+with no code change, so the default search and the fixed-work checksum (349.2837) are
+untouched. Built at the commit that adds this section. On a local check (ENABLE, one thread,
+8 s, one middle-game position) the second stage gave each finalist 619 play-outs and changed
+the choice; CSW24's larger word list makes each play-out slower.
+
+| Run | A | B | Pairs | Seed | Role |
+|---|---|---|---|---|---|
+| `playout-screen-frozen` | candidate | frozen `v2.2.1` `champion` | 200 | 9600 | screen against frozen Tilefish |
+| `playout-screen-macondo` | candidate | Macondo `14c080b57608` `simming 5` | 200 | 9200 | the `fresh-9200` deals (section 8), where the default scored 52.25% |
+
+CSW24, 20 s a move, one thread each, full games, played to full size.
+**Screen rule, fixed now (as in sections 10 and 12):** it passes if against frozen Tilefish the
+candidate scores above 50% with a positive spread, **and** against Macondo its score on the
+`fresh-9200` deals is not below the default's 52.25% (point estimates; the paired difference by
+deal is also reported). A pass leads only to a registered confirmation on fresh seeds with more
+pairs, at 20 s and at 60 s with four threads; nothing becomes the default from a screen. A
+failure is reported with its numbers, and the options stay as they are.
+
 ## Results recorded automatically
 
 Each run below was recorded by .github/workflows/report.yml when it finished: its pooled
