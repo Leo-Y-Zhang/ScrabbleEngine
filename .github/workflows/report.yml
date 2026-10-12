@@ -1,7 +1,7 @@
 name: report
 # When an experiment run finishes, records it in experiments/: the pooled log (gzipped) and,
 # appended to experiments/README.md, the numbers from tools/report.py with the verdict of the
-# rule registered for that run before any game (sections 9, 10 and 12). Runs without a
+# rule registered for that run before any game (sections 9, 10, 12 and 14). Runs without a
 # registered rule in tools/report.py are left alone. Mechanical only: prose comes later.
 # The log is pooled here from the match jobs' own logs (shard-N), from whichever attempt
 # played them, so a run completed with "Re-run failed jobs" is recorded whole; a run is

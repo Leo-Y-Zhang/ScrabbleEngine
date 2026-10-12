@@ -5,7 +5,7 @@
 
 Used by .github/workflows/report.yml when an experiment run finishes.  Prints nothing and
 exits 3 for a run with no registered rule here.  The rules are the ones fixed before any
-game in experiments/README.md (sections 9, 10 and 12); this file only applies them to the
+game in experiments/README.md (sections 9, 10, 12 and 14); this file only applies them to the
 point estimates and intervals that tools/screen.py computes.  A run that did not finish
 cleanly, or played fewer deal pairs than registered, is recorded as incomplete and gets no
 verdict.
@@ -26,6 +26,8 @@ RULES = {
     "deep-screen-macondo": dict(section=10, pairs=200, kind="screen", args=MACONDO, sibling="deep-screen-frozen"),
     "infer-screen-frozen": dict(section=12, pairs=200, kind="screen", args=FROZEN, sibling="infer-screen-macondo"),
     "infer-screen-macondo": dict(section=12, pairs=200, kind="screen", args=MACONDO, sibling="infer-screen-frozen"),
+    "playout-screen-frozen": dict(section=14, pairs=200, kind="screen", args=FROZEN, sibling="playout-screen-macondo"),
+    "playout-screen-macondo": dict(section=14, pairs=200, kind="screen", args=MACONDO, sibling="playout-screen-frozen"),
 }
 
 

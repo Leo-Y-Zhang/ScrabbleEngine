@@ -107,9 +107,11 @@ at the end of `experiments/README.md`, and sections 9, 10 and 12 now carry the p
 | [37219857657](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37219857657) `infer-screen-macondo` | the same vs Macondo, `fresh-9200` deals | 49.88% < 52.25%: **section 12's screen fails** |
 
 ## Exact next steps
-1. Section 13's proposals (a different use of the time after the middle-game search settles)
-   are not registered. Register one before running any screen; nothing becomes the default
-   from a screen. Section 9's result (level at 60 s with four threads, with the 20 s lead in
+1. Section 14 (registered 12 October) screens one of section 13's proposals: the top three
+   finalists played out to the end of the game for the last three quarters of a move
+   (`champion:deep=3,deepplies=40,deepfrac=0.25`), against frozen `v2.2.1` (seed 9600) and
+   Macondo on the `fresh-9200` deals. `report.yml` records each run under its rule; the prose
+   result goes in section 14. Nothing becomes the default from a screen. Section 9's result (level at 60 s with four threads, with the 20 s lead in
    points gone) is the baseline any such change has to beat at that budget.
 2. MAGPIE has not been measured at 60 s with four threads; a match there would need its own
    registered section (rule, seed and size fixed before any game).
