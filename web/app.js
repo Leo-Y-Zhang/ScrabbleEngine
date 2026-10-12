@@ -1738,11 +1738,15 @@ function renderReviewPanel() {
   if (exploring) html += exploreHtml();
   else if (v) html += coachHtml(v, k);
   else if (k >= 0 && analysing) html += '<div class="coach pending">Judging this move…</div>';
+  else if (k >= 0 && G.noVerdict && G.noVerdict[k]) html += '<div class="coach pending">This move cannot be judged: ' + esc(G.noVerdict[k]) + ".</div>";
   else if (k >= 0 && judged) html += '<div class="coach pending">This move was not judged' + (judgedSides().includes(moverOf(k)) ? "." : " (only your own moves are judged until the game is over).") + "</div>";
   // the analysis
   if (analysing) {
     html += '<div class="rv-progress"><div class="loading-bar"><div class="loading-fill" style="width:' + (100 * analysing.done / Math.max(1, analysing.total)).toFixed(1) +
       '%"></div></div><div class="rv-progress-row"><span>Analysing move ' + Math.min(analysing.done + 1, analysing.total) + " of " + analysing.total + '</span><button class="link strong" id="rv-stop">Stop</button></div></div>';
+  } else if (!judged && G.noVerdict && Object.keys(G.noVerdict).length) {
+    const why = Object.values(G.noVerdict);
+    html += '<p class="rv-intro">No move could be judged: ' + (why.every((w) => /rack/.test(w)) ? "the record does not give the racks the moves were played from" : esc(why[0])) + ".</p>";
   } else if (!judged) {
     html += '<p class="rv-intro">Tilefish judges every move with only what its player could see, marks the best and the costly ones, and shows on the board where the better move would have gone.</p>';
   }
@@ -1995,6 +1999,7 @@ async function analyseGame(sec, keep) {
   const my = epoch;
   busy = true;
   if (!keep) G.verdicts = {};
+  G.noVerdict = {};  // why a move could not be judged (an imported record without its racks)
   preview = null;
   const todo = unjudged();
   analysing = { done: 0, total: todo.length };
@@ -2004,7 +2009,7 @@ async function analyseGame(sec, keep) {
     let r;
     try { r = await ui("review " + todo[i] + " " + secsFor(sec)); } catch (e) { return; }
     if (my !== epoch) return;
-    if (r.ok) G.verdicts[todo[i]] = r;
+    if (r.ok) G.verdicts[todo[i]] = r; else G.noVerdict[todo[i]] = r.error;
     analysing.done = i + 1;
     if (reviewAt >= 0) { renderBoard(); renderSide(); renderReviewPanel(); statusForTurn(); }
   }
@@ -3085,10 +3090,11 @@ async function startGame() {
   });
 }
 async function openSaved(g, review) {
+  const wasBusy = busy;
   G = Object.assign({ verdicts: {} }, g);
   resetView();
   await withLoading(G.lexicon, async () => {
-    const st = await resumeEngine();
+    const st = wasBusy ? await restartEngine() : await resumeEngine();
     if (!st) return;
     S = null;
     showState(st, null);
@@ -3110,9 +3116,12 @@ $("btn-resume").onclick = () => { const cur = store.json("current", null); if (c
 async function openAnalysis() {
   const text = $("cgp-in").value.trim();
   if (!text) { $("loading").hidden = false; $("loading-text").textContent = "Paste a position, or open a file."; return; }
+  const wasBusy = busy;
   G = Object.assign(newGameObject(), { mode: "analysis", cgp: text.replace(/\s+lex\s+\S+;?\s*$/i, ""), clockMin: 0, assisted: true });
   resetView();
   await withLoading(G.lexicon, async () => {
+    if (wasBusy) await restartEngine();  // as in startGame: nothing still running for the old game carries on
+    epoch++;
     const r = await ui("cgp " + G.cgp);
     if (!r.ok) throw new Error(r.error);
     await analysisFrom(r.state);
@@ -3299,12 +3308,15 @@ $("file-in").onchange = async (e) => {
     return openSaved(saved, !!saved.over);
   }
   if (!/^\s*[#>]/m.test(text)) { $("loading").hidden = false; $("loading-text").textContent = "That file is neither a GCG record nor a Tilefish file."; return; }
+  const wasBusy = busy;
   G = Object.assign(newGameObject(), { mode: "review", gcg: text, clockMin: 0, record: [], over: true });
   const lexLine = text.match(/^#lexicon\s+(\S+)/m);
   if (lexLine && /^(CSW|NWL)/i.test(lexLine[1])) G.lexicon = /^CSW/i.test(lexLine[1]) ? "CSW24" : "NWL23";
   else if (lexLine && /^OXENDICT/i.test(lexLine[1])) G.lexicon = "OXENDICT";
   resetView();
   await withLoading(G.lexicon, async () => {
+    if (wasBusy) await restartEngine();  // as in startGame: nothing still running for the old game carries on
+    epoch++;
     await call({ write: { path: "/data/import.gcg", text } });
     const r = await ui("import /data/import.gcg");
     if (!r.ok) throw new Error("this record could not be read: " + r.error);

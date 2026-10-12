@@ -115,6 +115,17 @@ Tilefish().then((m) => {
     m.FS.writeFile("/data/g.gcg", imp.gcg);
     const back = ui("import /data/g.gcg");
     check(back.ok && JSON.stringify(back.state.board) === JSON.stringify(s.board) && back.state.moves === s.history.length, "GCG export then import gives the same board and moves");
+    check(ui("review 0 0.1").ok, "an imported record that gives its racks is judged");
+  }
+  // A record without racks (a down move's coordinate starts with its column), or with a rack
+  // that does not hold the tiles played, is read, but its moves are not judged: there is no
+  // rack to judge them from.
+  m.FS.writeFile("/data/r.gcg", "#player1 a A\n#player2 b B\n>a: 8D RETAINS +66 66\n>b: E7 B.D +7 7\n>a: AEIOU?? 9G AXE +20 86\n");
+  const rr = ui("import /data/r.gcg");
+  check(rr.ok && rr.state.moves === 3, "a record without racks is read: " + JSON.stringify(rr).slice(0, 200));
+  for (const n of [0, 1, 2]) {
+    const v = ui("review " + n + " 0.1");
+    check(!v.ok && /does not give the rack/.test(v.error), "move " + (n + 1) + " of a record without its rack is not judged: " + JSON.stringify(v).slice(0, 200));
   }
   // The Oxford-spelling list loads with its own leave values and win model, and plays.
   for (const f of ["OXENDICT.kwg", "OXENDICT.klv2", "OXENDICT.win"]) m.FS.writeFile("/data/" + f, fs.readFileSync(path.join(data, f)));
