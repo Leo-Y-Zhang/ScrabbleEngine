@@ -3445,6 +3445,7 @@ struct GameEvent {
   Rack rack_before;  // the mover's rack before the move (known in self-play/analysis)
   int score_after;
   std::string note;
+  bool judgeable = true;  // false for an imported move whose rack the record does not give
 };
 
 struct Game {
@@ -6435,7 +6436,9 @@ inline bool load_gcg_stream(std::istream& in, const std::string& path, const Lex
     GcgEvent e;
     e.player = who[nick];
     size_t i = 0;
-    if (!t[0].empty() && t[0][0] != '(' && t[0][0] != '-' && !std::isdigit((unsigned char)t[0][0]) && t.size() >= 3) {
+    // The rack, if the line gives one (a rack holds no digits; a coordinate always does).
+    const bool coord = std::any_of(t[0].begin(), t[0].end(), [](char ch) { return std::isdigit((unsigned char)ch); });
+    if (!t[0].empty() && t[0][0] != '(' && t[0][0] != '-' && !coord && t.size() >= 3) {
       e.rack_known = Rack::parse(t[0], e.rack) && e.rack.n <= RACK_SIZE;
       i = 1;
     }
@@ -7134,6 +7137,11 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
         } else {
           e.move = ev[k].move;
         }
+        // Review judges a move from its player's rack, so only where the record gives that
+        // rack, it is the one the position holds, and it holds what was played (an exchange
+        // recorded as a count names no tiles).
+        const bool by_count = e.move.type == MT_EXCHANGE && ev[k].text.size() > 5 && std::isdigit((unsigned char)ev[k].text[5]);
+        e.judgeable = ev[k].rack_known && g.rack[e.player] == ev[k].rack && ev[k].rack.contains(e.move.used()) && !by_count;
         events.push_back(e);
         before.push_back(g);
         rngs.push_back(rng);
@@ -7194,6 +7202,8 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       const double secs = args.size() > 2 ? std::max(0.1, std::atof(args[2].c_str())) : 1.0;
       const Position P = Position::from_game(ui_before[n]);  // the mover's view at that moment
       Move actual = game.events[n].move;
+      if (!game.events[n].judgeable || !P.rack.contains(actual.used()))
+        return fail("the record does not give the rack this move was played from");
       if (actual.type == MT_PLACE) actual.score = (i16)score_move(P.board, actual);
       ReviewVerdict v;
       if (!review_position(P, actual, secs, v)) return fail("no verdict for this move");

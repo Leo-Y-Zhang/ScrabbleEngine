@@ -1,8 +1,8 @@
-# Handover (state at 11 October 2026)
+# Handover (state at 12 October 2026)
 
 Read this first in a new session, then `experiments/README.md` sections 9–13.
 
-**11 October: a day on the browser version and the engine's interfaces (PRs #35–#48).**
+**11–12 October: work on the browser version and the engine's interfaces (PRs #35–#49).**
 No registered experiment ran and **the default search is unchanged** (fixed-work checksum
 `349.2837`, natively and in the browser build). What changed:
 
@@ -26,7 +26,10 @@ No registered experiment ran and **the default search is unchanged** (fixed-work
   (#45); the cards (start, end, games, help) take the keyboard focus and keep Tab inside
   (#48); fixes: a Practice game's review now judges both sides (#35), clocks run again after a
   reload in Play and the start screen can be closed (#46), and an endgame puzzle move that goes
-  out no longer ends a game (#48: a wrong one locked the puzzle's remaining tries).
+  out no longer ends a game (#48: a wrong one locked the puzzle's remaining tries), and an
+  imported record's moves are judged only from the racks it gives (#49: a record without
+  racks sent the review's search an impossible rack, out of bounds in the engine; such moves
+  now say why they are not judged).
 - *Tests:* CI now drives the page itself (#47, `web/ui-test.js`: Playwright with the runner's
   Chrome plays a Practice game, reviews it, opens its link, solves both kinds of puzzle and
   analyses a board set up by hand, failing on any page error). The smoke test also checks
