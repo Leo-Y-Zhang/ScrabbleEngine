@@ -1,10 +1,11 @@
 # Handover (state at 12 October 2026)
 
-Read this first in a new session, then `experiments/README.md` sections 9–13.
+Read this first in a new session, then `experiments/README.md` sections 9–14.
 
 **11–12 October: work on the browser version and the engine's interfaces (PRs #35–#51).**
-No registered experiment ran and **the default search is unchanged** (fixed-work checksum
-`349.2837`, natively and in the browser build). What changed:
+No registered experiment ran in this work (section 14's screen came after it, below), and
+**the default search is unchanged** (fixed-work checksum `349.2837`, natively and in the
+browser build). What changed:
 
 - *Engine, without changing a decision:* word lists load about twice as fast (#37: a leave
   file loads into an empty table instead of over the built-in model, the `.klv2` reader builds
@@ -88,15 +89,23 @@ settled at this budget (−0.5 points), level open games (46.7% of 287), Macondo
 small late leads a little more often (no interval excludes zero), and both engines' late
 estimates running high by similar amounts (+16.0 and +17.2).
 
+**Added on 12 October (section 14):** a registered screen of section 13's first proposal, the
+top three finalists played out to the end of the game for the last three quarters of a move
+(`champion:deep=3,deepplies=40,deepfrac=0.25`, no code change). It **fails**: 47.88%, −1.8
+points a game against frozen `v2.2.1` (needs > 50% and a positive spread); 54.12% against
+Macondo on the `fresh-9200` deals (needs ≥ 52.25%: met, +1.88 points over the default on the
+same deals, −4.25 to +8.12). The play-outs changed the choice in about 21% of middle-game
+moves, but no effect shows either way. The default stays.
+
 ## Defaults
 The engine's default search is unchanged since v2.2.1 (fixed-work checksum `349.2837`). The
 live app (GitHub Pages) plays the default. Options added and tested, all off by default:
 `keep` (opponent-rack prior, no effect), `egk` (endgame look-ahead in late play-outs: +1.7
 points a game against Macondo, proven, but no extra wins, so not promoted), `deep` (below).
 
-## Runs of 4 October and how they ended
+## Registered runs and how they ended
 All on `experiment.yml`; `report.yml` recorded each one under "Results recorded automatically"
-at the end of `experiments/README.md`, and sections 9, 10 and 12 now carry the prose.
+at the end of `experiments/README.md`, and sections 9, 10, 12 and 14 now carry the prose.
 
 | Run | What | Outcome |
 |---|---|---|
@@ -105,14 +114,16 @@ at the end of `experiments/README.md`, and sections 9, 10 and 12 now carry the p
 | [37209469683](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37209469683) `deep-screen-macondo` | the same vs Macondo, `fresh-9200` deals | 50.12% < 52.25%: **section 10's screen fails** |
 | [37219855057](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37219855057) `infer-screen-frozen` | inference with the game's history vs frozen `v2.2.1`, 20 s, 200 pairs | 49.12%: leg not met |
 | [37219857657](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/37219857657) `infer-screen-macondo` | the same vs Macondo, `fresh-9200` deals | 49.88% < 52.25%: **section 12's screen fails** |
+| [38309759460](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/38309759460) `playout-screen-frozen` | `deep=3,deepplies=40,deepfrac=0.25` vs frozen `v2.2.1`, 20 s, 200 pairs, seed 9600 (12 October) | 47.88%, −1.8: leg not met |
+| [38309764633](https://github.com/Leo-Y-Zhang/ScrabbleEngine/actions/runs/38309764633) `playout-screen-macondo` | the same vs Macondo, `fresh-9200` deals | 54.12% ≥ 52.25%: leg met; **section 14's screen fails** |
 
 ## Exact next steps
-1. Section 14 (registered 12 October) screens one of section 13's proposals: the top three
-   finalists played out to the end of the game for the last three quarters of a move
-   (`champion:deep=3,deepplies=40,deepfrac=0.25`), against frozen `v2.2.1` (seed 9600) and
-   Macondo on the `fresh-9200` deals. `report.yml` records each run under its rule; the prose
-   result goes in section 14. Nothing becomes the default from a screen. Section 9's result (level at 60 s with four threads, with the 20 s lead in
-   points gone) is the baseline any such change has to beat at that budget.
+1. Section 13's first proposal, a different evaluation of the finalists, has failed two
+   screens (section 10's 4-ply look and section 14's play-outs to the end). Its other proposal,
+   stopping once the leader has held under a game clock and keeping the time for harder moves,
+   is not registered; fixed-time matches cannot measure it, so it needs a registered match
+   under a clock. Section 9's result (level at 60 s with four threads, with the 20 s lead in
+   points gone) is the baseline any change has to beat at that budget.
 2. MAGPIE has not been measured at 60 s with four threads; a match there would need its own
    registered section (rule, seed and size fixed before any game).
 3. Never relax a rule after seeing data; never claim "strongest engine" beyond what section 9

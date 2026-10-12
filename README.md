@@ -53,7 +53,9 @@ more time adds little: the middle-game choice is settled within a second or two 
 and neither more samples nor more candidates change it, so the time beyond that needs a
 different use. The registered 60 s, four-thread match (6 October, 416 deal pairs) then came
 out level within its interval, 48.6% (45.8% to 51.4%), with Tilefish's lead in points gone
-(+3.2, −2.2 to +8.7). Everything, including the failures, is in
+(+3.2, −2.2 to +8.7). A different use of the settled time, playing the three finalists out
+to the end of the game, then failed its 20 s screen too (12 October). Everything, including
+the failures, is in
 [experiments/](experiments/README.md#4-why-level-on-wins-but-ahead-on-points-against-macondo-at-20-s-registered-4-october-2026-before-any-game).
 
 ## Quick start

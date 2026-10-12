@@ -1303,6 +1303,29 @@ deal is also reported). A pass leads only to a registered confirmation on fresh 
 pairs, at 20 s and at 60 s with four threads; nothing becomes the default from a screen. A
 failure is reported with its numbers, and the options stay as they are.
 
+### Results of section 14 (12 October 2026): the screen fails; the default stays
+
+Both runs played their 200 registered pairs, 800 games without an error (records under
+"Results recorded automatically"; logs `playout-screen-frozen.jsonl.gz`,
+`playout-screen-macondo.jsonl.gz`; `tools/screen.py`).
+
+| Run, 200 deal pairs | Candidate's score (95%) | Spread a game (95%) | Rule |
+|---|---|---|---|
+| against frozen `v2.2.1` | 47.88% (44.12% to 51.75%) | −1.8 (−8.9 to +5.5) | **not met** (needs score > 50% and spread > 0) |
+| against Macondo, `fresh-9200` deals | 54.12% (49.38% to 58.88%) | +22.8 (+12.6 to +33.1) | met (score ≥ 52.25%) |
+| candidate − default on the same Macondo deals | +1.88 points (−4.25 to +8.12) | +1.0 (−11.6 to +14.0) | |
+
+**Decision: the screen fails and the default stays,** as the rule fixed beforehand requires.
+The second stage acted: after 5 s of 2-ply simulation, the play-outs of the last 15 s (a median
+of about 4,900 a finalist) changed the first stage's choice in 21.3% of the candidate's
+middle-game moves against frozen Tilefish and 20.8% against Macondo, against 12.0% and 12.9%
+for section 10's 4-ply stage. The two legs point in opposite directions: 2.1 points of score
+below the default's level against frozen Tilefish, 1.9 above the default on the Macondo deals.
+Both intervals for the change include no change, so these 400 deal pairs show no effect either
+way. `deep` stays an option, off by default. Of section 13's proposals, a different evaluation
+of the finalists has now failed two screens (sections 10 and 14); the other, stopping early
+under a game clock, is not registered.
+
 ## Results recorded automatically
 
 Each run below was recorded by .github/workflows/report.yml when it finished: its pooled
