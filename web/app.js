@@ -1017,7 +1017,9 @@ async function committed(state, mover) {
   if (lastH && G.mode !== "duo" && !humanSide(mover)) sfx.opp(lastH.tiles, lastH.tiles === 7);
   else if (lastH) sfx.play(lastH.tiles, lastH.tiles === 7);
   save();
-  if (state.over) finishGame("out");
+  // A puzzle is not a game: a move that goes out is judged (and taken back if wrong) by
+  // puzzleCheck, never filed under Games or counted.
+  if (state.over && G.mode !== "puzzle") finishGame("out");
 }
 async function submit() {
   if (exploring) return judgeTry();
@@ -1174,7 +1176,9 @@ function showEnd() {
   $("end-detail").textContent = parts.join(" ");
   $("btn-review").hidden = !G.record.length && !G.gcg;
   $("btn-end-share").hidden = !shareable(G);
-  setTimeout(() => { $("end").hidden = false; $("btn-review").focus(); }, 500);
+  // (not if a new game was started, or the start card opened, in the meantime)
+  const g = G;
+  setTimeout(() => { if (G !== g || !$("start").hidden) return; $("end").hidden = false; $("btn-review").focus(); }, 500);
 }
 function archive() {
   const list = store.json("games", []);

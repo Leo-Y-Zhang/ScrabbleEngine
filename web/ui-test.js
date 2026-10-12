@@ -148,6 +148,10 @@ async function launch() {
     await p.click("#btn-play");
     await p.waitForFunction(() => !busy && (G.puzzle.solved || G.puzzle.tries > 0), null, { timeout: 60000 });
     check(await p.evaluate(() => G.puzzle.solved && !!document.querySelector("#puzzle .coach-line")), "an endgame puzzle is solved by its answer, and its best line is shown");
+    // Even when the answer goes out, a puzzle is not a game: no end card, nothing filed.
+    await sleep(700);
+    check(await p.evaluate(() => !G.over && document.getElementById("end").hidden && !store.json("games", []).some((g) => g.game.mode === "puzzle")),
+      "a solved puzzle opens no end card and is not filed under Games");
 
     // A card takes the keyboard focus and keeps Tab inside itself; Help gives it back.
     await p.click("#btn-help");
