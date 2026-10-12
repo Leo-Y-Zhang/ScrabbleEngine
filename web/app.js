@@ -1017,7 +1017,9 @@ async function committed(state, mover) {
   if (lastH && G.mode !== "duo" && !humanSide(mover)) sfx.opp(lastH.tiles, lastH.tiles === 7);
   else if (lastH) sfx.play(lastH.tiles, lastH.tiles === 7);
   save();
-  if (state.over) finishGame("out");
+  // A puzzle is not a game: a move that goes out is judged (and taken back if wrong) by
+  // puzzleCheck, never filed under Games or counted.
+  if (state.over && G.mode !== "puzzle") finishGame("out");
 }
 async function submit() {
   if (exploring) return judgeTry();
@@ -1174,7 +1176,9 @@ function showEnd() {
   $("end-detail").textContent = parts.join(" ");
   $("btn-review").hidden = !G.record.length && !G.gcg;
   $("btn-end-share").hidden = !shareable(G);
-  setTimeout(() => { $("end").hidden = false; $("btn-review").focus(); }, 500);
+  // (not if a new game was started, or the start card opened, in the meantime)
+  const g = G;
+  setTimeout(() => { if (G !== g || !$("start").hidden) return; $("end").hidden = false; $("btn-review").focus(); }, 500);
 }
 function archive() {
   const list = store.json("games", []);
@@ -2669,6 +2673,41 @@ rackEl.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   startDrag(e, { slot: +t.dataset.slot });
 });
+
+// ---------- dialogs and keyboard focus ----------
+// A card that opens (start, end, games, help, blank, handover) takes the keyboard focus and
+// keeps Tab inside itself while it is open.  Games and Help give the focus back where it was
+// when they close; the others lead into the game, so they let it go (Enter must play a word,
+// not press the button that opened them).
+const FOCUSABLE = 'button:not([disabled]):not([hidden]), input:not([disabled]), textarea, summary, [tabindex]:not([tabindex="-1"])';
+function visibleIn(el) { return [...el.querySelectorAll(FOCUSABLE)].filter((x) => x.offsetParent !== null || x === document.activeElement); }
+const sheetOpener = new Map();
+let focusOutside = null;  // the last element focused outside every card
+document.addEventListener("focusin", (e) => { if (!e.target.closest(".sheet")) focusOutside = e.target; });
+document.querySelectorAll(".sheet").forEach((sheet) => {
+  new MutationObserver(() => {
+    if (!sheet.hidden) {
+      if (!sheetOpener.has(sheet)) sheetOpener.set(sheet, focusOutside);
+      requestAnimationFrame(() => { if (!sheet.hidden && !sheet.contains(document.activeElement)) { const f = visibleIn(sheet)[0]; if (f) f.focus({ preventScroll: true }); } });
+    } else {
+      const back = sheetOpener.get(sheet);
+      sheetOpener.delete(sheet);
+      const inside = document.activeElement === document.body || sheet.contains(document.activeElement);
+      if (sheet.id === "games" || sheet.id === "help") { if (back && back.isConnected && inside) back.focus({ preventScroll: true }); }
+      else if (sheet.contains(document.activeElement)) document.activeElement.blur();
+    }
+  }).observe(sheet, { attributes: true, attributeFilter: ["hidden"] });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab") return;
+  const sheet = [...document.querySelectorAll(".sheet")].find((x) => !x.hidden);
+  if (!sheet) return;
+  const items = visibleIn(sheet);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && (document.activeElement === first || !sheet.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (document.activeElement === last || !sheet.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+}, true);
 
 // ---------- keyboard ----------
 const sheetOpen = () => ["start", "end", "blank-picker", "handover", "games", "help"].some((id) => !$(id).hidden);

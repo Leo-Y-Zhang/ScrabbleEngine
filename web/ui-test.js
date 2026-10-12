@@ -2,7 +2,8 @@
 // real browser through what a visitor does, and fails on any page error.  A Practice game
 // is played with the page's own controls (a hint, a take-back), then to the end; the review
 // judges both sides; the game's link opens in a fresh browser; the daily puzzle and an
-// endgame puzzle are solved; a board set up by hand is analysed.
+// endgame puzzle are solved; the cards keep the keyboard focus; a board set up by hand is
+// analysed.
 //   npm install --no-save playwright@1.56.1   (once; it can use the system's Chrome)
 //   node web/ui-test.js
 "use strict";
@@ -147,9 +148,23 @@ async function launch() {
     await p.click("#btn-play");
     await p.waitForFunction(() => !busy && (G.puzzle.solved || G.puzzle.tries > 0), null, { timeout: 60000 });
     check(await p.evaluate(() => G.puzzle.solved && !!document.querySelector("#puzzle .coach-line")), "an endgame puzzle is solved by its answer, and its best line is shown");
+    // Even when the answer goes out, a puzzle is not a game: no end card, nothing filed.
+    await sleep(700);
+    check(await p.evaluate(() => !G.over && document.getElementById("end").hidden && !store.json("games", []).some((g) => g.game.mode === "puzzle")),
+      "a solved puzzle opens no end card and is not filed under Games");
+
+    // A card takes the keyboard focus and keeps Tab inside itself; Help gives it back.
+    await p.click("#btn-help");
+    await sleep(100);
+    await p.keyboard.press("Escape");
+    await sleep(100);
+    check(await p.evaluate(() => document.activeElement.id === "btn-help"), "Help, closed with Escape, gives the focus back to its button");
+    await p.click("#btn-new");
+    await sleep(100);
+    for (let i = 0; i < 30; i++) await p.keyboard.press("Tab");
+    check(await p.evaluate(() => document.getElementById("start").contains(document.activeElement)), "the start card keeps the keyboard focus inside itself");
 
     // A board set up by hand: a word, a rack, the analysis.
-    await p.click("#btn-new");
     await p.click('#start [data-v="analysis"]');
     await p.click("#btn-setup");
     await p.waitForSelector("#setup:not([hidden])", { timeout: 60000 });
