@@ -25,7 +25,8 @@ No registered experiment ran and **the default search is unchanged** (fixed-work
   the last fortnight's daily puzzles and a shareable result (#43, #45); exchange by keyboard
   (#45); the cards (start, end, games, help) take the keyboard focus and keep Tab inside
   (#48); fixes: a Practice game's review now judges both sides (#35), clocks run again after a
-  reload in Play and the start screen can be closed (#46).
+  reload in Play and the start screen can be closed (#46), and an endgame puzzle move that goes
+  out no longer ends a game (#48: a wrong one locked the puzzle's remaining tries).
 - *Tests:* CI now drives the page itself (#47, `web/ui-test.js`: Playwright with the runner's
   Chrome plays a Practice game, reviews it, opens its link, solves both kinds of puzzle and
   analyses a board set up by hand, failing on any page error). The smoke test also checks
