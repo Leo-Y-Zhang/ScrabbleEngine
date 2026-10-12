@@ -1774,3 +1774,19 @@ A's share of the decisive games by final margin:
 
 Under the rule registered in section 9: **level within the interval** at this budget (Tilefish's score 48.62%, 95% interval 45.79% to 51.44%). Nothing beyond this opponent, this configuration, CSW24 and this budget follows.
 
+
+### Recorded automatically: `playout-screen-frozen` (section 14)
+
+Run 38309759460, recorded 2026-10-12 by `tools/report.py`; log `experiments/playout-screen-frozen.jsonl.gz`; 200 of 200 registered deal pairs; run conclusion: success.
+
+```text
+experiments/playout-screen-frozen.jsonl.gz: seed 9600, 200 deal pairs
+  A's score   47.88% (44.12% to 51.75%)
+  A's spread    -1.8 a game (-8.9 to +5.5)
+  rule: score > 50.00%: NOT met
+  rule: spread > +0.0: NOT met
+  decision: FAILS (point estimates, as registered)
+```
+
+This leg's condition under section 14's screen rule: **not met**. The screen's decision needs the other leg too; it is added when that run is recorded.
+
