@@ -555,3 +555,7 @@ textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
   .board-area.zoomed .board-frame { width: 175%; min-width: 0; max-width: none; margin: 0; }
   .board-area.zoomed .evalbar { display: none; }
 }
+/* Tournament rules: the WESPA penalty row, and the words offered for a challenge. */
+.label.sub { margin-top: 10px; }
+button.wchip.pick { cursor: pointer; font: inherit; color: inherit; margin: 0 4px 4px 0; }
+button.wchip.pick:hover { border-color: var(--ink-3); }

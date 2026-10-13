@@ -185,6 +185,55 @@ async function launch() {
     await p.waitForFunction(() => G && G.mode === "analysis" && S && !busy, null, { timeout: 60000 });
     check(await p.evaluate(() => S.board[7].includes("QUIZ") && S.rack === "AEINRST"), "a board set up by hand is analysed as entered");
 
+    // Tournament rules (WESPA, 5 points a word): words are not marked as they are placed, a
+    // phony can be played and comes off, and challenging Tilefish's play costs 5 points a word.
+    await p.click("#btn-new");
+    await p.click('#start [data-v="practice"]');
+    await p.click('#start [data-v="ENABLE"]');
+    await p.click('#start [data-name="rules"] [data-v="wespa"]');
+    await p.click('#start [data-name="wpen"] [data-v="5"]');
+    check(await p.evaluate(() => settings.clock === "25" && settings.overtime === "wespa"), "WESPA rules bring a 25-minute clock with WESPA's overtime");
+    await p.click('#start [data-name="clock"] [data-v="0"]');
+    await p.click("#btn-start");
+    await myTurn();
+    const phony = await p.evaluate(async () => {
+      const rack = S.rack.replace(/\?/g, "");
+      for (const a of rack) for (const b of rack) {
+        const r = await ui("check 8H " + a + b);
+        if (!r.ok && /^not in the lexicon/.test(r.error)) return "8H " + a + b;
+      }
+      return null;
+    });
+    check(!!phony, "a play with a word not in the list is found (" + phony + ")");
+    await p.evaluate((m) => showHint(m), phony);
+    await p.waitForFunction(() => !document.getElementById("btn-play").disabled, null, { timeout: 10000 });
+    check(await p.evaluate(() => !document.querySelector("#status .bad, #status .wchip.bad") && !badSquares()), "under tournament rules the word is not marked as you place it");
+    await p.click("#btn-play");
+    await myTurn();
+    check(await p.evaluate(() => S.history[0].type === "phony" && S.you === 0 && G.record[0].move === "phony " + S.history[0].move),
+      "the phony comes off and scores nothing, and the record keeps it");
+    // Play on until Tilefish makes a play of tiles, then challenge it (all its words).
+    for (let i = 0; i < 6 && !(await p.evaluate(() => canChallenge())); i++) {
+      const mv = await p.evaluate(async () => (await ui("moves 1")).moves[0].move);
+      await p.evaluate((m) => playMove(m), mv);
+      await myTurn();
+    }
+    const before = await p.evaluate(async () => ({ bot: S.bot, words: (await ui("lastwords")).words.length, n: G.record.length }));
+    await p.click("#btn-challenge");
+    if (before.words > 1) await p.click('#status [data-w="*"]');
+    await p.waitForFunction((b) => S.bot === b.bot + 5 * b.words, before, { timeout: 10000 });
+    check(await p.evaluate((b) => / bonus \d+$/.test(G.record[b.n - 1].move) && document.getElementById("btn-challenge").disabled, before),
+      "an unsuccessful challenge gives Tilefish 5 points a word (" + 5 * before.words + "), kept in the record");
+    const linked = await p.evaluate(async () => JSON.stringify((await unpackGame(await packGame(G))).record.map((e) => e.move)) === JSON.stringify(G.record.map((e) => e.move)));
+    check(linked, "a game link carries the phony and the challenge");
+    // A take-back replays the record: the challenge's points stay with Tilefish's move.
+    const mv2 = await p.evaluate(async () => (await ui("moves 1")).moves[0].move);
+    await p.evaluate((m) => playMove(m), mv2);
+    await myTurn();
+    await p.click("#btn-takeback");
+    await p.waitForFunction((b) => S && !busy && G.record.length === b.n && S.history.length === b.n, before, { timeout: 30000 });
+    check(await p.evaluate((b) => S.bot === b.bot + 5 * b.words, before), "after a take-back the challenge's points are still Tilefish's");
+
     check(errors.length === 0, "no page or console errors" + (errors.length ? ":\n    " + errors.join("\n    ") : ""));
     console.log("ok");
     await browser.close();

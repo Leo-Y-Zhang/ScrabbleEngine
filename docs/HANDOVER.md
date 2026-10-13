@@ -2,6 +2,33 @@
 
 Read this first in a new session, then `experiments/README.md` sections 9–14.
 
+**13 October: word lists, trademarks and tournament rules (PRs #54 and #55).** No
+registered experiment ran, and **the default search is unchanged** (checksum `349.2837`).
+
+- *Word lists:* CEL, the Common English Lexicon (68,135 everyday words, MIT licence), comes
+  with Tilefish as a fourth free list (`CEL.txt` from `tools/make_cel.py`; leave values and
+  win model learned from 800,000 self-play games, which beat ENABLE's on CEL: 51.6%, +3.5).
+  Collins 2024 and NWL2023 were checked and are the current editions; MAGPIE-DATA has nothing
+  newer. Older editions are left out on purpose.
+- *Trademarks:* titles call Tilefish a crossword game engine; SCRABBLE® appears only to say
+  whom it is for, with the right owners (Hasbro in the USA and Canada, J.W. Spear & Sons, a
+  Mattel company, elsewhere). `docs/DISTRIBUTING.md` says what may be shared, what needs
+  permission (Collins and NWL: only a licence makes them risk-free) and what an app-store or
+  paid version needs. The owner asked for no risk; two open choices are theirs: licences from
+  NASPA and HarperCollins, and renaming the repository (its name and the site's address
+  contain the mark; renaming moves the site and breaks old links).
+- *Tournament rules* (Play and Practice): Casual (words checked, as before), NASPA (double
+  challenge with NWL and the free lists, 5 points a word with Collins) and WESPA / ABSP (5 or
+  10 points a word, or a free challenge). Words are not marked as they are placed; a phony is
+  played with `ui phony` and comes off (Tilefish always challenges, as it knows every word);
+  the player's challenge of Tilefish's play uses `ui lastwords`, then `ui bonus N` or a pass
+  (double). The record keeps both (`phony MOVE`, `MOVE bonus N`), so take-backs, reloads,
+  links and GCG export and import carry them. WESPA overtime: 10 points a minute or part, and
+  10 minutes over forfeits with a margin of at least 100. Sources: WESPA rules (via search;
+  the association sites are blocked from the cloud environment), Macondo's challenge code.
+  Not done: Tilefish never plays phonies, the last play of a game cannot be challenged, and
+  Two players keeps words checked.
+
 **11–12 October: work on the browser version and the engine's interfaces (PRs #35–#51).**
 No registered experiment ran in this work (section 14's screen came after it, below), and
 **the default search is unchanged** (fixed-work checksum `349.2837`, natively and in the

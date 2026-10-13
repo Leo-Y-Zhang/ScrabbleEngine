@@ -164,7 +164,9 @@ def run(e, t0):
         elif k < 0.55:
             pick = rnd.random()
             mv = rnd.choice(legal) if legal and pick < 0.7 else mutate(rnd.choice(legal)) if legal and pick < 0.9 else garbage_move()
-            verb = rnd.choice(["move", "move", "move", "check", "judge", "force"] if e.mine else ["force"] * 5 + ["move", "judge"])
+            verb = rnd.choice(["move", "move", "move", "check", "judge", "force", "phony"] if e.mine else ["force"] * 5 + ["move", "judge", "force phony"])
+            if verb.endswith("phony") and legal and rnd.random() < 0.8:
+                mv = mutate(rnd.choice(legal))  # mostly a play with a word not in the list
             if verb == "judge" and prev and rnd.random() < 0.8:
                 jm = rnd.choice(prev[1]) if rnd.random() < 0.8 else mutate(rnd.choice(prev[1]))
                 c = "ui judge %d %s %s" % (prev[0], jm, rnd.choice(["0", "0.02", "0.02", ""]))
@@ -172,8 +174,10 @@ def run(e, t0):
                 c = "ui judge %s %s %s" % (num(), mv, rnd.choice(["0", "0.02", "", "-1", "x"]))
             else:
                 c = "ui %s %s" % (verb, mv)
+                if verb == "force" and rnd.random() < 0.1:  # a move replayed with the bonus a challenge gave it
+                    c += " bonus %s" % rnd.choice(["5", "10", "15", "0", "-5", "x", "1001", "99999999999", ""])
             r = e.cmd(c)
-            if verb in ("move", "force") and r and r.get("ok"):
+            if verb in ("move", "force", "phony", "force phony") and r and r.get("ok"):
                 nmoves += 1
                 prev = (nmoves - 1, legal) if legal and mv in legal else None
                 legal = refresh()
@@ -191,7 +195,8 @@ def run(e, t0):
             e.cmd("ui review %s %s" % (num(), rnd.choice(["0.02", "0", "", "-2"])))
         elif k < 0.87:
             c = rnd.choice(["undo", "rewind %s" % num(), "at %s" % num(), "seat %s" % rnd.choice(["0", "1", "2", "-1", "", "01"]),
-                            "record", "state", "cgpout", "gcg", "nonsense"])
+                            "record", "state", "cgpout", "gcg", "nonsense", "lastwords",
+                            "bonus %s" % rnd.choice(["5", "10", "15", "0", "-1", "x", "1001", "", "5 5"])])
             r = e.cmd("ui " + c)
             if r and r.get("ok"):
                 if c.startswith(("undo", "rewind")):

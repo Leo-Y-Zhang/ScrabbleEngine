@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tilefish: a strong crossword game engine</title>
-<meta name="description" content="Play, practise and analyse the crossword board game against Tilefish, a strong open-source engine for SCRABBLE&reg; players, in your browser. Collins, NWL, Common English, ENABLE or British English in Oxford spelling.">
+<meta name="description" content="Play, practise and analyse the crossword board game against Tilefish, a strong open-source engine for SCRABBLE&reg; players, in your browser, under casual or NASPA, WESPA and ABSP tournament rules. Collins, NWL, Common English, ENABLE or British English in Oxford spelling.">
 <meta name="theme-color" content="#f3eee4" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#171512" media="(prefers-color-scheme: dark)">
 <meta property="og:type" content="website">
@@ -76,6 +76,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
         <button class="ctl icon" id="btn-sort" title="Sort the rack A to Z" aria-label="Sort"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4v12M1.8 13.8 4 16l2.2-2.2M9 5h8M9 10h6M9 15h4"/></svg><span>Sort</span></button>
         <button class="ctl" id="btn-exchange" title="Swap tiles with the bag">Exchange</button>
         <button class="ctl" id="btn-pass" title="Pass your turn">Pass</button>
+        <button class="ctl" id="btn-challenge" title="Challenge Tilefish's last play (tournament rules)" hidden>Challenge</button>
         <span class="ctl-gap"></span>
         <button class="ctl" id="btn-recall" title="Take this turn's tiles back to the rack (Esc)">Recall</button>
         <button class="ctl" id="btn-hint" title="Tilefish's best moves for your rack">Hint</button>
@@ -193,6 +194,24 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
       </div>
       <div class="hint-text" id="lex-note"></div>
     </div>
+    <div class="field" data-for="play practice">
+      <div class="label" id="lbl-rules">Rules</div>
+      <div class="seg" data-name="rules" role="radiogroup" aria-labelledby="lbl-rules">
+        <button data-v="checked">Casual</button>
+        <button data-v="naspa">NASPA</button>
+        <button data-v="wespa">WESPA / ABSP</button>
+      </div>
+      <div class="hint-text" id="rules-note"></div>
+      <div id="wpen-row" hidden>
+        <div class="label sub" id="lbl-wpen">An unsuccessful challenge gives Tilefish</div>
+        <div class="seg" data-name="wpen" role="radiogroup" aria-labelledby="lbl-wpen">
+          <button data-v="5">5 a word</button>
+          <button data-v="10">10 a word</button>
+          <button data-v="0">Nothing</button>
+        </div>
+        <div class="hint-text" id="wpen-note"></div>
+      </div>
+    </div>
     <div class="field" data-for="play practice duo">
       <div class="label" id="lbl-clock">Game clock (total time for each player)</div>
       <div class="seg" data-name="clock" role="radiogroup" aria-labelledby="lbl-clock">
@@ -218,7 +237,8 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
       <div class="field" data-for="play practice duo">
         <div class="label" id="lbl-ot">When a clock runs out</div>
         <div class="seg" data-name="overtime" role="radiogroup" aria-labelledby="lbl-ot">
-          <button data-v="naspa">Overtime penalty</button>
+          <button data-v="naspa">NASPA penalty</button>
+          <button data-v="wespa">WESPA penalty</button>
           <button data-v="flag">Lose on time</button>
         </div>
         <div class="hint-text" id="ot-note"></div>
@@ -303,11 +323,11 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
     <ul class="help-list">
       <li><b>Place tiles:</b> click a square and type (click it again to go down), drag tiles from the rack, or tap a tile and then a square. Typing a letter you do not hold uses your blank.</li>
       <li><kbd>Enter</kbd> plays, <kbd>Esc</kbd> brings this turn's tiles back, <kbd>Backspace</kbd> removes the last one, <kbd>Space</kbd> shuffles, arrow keys move the cursor. In <i>Exchange</i>, typing a letter (or <kbd>?</kbd> for a blank) picks that tile.</li>
-      <li><b>Words are checked automatically</b> as you place tiles: a word that is not in the list cannot be played, so there are no challenges here. That differs from tournament play, where an invalid word can be played and challenged off.</li>
-      <li><b>Clocks</b> are total time per player. With <i>Overtime penalty</i>, as in the NASPA rules of 1 December 2016, each started minute past zero costs 10 points, and more than 10 minutes of overtime loses the game (100 points off; the opponent is raised to a one-point win if needed). With <i>Lose on time</i>, the game ends when a clock reaches zero. Tilefish's thinking runs on its own clock.</li>
+      <li><b>Rules.</b> Under <i>Casual</i> rules words are checked as you place tiles: a word that is not in the list cannot be played, so there are no challenges. Under tournament rules (<i>NASPA</i>, or <i>WESPA / ABSP</i>, in Play and Practice) words are not marked, and you may play a word that is not in the list (a phony). Tilefish knows every word, so it challenges a phony off: the tiles come back and you score nothing that turn. After Tilefish plays, <i>Challenge</i> checks its words; it plays only words in the list, so a challenge costs you what the rules say: your turn under NASPA rules with NWL (double challenge), 5 points a word under NASPA rules with Collins, and under WESPA rules 5 or 10 points a word, or nothing, as chosen at the start. Six scoreless turns in a row (passes, exchanges and plays challenged off) end the game, and each player then loses the value of their own tiles. Exchanges need at least 7 tiles in the bag. When a player goes out, Tilefish adds the other rack's value to their score and takes it from the other's; Woogles and many tournament records instead add twice the value and leave the other score alone, which gives the same margin.</li>
+      <li><b>Clocks</b> are total time per player; tournament rules start at 25 minutes each. With the <i>NASPA penalty</i>, as in the NASPA rules of 1 December 2016, each started minute past zero costs 10 points, and more than 10 minutes of overtime loses the game (100 points off; the opponent is raised to a one-point win if needed). With the <i>WESPA penalty</i>, as in WESPA's rules (which the ABSP uses), each minute or part of one past zero costs 10 points, and 10 minutes over forfeits the game (100 points off, and a margin of at least 100). With <i>Lose on time</i>, the game ends when a clock reaches zero. Tilefish's thinking runs on its own clock.</li>
       <li><b>Practice</b> allows hints, take-backs and pausing; the game is marked as assisted if you use them. <b>Play</b> has none, and its clock keeps running if you switch tabs; after a reload it runs on as soon as the game is back (the time the page was closed is not counted).</li>
       <li><b>Plan ahead:</b> while Tilefish thinks you can set out tiles for your next move; they stay where they are if Tilefish's word leaves the squares free, and are checked as soon as it is your turn.</li>
-      <li><b>As you place tiles</b> every word the move makes is listed under the board with its points and bonus squares; a word that is not in the list turns red, on the board too.</li>
+      <li><b>As you place tiles</b> every word the move makes is listed under the board with its points and bonus squares; under Casual rules a word that is not in the list turns red, on the board too.</li>
       <li><b>Rack:</b> <i>Sort</i> puts it in order (A to Z, then vowels first); a quick sideways flick along the rack shuffles it. On a phone, the magnifier (or a double tap on the board) zooms in so tiles are easier to place.</li>
       <li><b>Levels:</b> Beginner and Easy choose weaker moves on purpose, for learning; Casual, Strong and Champion play their best.</li>
       <li><b>Practice</b> rates each of your moves once Tilefish has answered (switch it off under Advanced), and <i>Hint</i> helps in steps: a nudge first, then where the move goes, then the moves.</li>
