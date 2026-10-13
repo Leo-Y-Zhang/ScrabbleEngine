@@ -1,7 +1,9 @@
 # Working on Tilefish
 
 Tilefish is a Scrabble engine in one C++ file (`tilefish.cpp`) with a browser version
-(`web/`) published on GitHub Pages at https://leo-y-zhang.github.io/ScrabbleEngine/.
+(`web/`) published on GitHub Pages at https://leo-y-zhang.github.io/ScrabbleEngine/. The repository is
+to be renamed Tilefish (`docs/DISTRIBUTING.md`); after the owner renames it, change that
+address wherever it appears (README, QUICKSTART, release.yml, index.html's og:url, here).
 Read `docs/HANDOVER.md` before engine or experiment work.
 
 ## How the owner wants changes shipped
@@ -11,8 +13,15 @@ Read `docs/HANDOVER.md` before engine or experiment work.
 - Before pushing, run the checks below; one validated push beats several speculative ones.
 - The site must stay **free**: no accounts, servers, trackers or paid services. Everything
   runs in the visitor's browser.
-- Keep the word lists: Collins 2024 and NWL 2023 (fetched from MAGPIE-DATA, never hosted
-  here), ENABLE, and British English in Oxford spelling (OXENDICT), which must stay.
+- **No risk of trouble** (the owner's rule since 13 October 2026; `docs/DISTRIBUTING.md`):
+  Tilefish never hosts or fetches a word list it has no right to. Collins 2024 and NWL 2023
+  stay on offer as the player's own copy, loaded from their device, with Tilefish's own leave
+  values and win models; ENABLE, British English in Oxford spelling (OXENDICT) and the Common
+  English Lexicon (CEL) come with it and must stay. Build Collins or NWL in only under a
+  licence from HarperCollins or NASPA. SCRABBLE® only says whom Tilefish is for, never names
+  it; the board keeps its own colours. A lawyer reviews any paid or app-store version first.
+  The strength tests may still fetch the lists onto GitHub's machines for a job
+  (`tools/research-lexicon.sh`); nothing from them is published.
 - No word lookup in the app: it would be a cheat during play.
 
 ## Build and check

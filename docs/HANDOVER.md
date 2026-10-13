@@ -2,6 +2,20 @@
 
 Read this first in a new session, then `experiments/README.md` sections 9–14.
 
+**13 October, later: no risk (the owner left the decisions to the project).** Tilefish no
+longer fetches Collins or NWL from anywhere: a player loads their own copy (the start card's
+"Load my copy", kept on the device by `web/worker.js`, or `--lexicon` / `CSW24.txt` beside the
+program), and copies earlier versions fetched are deleted from browsers. Tilefish's own leave
+values for both lists (`CSW24.klv2`: 800,000 self-play games, `NWL23.klv2`: 400,000, both from
+ENABLE's values) come with the site and the downloads. Against MAGPIE's in 40,000-game static
+matches: 49.6% and 49.8% (both +/- 0.5), level; registered matches still use MAGPIE's. The
+`get-lexicon` scripts and their Windows CI job are gone; the strength tests fetch the lists
+and MAGPIE's leave values with `tools/research-lexicon.sh`, so registered matches keep their
+conditions. The board's bonus squares have Tilefish's own colours. The default list for new
+visitors is ENABLE. **Owner's step outstanding:** renaming the repository to Tilefish (the
+proxy refuses settings changes from a session); then change the site's address everywhere
+(CLAUDE.md lists where). A lawyer reviews any paid or app-store version first.
+
 **13 October: word lists, trademarks and tournament rules (PRs #54 and #55).** No
 registered experiment ran, and **the default search is unchanged** (checksum `349.2837`).
 

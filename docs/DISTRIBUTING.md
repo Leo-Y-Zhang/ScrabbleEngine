@@ -4,7 +4,10 @@ This page sets out, part by part, what Tilefish may share freely and where someo
 rights come in, so that the site, the downloads, or a future app can be distributed without
 trouble. It is a careful summary, **not legal advice**: before selling Tilefish, putting it
 in an app store or making a paid product of it, have an intellectual-property lawyer check
-it for the countries it will be sold in. Checked on 13 October 2026.
+it for the countries it will be sold in. Checked on 13 October 2026, when the owner asked for
+no risk and left the decisions below to the project: Collins and NWL are no longer fetched
+from anywhere, the repository and site are to be named Tilefish, the board has a palette of its own,
+and a lawyer's review is required before any paid or app-store version (not for the free site).
 
 ## In short
 
@@ -12,11 +15,11 @@ it for the countries it will be sold in. Checked on 13 October 2026.
 |---|---|---|---|
 | The engine and the page (`tilefish.cpp`, `web/`, `tools/`) | this project | none | GPL-3.0. All of it is this project's own code. |
 | The rules of the game, the board layout, tile values and counts | nobody | none | Rules and methods of play are ideas, which copyright does not protect (the US Copyright Office says so of games in general). |
-| The board's and tiles' appearance | Tilefish's own drawing | none | Artwork on a game's board or box can be protected; Tilefish draws its own board, tiles and icons and copies no artwork. |
-| The SCRABBLE® name and logo | Hasbro (USA, Canada); J.W. Spear & Sons Ltd, a Mattel company (elsewhere) | low | The name is Tilefish. The mark is used only to say whom the program is for, with ® and the notice. See [Trademarks](#trademarks). |
+| The board's and tiles' appearance | Tilefish's own drawing | none | Artwork on a game's board or box can be protected; Tilefish draws its own board, tiles and icons, in its own colours, and copies no artwork. |
+| The SCRABBLE® name and logo | Hasbro (USA, Canada); J.W. Spear & Sons Ltd, a Mattel company (elsewhere) | very low | The product is named Tilefish (the repository and the site too, once renamed: below). The mark is used only to say whom the program is for, with ® and the notice. See [Trademarks](#trademarks). |
 | ENABLE, OXENDICT, CEL | public domain; Kevin Atkinson (ESDB licence); Fj00 (MIT) | none | Bundled with their notices ([LEXICONS.md](../LEXICONS.md)). |
-| Collins Scrabble Words 2024, NWL2023 | HarperCollins; NASPA | **low, not zero** | Never hosted here; the visitor's browser or computer downloads them from MAGPIE-DATA. Only a licence makes it zero. See [Word lists](#tournament-word-lists). |
-| Leave values for CSW24 and NWL23 (`.klv2`) | the MAGPIE project, no licence stated | low | Downloaded from MAGPIE-DATA like the lists. Tilefish can learn its own, as it did for ENABLE, OXENDICT and CEL. |
+| Collins Scrabble Words 2024, NWL2023 | HarperCollins; NASPA | none from Tilefish | Neither hosted nor fetched. A player who has a copy loads their own; it stays on their device. See [Tournament word lists](#tournament-word-lists). |
+| Leave values and win models for CSW24 and NWL23 | this project (learned by self-play) | none | GPL-3.0; numbers only, no words. |
 | Fonts | their designers, SIL Open Font Licence | none | Licence files ship with the fonts (`web/fonts/OFL-*.txt`). |
 | Association names and rules (NASPA, WESPA, ABSP) | the associations | none | Named only to say which rules a game follows; summaries are in Tilefish's own words, with no logos and no claim to be official or rated. |
 
@@ -41,40 +44,56 @@ What Tilefish does, and must keep doing:
 - **The notice** above, and "not affiliated with, sponsored or endorsed by", on the page,
   in the README, in the downloads and in any store listing.
 
-Two things remain that a cautious owner may want to change before wider distribution:
+Two further steps, decided on 13 October 2026:
 
-1. **The repository's name, `ScrabbleEngine`, and so the site's address**
-   (`leo-y-zhang.github.io/ScrabbleEngine/`) contain the mark. Renaming the repository to
-   `Tilefish` removes it. The cost: GitHub redirects the repository's old address, but not a
-   GitHub Pages site, so the site moves to `leo-y-zhang.github.io/Tilefish/` and old links
-   (including shared game links and installed copies of the app) stop working. Only the
-   owner can rename it (Settings, General, Repository name).
-2. **The board's colours.** Like most crossword-game programs, Tilefish colours the
-   premium squares in the usual way (red, pink, dark blue, light blue). No ruling against
-   that is known, but a palette of Tilefish's own (`--tw`, `--dw`, `--tl`, `--dl` in
-   `web/style.css`) would remove even that question.
+1. **The repository is to be renamed** from `ScrabbleEngine` to `Tilefish`, so that the mark
+   is in neither the project's name nor the site's address (then
+   `leo-y-zhang.github.io/Tilefish/`). Only the owner can do it: on GitHub, the repository's
+   Settings, General, Repository name, `Tilefish`, Rename. GitHub redirects the repository's
+   old address; the old site address stops working, so the site's address in the README,
+   QUICKSTART, the release notes and `web/index.html` changes with it. Settings and games
+   kept in a browser stay, as the site's origin is the same.
+2. **The board has its own colours.** The premium squares were coloured the usual way (red,
+   pink, dark blue, light blue). They now use Tilefish's palette: terracotta for triple word,
+   maple for double word, felt green for triple letter and sage for double letter, each
+   still labelled.
 
 ## Tournament word lists
 
 Collins Scrabble Words is HarperCollins' copyright and the NASPA Word List is NASPA's.
-Neither has given Tilefish permission. Tilefish never hosts or ships them: the site and the
-`get-lexicon` scripts download them, when a player asks, from the MAGPIE project's public
-copy on GitHub, pinned to one commit and checked by SHA-256. Many players and programs use
-that copy. This keeps the risk low, but **it does not make it zero**: a rights holder could
-still object to a program that fetches its list. If one does, the download links in
-`get-lexicon.sh`, `get-lexicon.ps1` and `web/worker.js` are the only places to change, and
-removing them ends the matter.
+Neither has given Tilefish permission, so **Tilefish neither hosts nor fetches them**. A
+player who has a copy they are entitled to use loads it from their own device (the start card
+in the browser, or `--lexicon` on a computer); it is compiled and kept on that device and
+never uploaded. Tilefish's own leave values and win models for both lists, learned by
+self-play, come with it, so a player's copy plays at full strength. Until 13 October 2026 the
+site and the `get-lexicon` scripts fetched the lists from the MAGPIE project's public copy on
+GitHub; that has stopped, and copies a browser kept from it are deleted.
 
-**The only way to zero risk with these lists is a licence.** Ask:
+The project's own strength tests still fetch that copy onto GitHub's machines for the length
+of a job (`tools/research-lexicon.sh`), as matches against other engines need the same list,
+and never publish it. The self-play that produced Tilefish's leave values used it the same
+way. That is private use for testing, not distribution.
+
+**To offer Collins or NWL built in**, which is what most players would like, the project
+needs a licence. Ask:
 
 - **NASPA** ([scrabbleplayers.org](https://www.scrabbleplayers.org/)), for NWL2023;
 - **HarperCollins Publishers** (Collins Dictionaries, [collins.co.uk](https://collins.co.uk/)),
   for Collins Scrabble Words 2024.
 
-Ask for permission to use the list in a free browser app and a free downloadable program,
-and, separately, for terms for a paid app. Once licensed, the files can be served from the
-site itself, like ENABLE, and that is also the time to train Tilefish's own leave values for
-them (which needs a registered experiment, because new values change how it plays).
+A letter can say, in your own words:
+
+> I maintain Tilefish (github.com/Leo-Y-Zhang/ScrabbleEngine), a free, open-source engine for
+> practising and analysing the crossword board game, which runs in the browser with no
+> accounts, adverts or tracking. Players would like to use [Collins Scrabble Words 2024 /
+> the NASPA Word List 2023] in it. I would like a licence to include the list in the free
+> browser version and the free downloadable program, kept in a compiled form that cannot be
+> browsed or looked up during play, with your copyright notice. Please also tell me your
+> terms for a paid app, should there be one. At present Tilefish does not provide the list;
+> players load their own copies.
+
+Once licensed, the list can be served from the site like ENABLE: in `web/worker.js` its entry
+gets a site file in place of the player's own, and the start card's note changes.
 
 ## Building a ChessBase or Chessable for this game
 
@@ -95,17 +114,18 @@ product needs:
   share the GPL version, which is the trade the GPL makes. Accepting outside contributions
   under the GPL would mean a closed version needs their agreement too.
 - **A privacy statement** for the stores: the page sets no cookies, has no accounts, adverts
-  or trackers, and keeps settings and games in the browser on the device. GitHub hosts the
-  site, and serves the Collins and NWL downloads, so it sees the usual request data (an IP
-  address) as any web host does.
+  or trackers, and keeps settings, games and any word list a player loads in the browser on
+  the device. GitHub hosts the site, so it sees the usual request data (an IP address) as any
+  web host does.
 - **No help during real games.** Tilefish offers no word lookup, so it cannot act as a word
   finder; its analysis is for practice and review, as tournament rules forbid electronic aids
   during play.
 
 ## Before a wider release
 
-1. Decide on the repository's name (above). Everything else in the table is already done.
-2. Write to NASPA and HarperCollins about licences, if Collins and NWL are to be offered
-   with no risk at all, and before any paid or app-store version.
-3. For an app-store or paid version, have an intellectual-property lawyer review this page,
-   the store listing and the privacy statement.
+1. Rename the repository (above): the owner's one step.
+2. Nothing else is needed for the free site and downloads: every part in the table above is
+   either the project's own, under a licence that allows it, or not provided.
+3. A licence from NASPA or HarperCollins is needed only to offer their lists built in (above).
+4. Before any paid or app-store version, have an intellectual-property lawyer review this page,
+   the store listing and the privacy statement, for the countries it will be sold in.

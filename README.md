@@ -61,8 +61,9 @@ the failures, is in
 ## Quick start
 
 **In your browser:** open **[leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**.
-Nothing to install. Choose a mode, a word list (Collins 2024, NWL 2023, Common English,
-ENABLE, or Oxford: British English in Oxford spelling) and a clock:
+Nothing to install. Choose a mode, a word list (Common English, ENABLE, Oxford: British
+English in Oxford spelling, or Collins 2024 or NWL 2023 from your own copy, which stays on
+your device) and a clock:
 
 - **Play** against Tilefish (Casual, Strong or Champion) with no help.
 - **Practice** with hints (Tilefish's best moves, with what each keeps and an estimated winning
@@ -111,17 +112,16 @@ device, and browsers that offer it can install it as an app. Which word lists ar
 1. **Download** the zip for your computer from the
    [latest release](https://github.com/Leo-Y-Zhang/ScrabbleEngine/releases/latest)
    (Windows, macOS or Linux) and unzip it.
-2. **Get the championship word list** once: double-click `get-lexicon.bat` on Windows,
-   or type `sh get-lexicon.sh` in a terminal in that folder on macOS and Linux. This
-   downloads CSW24 (Collins Scrabble Words 2024, the World Scrabble Championship's
-   list) and its leave values, about 10 MB.
-3. **Start** `tilefish` (double-click `tilefish.exe` on Windows, `./tilefish` elsewhere)
+2. **Start** `tilefish` (double-click `tilefish.exe` on Windows, `./tilefish` elsewhere)
    and type `play` to play it at full strength, or `help`.
+3. **Tournament lists** are their publishers' copyright, so Tilefish neither includes nor
+   downloads them. If you have a copy of Collins Scrabble Words 2024 or the NASPA Word List
+   2023 that you are entitled to use, save it next to the program as `CSW24.txt` or
+   `NWL2023.txt` (or `.kwg`), or start `tilefish --lexicon /path/to/your/list`; Tilefish's
+   own leave values and win model for it come with the download.
 
-It prints the word list it loaded when it starts: CSW24 when the files from step 2 are
-next to it, otherwise ENABLE, a free list that comes with it. For North American play,
-`get-lexicon.bat NWL23` or `sh get-lexicon.sh NWL23` fetches NWL23 instead, used with
-`tilefish --lexicon NWL23.kwg`. For British English in Oxford spelling, start
+It prints the word list it loaded when it starts: your Collins or NWL copy when it is next to
+it, otherwise ENABLE, a free list that comes with it. For British English in Oxford spelling, start
 `tilefish --lexicon OXENDICT.txt` or type `lexicon OXENDICT.txt` at the prompt; that list
 comes with Tilefish ([below](#british-english-in-oxford-spelling-oxendict)), and so does the
 Common English Lexicon (`--lexicon CEL.txt`, [below](#common-english-cel)). The ready-made
@@ -134,10 +134,7 @@ does is decided file by file. On one such laptop the v2.2 program ran and v2.2.1
 from the same source, was blocked. If that happens, use the browser version above, which
 needs no download. Signing the releases would fix this: the release workflow is ready for
 SignPath Foundation's free signing for open-source projects, which needs the owner's
-accounts to switch on ([docs/windows.md](docs/windows.md)). v2.2's `get-lexicon.bat`
-also failed when started from a PowerShell 7 window, because Windows PowerShell 5.1 then
-loads PowerShell 7's modules; v2.2.1 avoids `Get-FileHash`, and the current file clears
-the inherited module path (same page).
+accounts to switch on ([docs/windows.md](docs/windows.md)).
 Building from source (below) gives one tuned to your processor, which is somewhat faster.
 
 ## What's in this folder
@@ -154,7 +151,8 @@ Building from source (below) gives one tuned to your processor, which is somewha
 | `CEL.txt` | The Common English Lexicon (68,135 everyday words), a free list (MIT licence) built by `tools/make_cel.py`. |
 | `CEL.klv2`, `CEL.win` | Leave values and win model Tilefish learned for it by playing itself (800,000 self-play games). |
 | `build.sh`, `build.bat` | One-line builds for Linux/macOS and Windows. |
-| `get-lexicon.sh`, `get-lexicon.bat`, `get-lexicon.ps1` | Download CSW24 (or NWL23) and its leave values, checked against known checksums. |
+| `CSW24.klv2`, `NWL23.klv2` | Leave values Tilefish learned by self-play for Collins 2024 and NWL 2023 (numbers only: the lists are not included). |
+| `tools/research-lexicon.sh` | For the project's strength tests on GitHub's machines only: fetches a tournament list and MAGPIE's leave values for a job. |
 | `LICENSE` | The GNU General Public License, version 3. |
 | `web/` | The browser version: the page, the worker that runs the engine (compiled to WebAssembly), `build.sh` and a test that plays whole games through it. |
 | `experiments/` | Every engine change screened against the frozen 2.1: hypothesis, setup, result, decision and raw logs, failures included. |
@@ -191,8 +189,7 @@ cl /O2 /std:c++17 /EHsc tilefish.cpp
 or just run `build.sh` / `build.bat`.
 
 Then run `./tilefish` (or `tilefish.exe`). It finds its word list and trained data in
-the current folder or in its own. Type `help` to list the commands, and run
-`sh get-lexicon.sh` (or `get-lexicon.bat`) once for the championship word list.
+the current folder or in its own. Type `help` to list the commands.
 
 **Browser version**: `sh web/build.sh` (needs [Emscripten](https://emscripten.org)) builds
 `web/dist`; `python3 -m http.server -d web/dist` serves it at http://localhost:8000.
@@ -371,20 +368,34 @@ short refereed match on every push and checks its log and analysis.
 
 ENABLE is only a stand-in. Real play uses **CSW** (Collins; WESPA and the World
 Championship, which is what Nigel Richards plays) or **NWL** (NASPA, North America).
-Those lists are copyrighted, so they cannot be bundled. `get-lexicon.sh` (or
-`get-lexicon.bat` on Windows) downloads CSW24, or NWL23 when asked, with its leave values
-from the MAGPIE project's public data, pinned to one version and checked against known
-checksums. These are the files every match above was played with.
+Those lists are their publishers' copyright, so Tilefish neither includes nor downloads
+them: load your own copy (in the browser, on the start card; on a computer, as below).
+Tilefish's own leave values for both come with it (below). The matches above were played on
+GitHub's test machines with the MAGPIE project's copy of each list and MAGPIE's leave values
+for both engines, fetched there by `tools/research-lexicon.sh` for the length of a job.
 
 Tilefish reads a word list either as a text file (one word per line) or as a **`.kwg`**
 file, the binary lexicon used by wolges, MAGPIE and Macondo, which loads in well under a
 second. Leave values next to the lexicon (`CSW24.klv2` or `CSW24.leaves`) and a win
-model (`CSW24.win`) are picked up automatically, and a `CSW24.kwg` or `NWL23.kwg` in the
+model (`CSW24.win`) are picked up automatically, from next to the list or else from
+Tilefish's own folder, and a `CSW24.kwg`, `CSW24.txt`, `NWL23.kwg` or `NWL2023.txt` in the
 folder is preferred over ENABLE.
 
+Tilefish's own leave values for the two lists were learned by self-play from ENABLE's (CSW24:
+800,000 games; NWL23: 400,000). Against MAGPIE's, which the matches above used, in matches of
+the static player (95% intervals):
+
+| Leave values, A vs B | Games | A's win rate | A's spread per game |
+|---|---|---|---|
+| Tilefish's CSW24 vs MAGPIE's, on CSW24 | 40,000 | 49.6% ± 0.5 | -0.6 ± 1.0 |
+| Tilefish's NWL23 vs MAGPIE's, on NWL23 | 40,000 | 49.8% ± 0.5 | -0.7 ± 1.0 |
+| Tilefish's CSW24 vs ENABLE's, on CSW24 | 40,000 | 50.1% ± 0.5 | +0.4 ± 1.0 |
+
+Both are level with MAGPIE's within the intervals; the strength figures above were measured with
+MAGPIE's and have not been re-run with Tilefish's own.
+
 ```sh
-sh get-lexicon.sh                     # CSW24.kwg and CSW24.klv2 (sh get-lexicon.sh NWL23 for NWL23)
-./tilefish --lexicon CSW24.kwg        # loads CSW24.klv2 / CSW24.win from the same folder
+./tilefish --lexicon ~/lists/CSW24.txt   # your copy; Tilefish's CSW24.klv2 / CSW24.win are found
 tilefish> train games=100000 gens=8   # or learn your own leave values
 tilefish> train games=100000 gens=1 leaves=0   # refit only the win model
 ```
@@ -833,7 +844,8 @@ its move lists against full generation (`verifyendgame`). `benchgen`, `benchsim`
 * **Passing**: the fast search now passes when a pass has the best equity, as the full
   move list does (verifybest found a lone blank kept with 40 tiles in the bag).
 * **Easy to run**: ready-made downloads for Windows, macOS and Linux (built by
-  `.github/workflows/release.yml`), `get-lexicon` scripts that fetch CSW24 or NWL23, and
+  `.github/workflows/release.yml`), `get-lexicon` scripts that fetched CSW24 or NWL23 (removed
+  on 13 October 2026: players now load their own copy), and
   the word list is also looked for next to the program, so double-clicking it works.
   CI builds with g++, clang and Visual Studio. Tilefish is now GPL-3.0 licensed.
 * **Match tools**: `tools/macondo_bot` plays Macondo with Woogles' BestBot settings
@@ -887,9 +899,8 @@ options are `time`, `iters`, `plies`, `cands`, `threads`, `win` (0 = rank by spr
 Tilefish is free software: you can redistribute it and/or modify it under the terms of
 the GNU General Public License as published by the Free Software Foundation, version 3
 or (at your option) any later version. See `LICENSE`. It is the license Stockfish uses,
-and MAGPIE and Macondo too. The word lists that `get-lexicon` downloads belong to their
-publishers (Collins Scrabble Words: HarperCollins; NWL: NASPA) and are not part of
-Tilefish. `OXENDICT.txt` is made from the English Speller Database, copyright 2000-2026 by
+and MAGPIE and Macondo too. Collins Scrabble Words (HarperCollins) and the NASPA Word List
+(NASPA) belong to their publishers and are not part of Tilefish. `OXENDICT.txt` is made from the English Speller Database, copyright 2000-2026 by
 Kevin Atkinson, under its permissive licence (the notice is at the top of the file and in
 [LEXICONS.md](LEXICONS.md)).
 

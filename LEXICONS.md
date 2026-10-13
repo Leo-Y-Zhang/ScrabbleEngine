@@ -14,24 +14,39 @@ page does not claim one where none exists.
 | `OXENDICT.klv2`, `OXENDICT.win` | this project (learned by self-play) | yes | bundled | GPL-3.0. |
 | `CEL.txt` (Common English Lexicon) | Eric Smith (Fj00) and Kenji Matsumoto | yes | bundled | MIT licence: free to use, copy, change, share and sell, keeping its notice ([below](#cel-the-common-english-lexicon)). |
 | `CEL.klv2`, `CEL.win` | this project (learned by self-play) | yes | bundled | GPL-3.0. |
-| Collins Scrabble Words 2024 (`CSW24.kwg`) | HarperCollins | **no** | downloaded from [jvc56/MAGPIE-DATA](https://github.com/jvc56/MAGPIE-DATA), commit `adf2931`, SHA-256 checked | **None granted to this project.** |
-| NASPA Word List 2023 (`NWL23.kwg`) | NASPA | **no** | as above | **None granted to this project.** |
-| `CSW24.klv2`, `NWL23.klv2` (leave values) | the MAGPIE project | no | as above | MAGPIE-DATA declares no licence. |
+| `CSW24.klv2`, `NWL23.klv2` | this project (learned by self-play) | yes | bundled | GPL-3.0. Leave values only, not words. |
+| Collins Scrabble Words 2024 | HarperCollins | **no** | **not provided**: a player who has a copy loads their own | None granted to this project, and none needed: Tilefish neither hosts nor fetches it. |
+| NASPA Word List 2023 | NASPA | **no** | **not provided**: as above | As above. |
 
-## What happens with CSW24 and NWL23
+## Collins and NWL: the player's own copy
 
-- **On your computer:** `get-lexicon.sh`, `get-lexicon.bat` and `get-lexicon.ps1` download
-  the files from MAGPIE-DATA into Tilefish's folder when you run them. They are not in any
-  release zip.
-- **In the browser version:** your browser downloads the same files directly from
-  `raw.githubusercontent.com` (MAGPIE-DATA). The Tilefish site does not host or proxy them.
-  The browser keeps a copy in its own cache storage on your device, so the next game does
-  not download them again. Clearing the site's data removes it.
-- **Exports:** `savewords FILE` writes a loaded list as plain text. A game record (GCG) or
-  a Tilefish game file contains the words played in that game, not the list.
-- **Strength tests:** `.github/workflows/experiment.yml` downloads CSW24 or NWL23 onto
-  GitHub's machines for the duration of a job. It exports the text list there for the
-  referee and uploads only the game logs, never the list.
+Since 13 October 2026 Tilefish neither hosts nor downloads Collins Scrabble Words or the
+NASPA Word List, from anywhere. Earlier versions fetched them, when a player asked, from the
+MAGPIE project's public copy on GitHub; that copy states no licence, and neither
+HarperCollins nor NASPA has given this project permission, so it stopped.
+
+- **In the browser version:** choose Collins 2024 or NWL 2023 on the start card and load your
+  own copy (a text file, one word per line, or a `.kwg` file). The page compiles it and keeps
+  it in the browser's storage on your device; it is never uploaded. Clearing the site's data
+  removes it. Copies that earlier versions downloaded from the third-party copy are deleted
+  from the browser's storage.
+- **On your computer:** save your copy next to the program as `CSW24.txt` or `NWL2023.txt`
+  (or `.kwg`), or start `tilefish --lexicon /path/to/your/list`.
+- **Leave values and win models:** Tilefish's own (`CSW24.klv2`, `NWL23.klv2`, `CSW24.win`,
+  `NWL23.win`), learned by self-play, come with it. They are numbers, not words.
+- **Exports:** `savewords FILE` writes a loaded list as plain text, for the player's own use.
+  A game record (GCG) or a Tilefish game file contains the words played in that game, not the
+  list.
+- **Strength tests:** the project's registered matches (`.github/workflows/experiment.yml`)
+  fetch the lists and MAGPIE's leave values onto GitHub's test machines with
+  `tools/research-lexicon.sh`, for the length of a job, so that both engines play under the
+  same conditions as in every earlier match. The lists are used there and never published;
+  only game logs are kept. The self-play that produced Tilefish's own leave values used a
+  copy in the same way.
+
+A copy you are entitled to use is one from its publisher or an association that may give it
+to you, or one you obtained under the publisher's terms. Tilefish does not check where a
+file came from, and it cannot give anyone a right to a list.
 
 ## OXENDICT: British English in Oxford spelling
 
@@ -104,20 +119,17 @@ Tilefish site itself, like ENABLE.
 Checked on 13 October 2026. Collins Scrabble Words 2024 (CSW24, seventh edition, in WESPA
 tournament play since 1 January 2025) and the NASPA Word List 2023 (NWL2023, in NASPA play
 since 29 February 2024) are the latest editions of the two tournament lists; MAGPIE-DATA's
-latest commit (8 October 2026) has no newer English list. When a new edition appears there,
-the pinned commit and checksums in `get-lexicon.sh`, `get-lexicon.ps1` and `web/worker.js`
-are the places to change. Older editions (CSW21, NWL2020, TWL06 and earlier) are left out on
-purpose: no rated tournament uses them now.
+latest commit (8 October 2026) has no newer English list. When a new edition appears, Tilefish
+needs leave values learned for it (`train`), a name on the start card (`web/app.js`,
+`web/index.html`, `web/worker.js`), and for the strength tests the pinned commit and
+checksums in `tools/research-lexicon.sh`. Older editions (CSW21, NWL2020, TWL06 and earlier)
+are left out on purpose: no rated tournament uses them now.
 
 ## What this means
 
-Tilefish does not distribute either list. It points to a third-party copy and fetches it
-when you ask. Many players and tools use that same copy, but neither HarperCollins nor
-NASPA has given this project permission, and the MAGPIE-DATA repository states no licence.
-If you need certainty, for an event or a commercial use, obtain the list under licence from
-its publisher and load it with `--lexicon FILE` or the `lexicon` command. ENABLE needs no
-permission, and neither do OXENDICT, under ESDB's licence above, or CEL, under the MIT
-licence. [docs/DISTRIBUTING.md](docs/DISTRIBUTING.md) sets out what is safe to distribute
-and how to obtain the licences. If a rights holder
-objects, the download links in the scripts and in `web/worker.js` are the only places to
-change.
+Tilefish distributes no word list it lacks the right to: it ships ENABLE (public domain),
+OXENDICT (ESDB's licence) and CEL (MIT licence), each with its notice, and data of its own.
+Collins and NWL reach the engine only as a copy the player supplies, which stays on their
+device. To offer Collins or NWL built in, as many players would like, the project needs a
+licence from HarperCollins or NASPA; [docs/DISTRIBUTING.md](docs/DISTRIBUTING.md) says how to
+ask, and what changes once one is granted.

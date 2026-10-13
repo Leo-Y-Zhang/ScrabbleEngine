@@ -52,7 +52,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Word list
-        run: sh get-lexicon.sh CSW24
+        run: sh tools/research-lexicon.sh CSW24
       - name: Build the Tilefish judge
         if: inputs.judge == 'tilefish'
         run: |

@@ -234,6 +234,27 @@ async function launch() {
     await p.waitForFunction((b) => S && !busy && G.record.length === b.n && S.history.length === b.n, before, { timeout: 30000 });
     check(await p.evaluate((b) => S.bot === b.bot + 5 * b.words, before), "after a take-back the challenge's points are still Tilefish's");
 
+    // A player's own copy of a tournament list: loaded from the device, kept there, played with
+    // Tilefish's own leave values.  (ENABLE stands in for the player's copy of NWL 2023.)
+    const seen = [];
+    ctx.on("request", (r) => seen.push(r.url()));
+    await p.click("#btn-new");
+    await p.click('#start [data-v="practice"]');
+    await p.click('#start [data-v="NWL23"]');
+    check(await p.evaluate(() => !document.getElementById("own-row").hidden && /does not provide it/.test(document.getElementById("lex-note").textContent)),
+      "NWL 2023 is not provided: the start card offers to load your own copy");
+    await p.setInputFiles("#own-file", { name: "my-nwl.txt", mimeType: "text/plain", buffer: fs.readFileSync(path.join(__dirname, "..", "ENABLE.txt")) });
+    await p.waitForFunction(() => /is ready: 168,551 words/.test(document.getElementById("own-status").textContent), null, { timeout: 120000 });
+    check(true, "your own copy is read, compiled and kept on this device (168,551 words)");
+    await p.click('#start [data-name="rules"] [data-v="checked"]');
+    await p.click('#start [data-name="clock"] [data-v="0"]');
+    await p.click("#btn-start");
+    await myTurn();
+    const own = await p.evaluate(async () => ({ lex: S.lexicon, leaves: await call({ run: "leaves" }) }));
+    const elsewhere = seen.filter((u) => !u.startsWith(base) && !u.startsWith("data:") && !u.startsWith("blob:"));
+    check(own.lex === "NWL23" && /NWL23\.klv2/.test(own.leaves) && elsewhere.length === 0,
+      "a game plays your copy with Tilefish's own NWL23 leave values, and nothing is fetched from another site (" + own.leaves.trim() + (elsewhere.length ? "; " + elsewhere.join(" ") : "") + ")");
+
     check(errors.length === 0, "no page or console errors" + (errors.length ? ":\n    " + errors.join("\n    ") : ""));
     console.log("ok");
     await browser.close();
