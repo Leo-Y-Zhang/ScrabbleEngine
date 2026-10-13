@@ -3446,6 +3446,13 @@ struct GameEvent {
   int score_after;
   std::string note;
   bool judgeable = true;  // false for an imported move whose rack the record does not give
+  // Challenges (ui phony, ui bonus): a play with a word not in the lexicon that was
+  // challenged off is a pass that remembers the play (`tried`, with the score it would have
+  // made); `bonus` is what an unsuccessful challenge of this move added to its player's
+  // score.
+  bool phony = false;
+  Move tried;
+  int bonus = 0;
 };
 
 struct Game {
@@ -6578,7 +6585,12 @@ inline std::string gcg_text(const Game& g, const std::string& lexname, const std
     const Move& m = e.move;
     total[e.player] += m.type == MT_PLACE ? m.score : 0;
     o << '>' << nick[e.player] << ": " << e.rack_before.str() << ' ';
-    if (m.type == MT_PLACE) {
+    if (e.phony) {
+      // The play as made, then taken off after a successful challenge.
+      const Move& t = e.tried;
+      o << move_coord(t) << ' ' << move_word_dots(t) << " +" << t.score << ' ' << total[e.player] + t.score << "\n";
+      o << '>' << nick[e.player] << ": " << e.rack_before.str() << " -- -" << t.score;
+    } else if (m.type == MT_PLACE) {
       o << move_coord(m) << ' ' << move_word_dots(m) << " +" << m.score;
     } else if (m.type == MT_EXCHANGE) {
       o << '-' << m.used().str() << " +0";
@@ -6586,6 +6598,10 @@ inline std::string gcg_text(const Game& g, const std::string& lexname, const std
       o << "- +0";
     }
     o << ' ' << total[e.player] << "\n";
+    if (e.bonus) {
+      total[e.player] += e.bonus;
+      o << '>' << nick[e.player] << ": (challenge) +" << e.bonus << ' ' << total[e.player] << "\n";
+    }
   }
   if (g.over && !g.events.empty()) {
     for (int p = 0; p < 2; ++p) {
@@ -7010,6 +7026,27 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
     m.score = (i16)score_move(g.board, m);
     return true;
   }
+  // Is `text` a play that would be legal for the player to move in `g` but for a word not
+  // in the lexicon (a phony, which tournament rules let a player make and the opponent
+  // challenge)?  `m` gets the play with the score it would make.
+  bool phony_ok_in(const Game& g, const std::string& text, Move& m, std::string& err) {
+    if (move_ok_in(g, text, m, err)) {
+      err = m.type == MT_PLACE ? "every word is in the lexicon: play it as a move" : "only a play of tiles can be a phony";
+      return false;
+    }
+    if (m.type != MT_PLACE || !starts_with(err, "not in the lexicon")) return false;
+    m.score = (i16)score_move(g.board, m);
+    err.clear();
+    return true;
+  }
+  // The move text `ui record` gives and `ui force` replays: the move, "phony MOVE" for a
+  // phony challenged off, and " bonus N" after a move whose unsuccessful challenge added N.
+  std::string record_text(const Board& b, const GameEvent& e) {
+    std::string t = e.phony ? "phony " + move_str(b, e.tried)
+                            : e.move.type == MT_EXCHANGE ? "exch " + e.move.used().str() : move_str(b, e.move);
+    if (e.bonus) t += " bonus " + std::to_string(e.bonus);
+    return t;
+  }
   std::string words_json(const std::vector<std::string>& words) {
     std::string o = "[";
     for (size_t i = 0; i < words.size(); ++i)
@@ -7067,11 +7104,14 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       const auto& e = game.events[i];
       const bool mine = e.player == h;
       // The opponent's exchanged tiles are hidden, as at the board.
-      const std::string text = e.move.type == MT_EXCHANGE && !mine ? fmt("exch %d", e.move.used().n) : move_str(b, e.move);
+      const std::string text = e.phony ? move_str(b, e.tried)
+                               : e.move.type == MT_EXCHANGE && !mine ? fmt("exch %d", e.move.used().n) : move_str(b, e.move);
       o << (i ? "," : "") << "{\"who\":" << (mine ? "\"you\"" : "\"bot\"") << ",\"move\":" << json_str(text)
-        << ",\"score\":" << (e.move.type == MT_PLACE ? e.move.score : 0) << ",\"total\":" << e.score_after
+        << ",\"score\":" << (e.move.type == MT_PLACE ? e.move.score : 0) << ",\"total\":" << e.score_after + e.bonus
         << ",\"tiles\":" << (e.move.type == MT_PLACE ? (int)e.move.ntiles : 0)
-        << ",\"type\":" << json_str(e.move.type == MT_PLACE ? "play" : e.move.type == MT_EXCHANGE ? "exchange" : "pass") << "}";
+        << ",\"type\":" << json_str(e.phony ? "phony" : e.move.type == MT_PLACE ? "play" : e.move.type == MT_EXCHANGE ? "exchange" : "pass");
+      if (e.bonus) o << ",\"bonus\":" << e.bonus;
+      o << "}";
       if (e.move.type == MT_PLACE) b.place(lex, e.move);
     }
     o << "]}";
@@ -7087,7 +7127,12 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
   //                                  endgame solved with N nodes, N more for the exact values
   //                                  shown: the same answer everywhere)
   //   ui infer [SECS]                what the opponent probably kept from its last play
-  //   ui force MOVE                  MOVE for whoever is to move (replaying a saved game)
+  //   ui force MOVE                  MOVE for whoever is to move (replaying a saved game; also
+  //                                  "phony MOVE" and "MOVE bonus N", as ui record gives them)
+  //   ui phony MOVE                  the human's MOVE, with a word not in the lexicon, challenged off:
+  //                                  a scoreless turn (tournament rules)
+  //   ui bonus N                     an unsuccessful challenge of the last move: its player gains N
+  //   ui lastwords                   the words the last move formed, each with whether it is a word
   //   ui seat 0|1                    whose view the state shows (two players at one screen)
   //   ui undo                        take back the last move, draws included
   //   ui gcg                         the game as a GCG record
@@ -7123,7 +7168,7 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
       Board b;
       for (size_t i = 0; i < game.events.size(); ++i) {
         const Move& m = game.events[i].move;
-        std::cout << (i ? "," : "") << json_str(m.type == MT_EXCHANGE ? "exch " + m.used().str() : move_str(b, m));
+        std::cout << (i ? "," : "") << json_str(record_text(b, game.events[i]));
         if (m.type == MT_PLACE) b.place(lex, m);
       }
       std::cout << "]}" << std::endl;
@@ -7163,6 +7208,19 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
         } else {
           e.move = ev[k].move;
         }
+        // A play the next line withdraws was a phony challenged off: a scoreless turn, as a
+        // game played here records it.
+        if (e.move.type == MT_PLACE && k + 1 < ev.size() && ev[k + 1].withdrawn && ev[k + 1].player == ev[k].player) {
+          e.phony = true;
+          e.tried = e.move;
+          e.move = Move();
+          e.move.type = MT_PASS;
+          e.score_after = ev[k + 1].total;
+        }
+        // A challenge bonus right after a play belongs to it (its player's total rises).
+        if (e.move.type == MT_PLACE && k + 1 < ev.size() && ev[k + 1].move.type == 255 && ev[k + 1].player == ev[k].player &&
+            starts_with(to_lower(ev[k + 1].text), "(challenge)") && ev[k + 1].total > ev[k].total)
+          e.bonus = std::min(1000, ev[k + 1].total - ev[k].total);
         // Review judges a move from its player's rack, so only where the record gives that
         // rack, it is the one the position holds, and it holds what was played (an exchange
         // recorded as a count names no tiles).
@@ -7282,20 +7340,70 @@ eg=0|1 peg=0|1 inf=0|1 z=Z tau=T playout=N latecands=N   e.g.  champion:time=30,
                   << ",\"equity\":" << json_num(ms[i].equity, 2) << "}";
       std::cout << "]}" << std::endl;
       return;
+    } else if (sub == "bonus") {
+      // An unsuccessful challenge of the last move: its player gains N points (tournament
+      // rules give 5 or 10 a word challenged).  Kept with that move, so a take-back of the
+      // move takes it back too.
+      const int n = args.size() > 1 ? std::atoi(args[1].c_str()) : -1;
+      if (args.size() != 2 || n < 1 || n > 1000 || args[1].find_first_not_of("0123456789") != std::string::npos)
+        return fail("usage: ui bonus N (1 to 1000)");
+      if (game.events.empty()) return fail("there is no move to have challenged");
+      GameEvent& e = game.events.back();
+      if (e.move.type != MT_PLACE) return fail("only a play of tiles can be challenged");
+      e.bonus += n;
+      game.score[e.player] += n;
+    } else if (sub == "lastwords") {
+      // The words the last move formed, each with whether the lexicon has it: what a
+      // challenge of that move would check.
+      if (game.events.empty() || game.events.back().move.type != MT_PLACE || ui_before.size() != game.events.size())
+        return fail("the last move made no words");
+      std::string err;
+      std::vector<std::string> words;
+      validate_move(lex, ui_before.back().board, game.events.back().move, err, &words);
+      std::cout << "{\"ok\":true,\"words\":" << words_json(words) << "}" << std::endl;
+      return;
+    } else if (sub == "phony" || (sub == "force" && args.size() > 1 && to_lower(args[1]) == "phony")) {
+      // A play with a word not in the lexicon, challenged off: it scores nothing, the tiles
+      // go back to the rack, and the turn passes (a scoreless turn, as the rules count it).
+      if (game.over) return fail("the game is over");
+      if (sub == "phony" && game.turn != ui_human) return fail("it is not your turn");
+      std::string text = trim(rest.substr(args[0].size()));
+      if (sub == "force") text = trim(text.substr(args[1].size()));
+      Move tried;
+      std::string err;
+      if (!phony_ok_in(game, text, tried, err)) return fail(err);
+      Move pass;
+      pass.type = MT_PASS;
+      ui_apply(pass);
+      game.events.back().phony = true;
+      game.events.back().tried = tried;
     } else if (sub == "move" || sub == "check" || sub == "force") {
       if (game.over) return fail("the game is over");
       if (sub != "force" && game.turn != ui_human) return fail("it is not your turn");
       Move m;
       std::string err;
       std::vector<std::string> words;
-      const bool legal = human_move_ok(trim(rest.substr(args[0].size())), m, err, &words);
+      std::string text = trim(rest.substr(args[0].size()));
+      // A replayed move may carry the bonus an unsuccessful challenge of it gave (ui record).
+      int bonus = 0;
+      if (sub == "force" && args.size() == 5 && to_lower(args[3]) == "bonus") {
+        bonus = std::atoi(args[4].c_str());
+        if (bonus < 1 || bonus > 1000 || args[4].find_first_not_of("0123456789") != std::string::npos) return fail("bad bonus");
+        text = args[1] + " " + args[2];
+      }
+      const bool legal = human_move_ok(text, m, err, &words);
       if (sub == "check") {  // the words formed come back whether or not they are all valid
         std::cout << "{\"ok\":" << (legal ? "true" : "false") << ",\"score\":" << (legal && m.type == MT_PLACE ? m.score : 0)
                   << ",\"error\":" << json_str(err) << ",\"words\":" << words_json(words) << "}" << std::endl;
         return;
       }
       if (!legal) return fail(err);
+      if (bonus && m.type != MT_PLACE) return fail("only a play of tiles can be challenged");
       ui_apply(m);
+      if (bonus) {
+        game.events.back().bonus = bonus;
+        game.score[game.events.back().player] += bonus;
+      }
     } else if (sub == "bot") {
       if (game.over) return fail("the game is over");
       if (game.turn == ui_human) return fail("it is your turn");

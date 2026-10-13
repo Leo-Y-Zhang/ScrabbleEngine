@@ -151,6 +151,35 @@ Tilefish().then((m) => {
     check(r.ok, "CEL: engine move: " + r.error);
   }
   console.log("CEL: " + r.state.you + "-" + r.state.bot + " after 4 moves each");
+  // Tournament rules: a phony comes off as a scoreless turn, a challenge bonus stays with its
+  // move, and the record replays both exactly.
+  let challenged = false;
+  for (let seed = 11; seed < 40; seed++) {
+    const st = ui("new first " + seed).state, tiles = st.rack.replace(/\?/g, "");
+    let ph = null;
+    for (const a of tiles) for (const b of tiles) {
+      const c = ph ? null : ui("check 8H " + a + b);
+      if (c && !c.ok && /^not in the lexicon/.test(c.error)) ph = "8H " + a + b;
+    }
+    if (!ph) continue;
+    const off = ui("phony " + ph);
+    check(off.ok && off.state.you === 0 && off.state.rack === st.rack && off.state.history[0].type === "phony", "a phony comes off: " + JSON.stringify(off).slice(0, 160));
+    const b = ui("bot static");
+    if (b.state.history[1].type !== "play") continue;
+    const words = ui("lastwords").words;
+    const won = ui("bonus " + 5 * words.length);
+    check(won.ok && won.state.bot === b.state.bot + 5 * words.length, "a challenge bonus goes to the challenged play");
+    const rec = ui("record").moves, gcg = ui("gcg").gcg;
+    ui("new first " + seed);
+    for (const m of rec) check(ui("force " + m).ok, "the record replays: " + m);
+    const again = ui("state").state;
+    check(again.bot === won.state.bot && again.you === 0 && JSON.stringify(again.board) === JSON.stringify(won.state.board), "the replay is the same game");
+    check(/ -- -\d+ 0\n/.test(gcg) && /\(challenge\) \+\d+ \d+\n/.test(gcg), "the GCG has the withdrawn phony and the challenge");
+    console.log("challenges: " + ph + " off, then " + rec[1]);
+    challenged = true;
+    break;
+  }
+  check(challenged, "a game with a phony and a challenge was played");
   // The multi-core build (used where the page is cross-origin isolated) gives the same
   // fixed-work checksum on one thread and on two, and plays through the ui commands.
   const single = run("lexicon /data/ENABLE.kwg") && run("benchsim 0 1 1000").match(/checksum ([\d.-]+)/)[1];

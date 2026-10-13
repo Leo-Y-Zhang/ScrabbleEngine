@@ -28,8 +28,30 @@ const NOTES = {
   duo: "Two people at one screen. The rack is hidden between turns.",
   analysis: "Paste a position or open a game record (.gcg or a Tilefish file) to review it or play on from it.",
   naspa: "As in the NASPA rules of 1 December 2016: 10 points off for each started minute past zero; more than 10 minutes over loses the game.",
+  wespa: "As in WESPA's rules (and the ABSP's): 10 points off for each minute or part of one past zero; 10 minutes over forfeits the game, by at least 100 points.",
   flag: "The game ends, lost, when a clock reaches zero.",
 };
+// Tournament rules.  Under NASPA's or WESPA's a word not in the list can be played (a
+// phony): Tilefish, which knows every word, challenges it off and the turn scores nothing.
+// The player may challenge Tilefish's plays; Tilefish plays only words in the list, so such
+// a challenge fails and costs what the rules say.  Words are not marked as they are placed.
+const RULES_NAME = { checked: "Casual", naspa: "NASPA rules", wespa: "WESPA rules" };
+const RULES_NOTE = {
+  checked: "Words are checked as you place them: a word not in the list cannot be played, so there are no phonies and no challenges.",
+  naspa: "North American tournament rules. You may play a word that is not in the list; Tilefish challenges it off and you score nothing that turn. You may challenge Tilefish's plays: with Collins an unsuccessful challenge gives it 5 points a word, otherwise it costs your turn (double challenge). Words are not marked as you place them.",
+  wespa: "International rules, which the ABSP in the UK and most associations outside North America use. You may play a word that is not in the list; Tilefish challenges it off and you score nothing that turn. An unsuccessful challenge of Tilefish's play gives it the points below for each word challenged. Words are not marked as you place them.",
+};
+const WPEN_NOTE = { 5: "5 points a word: WESPA's preferred penalty, and the ABSP's in top divisions.", 10: "10 points a word, a penalty WESPA also allows.", 0: "A free challenge: no penalty, as in many ABSP divisions." };
+// The challenge rule a game is played under: "void" (words checked as they are placed),
+// "double" (an unsuccessful challenge loses the challenger's turn), "free", or the points
+// a word challenged that an unsuccessful challenge gives the challenged player ("5", "10").
+function chalRule(g) {
+  if (!g || !g.rules || g.rules === "checked" || (g.mode !== "play" && g.mode !== "practice")) return "void";
+  if (g.rules === "naspa") return g.lexicon === "CSW24" ? "5" : "double";
+  return g.wpen === "0" ? "free" : g.wpen === "10" ? "10" : "5";
+}
+const tournament = () => chalRule(G) !== "void";
+const isPhonyError = (c) => !!c && !c.ok && /^not in the lexicon/.test(c.error || "");
 const PREMIUM = (() => {
   const m = {};
   const put = (kind, list) => list.forEach(([r, c]) => {
@@ -64,6 +86,7 @@ const settings = {
   mode: store.get("mode", "play"), level: store.get("level", "strong"), lexicon: store.get("lexicon", "CSW24"),
   clock: store.get("clock", "0"), customMin: store.get("customMin", "20"), first: store.get("first", "first"),
   overtime: store.get("overtime", "naspa"), think: store.get("think", ""), theme: store.get("theme", "system"),
+  rules: store.get("rules", "checked"), wpen: store.get("wpen", "5"),
   sound: store.get("sound", "0"), sfx: store.get("sfx", "0"), rate: store.get("rate", "1"),
 };
 function applyTheme() {
@@ -242,6 +265,7 @@ function newGameObject() {
     return {
       id: Date.now().toString(36), version: 1, mode, lexicon: settings.lexicon, level: settings.level,
       clockMin: clockMinutes(), overtime: settings.overtime, think: settings.think, seed: newSeed(),
+      rules: settings.rules, wpen: settings.wpen, challenged: -1,
       firstSide, human: f === "first" ? 0 : 1, record: [], used: [0, 0], running: -1, since: 0, paused: false,
       pauseNote: "", assisted: false, over: false, result: null, startedAt: new Date().toISOString(), verdicts: {},
     };
@@ -265,8 +289,10 @@ function describe(g) {
   parts.push({ play: "Play", practice: "Practice", duo: "Two players", analysis: "Analysis", review: "Review", puzzle: g.puzzle ? puzzleName(!!g.puzzle.daily, g.puzzle.kind) : "Puzzle" }[g.mode] || g.mode);
   if (g.mode !== "duo" && g.mode !== "review" && g.mode !== "puzzle") parts.push(capital(g.level));
   parts.push(LEX_NAME[g.lexicon] || g.lexicon);
+  const rule = chalRule(g);
+  if (rule !== "void") parts.push(RULES_NAME[g.rules] + (rule === "double" ? ", double challenge" : rule === "free" ? ", free challenge" : ", " + rule + " points a word"));
   if (g.mode !== "review" && g.mode !== "analysis" && g.mode !== "puzzle")
-    parts.push(g.clockMin ? g.clockMin + " min each, " + (g.overtime === "naspa" ? "overtime penalty" : "lose on time") : "untimed");
+    parts.push(g.clockMin ? g.clockMin + " min each, " + (g.overtime === "naspa" ? "NASPA overtime" : g.overtime === "wespa" ? "WESPA overtime" : "lose on time") : "untimed");
   return parts.join(" · ");
 }
 function save() {
@@ -299,7 +325,7 @@ function stopClocks() {
 }
 function overMs(side, used) { return Math.max(0, used[side] - G.clockMin * 60000); }
 function penalty(side, used) {
-  if (!G.clockMin || G.overtime !== "naspa") return 0;
+  if (!G.clockMin || (G.overtime !== "naspa" && G.overtime !== "wespa")) return 0;
   const over = overMs(side, used);
   if (over <= 0) return 0;
   return 10 * Math.ceil(Math.ceil(over / 1000) / 60);  // -0:01..-1:00 = 10, -1:01..-2:00 = 20
@@ -339,7 +365,8 @@ function tickClocks() {
   }
   if (G.running >= 0 && !G.paused && !G.over) {
     const over = overMs(G.running, used);
-    if ((G.overtime === "flag" && over > 0) || (G.overtime === "naspa" && over > 10 * 60000)) timeForfeit(G.running);
+    if ((G.overtime === "flag" && over > 0) || (G.overtime === "naspa" && over > 10 * 60000) || (G.overtime === "wespa" && over >= 10 * 60000))
+      timeForfeit(G.running);
   }
 }
 const humanSide = (side) => G.mode === "duo" || side === G.human;
@@ -578,12 +605,12 @@ function renderSide() {
     li.className = "s" + (G.mode === "duo" ? side : side === G.human ? 0 : 1) + (reviewAt === k + 1 ? " at" : "");
     const b = document.createElement("button");
     const cls = classify(verdictAt(k));
-    b.innerHTML = (cls ? badge(cls, "sm") : "") + esc(h.type === "pass" ? "Pass" : h.type === "exchange" ? "Exchange " + h.move.replace(/^exch\s*/i, "") : h.move);
+    b.innerHTML = (cls ? badge(cls, "sm") : "") + esc(historyLabel(h, k));
     b.title = "Show the board after this move";
     b.onclick = () => enterReview(k + 1);
     const sc = document.createElement("span");
     sc.className = "sc";
-    sc.textContent = h.type === "play" ? "+" + h.score : "";
+    sc.textContent = h.type === "play" ? "+" + h.score + (h.bonus ? " +" + h.bonus : "") : "";
     const tot = document.createElement("span");
     tot.className = "tot";
     tot.textContent = h.total;
@@ -682,6 +709,8 @@ function renderControls() {
   $("btn-exchange").disabled = !mine || S.bag < 7;
   $("btn-exchange").textContent = exchanging ? "Cancel" : "Exchange";
   $("btn-pass").disabled = !mine || exchanging;
+  $("btn-challenge").hidden = !tournament() || G.over;
+  $("btn-challenge").disabled = !mine || exchanging || !canChallenge();
   $("btn-hint").hidden = !assistAllowed();
   $("btn-hint").disabled = !mine || exchanging;
   const play = $("btn-play");
@@ -695,8 +724,10 @@ function renderControls() {
     play.disabled = !mine || !xsel.size;
   } else {
     const mv = buildMove();
-    const ready = mine && checked && checked.ok && mv && checked.text === mv.text;
-    play.textContent = ready ? "Play " + checked.score : "Play";
+    const phony = tournament() && isPhonyError(checked);
+    const ready = mine && checked && (checked.ok || phony) && mv && checked.text === mv.text;
+    const bd = ready && phony ? breakdown() : null;
+    play.textContent = ready ? "Play " + (phony ? (bd ? bd.total : "") : checked.score) : "Play";
     play.disabled = !ready;
   }
   const live = G && !G.over && reviewAt < 0 && G.mode !== "review" && G.mode !== "puzzle";
@@ -741,6 +772,7 @@ function pendingStatus() {
   if (!checked || !mv || checked.text !== mv.text) return bd ? wordChips(bd, null) : "&nbsp;";
   if (checked.words && checked.words.length && bd && (checked.ok || /lexicon/.test(checked.error || ""))) return wordChips(bd, checked);
   if (checked.ok) return "<b>" + esc(pretty(mv.text)) + "</b> scores " + checked.score + ".";
+  if (tournament() && isPhonyError(checked)) return "<b>" + esc(pretty(mv.text)) + "</b>" + (bd ? " scores " + bd.total : "") + ".";
   return '<span class="bad">' + esc(capital(checked.error)) + "</span>";
 }
 // The words a move forms, each with its points and the bonus squares it uses, worked out
@@ -785,7 +817,7 @@ function breakdown() {
   return { words, bingo, total: words.reduce((a, w) => a + w.score, 0) + bingo };
 }
 function wordValidity(bd, chk) {
-  if (!chk || !chk.words) return bd.words.map(() => null);
+  if (!chk || !chk.words || (tournament() && !exploring)) return bd.words.map(() => null);  // tournament rules: you find out by playing
   if (chk.words.length === bd.words.length) return chk.words.map((w) => w.ok);
   return bd.words.map((w) => { const m = chk.words.find((x) => x.word === w.word); return m ? m.ok : null; });
 }
@@ -795,7 +827,7 @@ function wordChips(bd, chk) {
     esc(w.tags.length ? w.tags.join(" ") : "no bonus squares") + '">' + (valid[i] === false ? "✗ " : "") + esc(w.word) + " <b>" + w.score + "</b>" +
     (w.tags.length ? '<span class="wtags">' + w.tags.join(" ") + "</span>" : "") + "</span>");
   if (bd.bingo) chips.push('<span class="wchip bingo">Bingo <b>+50</b></span>');
-  const total = chk && chk.ok ? chk.score : bd.total;
+  const total = chk && chk.ok ? chk.score : bd.total;  // (a phony scores what the board says, until challenged)
   const bad = valid.some((v) => v === false);
   return '<span class="wchips">' + chips.join("") + (bd.words.length > 1 || bd.bingo ? '<span class="wsum">= ' + total + "</span>" : "") + "</span>" +
     (bad ? ' <span class="bad">not in ' + esc(LEX_NAME[G.lexicon] || G.lexicon) + "</span>" : "");
@@ -808,6 +840,13 @@ function badSquares() {
   const valid = wordValidity(bd, checked), out = new Set();
   bd.words.forEach((w, i) => { if (valid[i] === false) w.sqs.forEach((q) => out.add(q)); });
   return out.size ? out : null;
+}
+// A move as the history lists it.
+function historyLabel(h, k) {
+  if (h.type === "phony") return h.move + " (challenged off)";
+  if (h.type === "pass") return G && G.record[k] && G.record[k].chal ? "Lost challenge" : "Pass";
+  if (h.type === "exchange") return "Exchange " + h.move.replace(/^exch\s*/i, "");
+  return h.move + (h.bonus ? " (challenged: +" + h.bonus + ")" : "");
 }
 // The opponent's last move, in words, under the board until you start your own.
 function lastMoveNote() {
@@ -1031,10 +1070,86 @@ async function submit() {
     text = "exch " + [...xsel].map((i) => rack[i].ch).join("");
   } else {
     const mv = buildMove();
-    if (!mv || mv.error || !checked || !checked.ok || checked.text !== mv.text) return;
+    if (!mv || mv.error || !checked || checked.text !== mv.text) return;
+    if (!checked.ok) return tournament() && isPhonyError(checked) ? playPhony(mv.text) : undefined;
     text = mv.text;
   }
   await playMove(text);
+}
+// Tournament rules: a play with a word not in the list.  Tilefish knows every word, so it
+// always challenges: the play comes off, scores nothing, and the turn passes.
+async function playPhony(text) {
+  const my = epoch, mover = S.turn;
+  const bad = (checked.words || []).filter((w) => !w.ok).map((w) => w.word);
+  busy = true;
+  renderControls();
+  let r;
+  try { r = await ui("phony " + text); } catch (e) { busy = false; if (my === epoch) engineFailed(e.message); return; }
+  busy = false;
+  if (my !== epoch) return;
+  if (!r.ok) { toast(capital(r.error)); render(); return; }
+  hidePanels();
+  $("rating").hidden = true;
+  await committed(r.state, mover);
+  toast("Tilefish challenged: " + bad.join(", ") + (bad.length > 1 ? " are" : " is") + " not in " + (LEX_NAME[G.lexicon] || G.lexicon) +
+    ". Your play comes off and scores nothing.");
+  nextTurn();
+}
+// Tournament rules: the player challenges Tilefish's last play.  Tilefish plays only words
+// in the list, so the play stands and the challenge costs what the rules say.
+const canChallenge = () => {
+  if (!tournament() || !S || !humanTurn() || G.challenged === S.history.length) return false;
+  const h = S.history[S.history.length - 1];
+  return !!h && h.type === "play" && h.who !== "you";
+};
+async function challenge(only) {
+  if (!canChallenge() || busy) return;
+  const my = epoch, n = S.history.length, rule = chalRule(G);
+  const r = await ui("lastwords");
+  if (my !== epoch || !r.ok) { if (!r.ok) toast(capital(r.error)); return; }
+  let words = r.words;
+  if (only) words = words.filter((w) => w.word === only);
+  // Points a word: with several words, the player picks the ones to challenge.
+  if (!only && words.length > 1 && rule !== "double" && rule !== "free") {
+    setStatus("Challenge which word? " + words.map((w) => '<button class="wchip pick" data-w="' + esc(w.word) + '">' + esc(w.word) + "</button>").join("") +
+      ' <button class="link" data-w="*">All ' + words.length + '</button> <button class="link" data-w="">Cancel</button>');
+    $("status").querySelectorAll("[data-w]").forEach((b) => {
+      b.onclick = () => { const w = b.dataset.w; if (!w) return render(); challenge(w === "*" ? "*all" : w); };
+    });
+    return;
+  }
+  if (only === "*all") words = r.words;
+  if (!words.length) return render();
+  G.challenged = n;
+  const list = words.map((w) => w.word).join(", "), verb = words.length > 1 ? " are" : " is";
+  if (words.some((w) => !w.ok)) {  // not expected: Tilefish plays only words in the list
+    toast(words.filter((w) => !w.ok).map((w) => w.word).join(", ") + " is not in the list.");
+    save();
+    return render();
+  }
+  if (rule === "double") {
+    const k = G.record.length;
+    toast(list + verb + " good. You lose your turn (double challenge).");
+    await playMove("pass");
+    if (G.record[k]) { G.record[k].chal = 1; save(); render(); }
+    return;
+  }
+  if (rule === "free") {
+    toast(list + verb + " good. No penalty (free challenge).", true);
+    save();
+    return render();
+  }
+  const pts = +rule * words.length;
+  const b = await ui("bonus " + pts);
+  if (my !== epoch) return;
+  if (!b.ok) { toast(capital(b.error)); return render(); }
+  const rec = await ui("record");
+  if (my !== epoch) return;
+  G.record[G.record.length - 1].move = rec.moves[rec.moves.length - 1];
+  S = Object.assign({}, S, { you: b.state.you, bot: b.state.bot, history: b.state.history });
+  toast(list + verb + " good: " + pts + " points to Tilefish (" + rule + " a word).");
+  save();
+  render();
 }
 async function playMove(text) {
   const my = epoch, mover = S.turn;
@@ -1147,6 +1262,10 @@ function finishGame(reason, loser) {
     // NASPA 2016, V.G: 100 points off; the opponent wins by at least one; unplayed tiles disregarded.
     final[loser] = base[loser] - 100;
     final[1 - loser] = Math.max(base[1 - loser], final[loser] + 1);
+  } else if (reason === "time" && G.overtime === "wespa") {
+    // WESPA: ten minutes over (100 points off) forfeits; the margin is the margin then, or 100 if more.
+    final[loser] = base[loser] - 100;
+    final[1 - loser] = Math.max(base[1 - loser], final[loser] + 100);
   }
   let winner = final[0] > final[1] ? 0 : final[1] > final[0] ? 1 : -1;
   if (reason === "time" || reason === "resign") winner = 1 - loser;
@@ -1168,7 +1287,8 @@ function showEnd() {
   $("end-score").textContent = R.final[c0] + " – " + R.final[c1];
   const parts = [];
   if (R.reason === "resign") parts.push(sideName(1 - w) + " resigned.");
-  else if (R.reason === "time") parts.push(sideName(1 - w) + (G.overtime === "naspa" ? " went more than 10 minutes over time: 100 points off, and the game is lost (NASPA 2016)." : " ran out of time."));
+  else if (R.reason === "time") parts.push(sideName(1 - w) + (G.overtime === "naspa" ? " went more than 10 minutes over time: 100 points off, and the game is lost (NASPA 2016)."
+    : G.overtime === "wespa" ? " went 10 minutes over time and forfeits the game (WESPA): 100 points off, and a margin of at least 100." : " ran out of time."));
   else if (S.endYou > 0 || S.endBot > 0) parts.push((S.endYou > 0 ? sideName(S.seat) : sideName(1 - S.seat)) + " went out first and gained the other rack's value.");
   else parts.push("The game ended after six scoreless turns.");
   for (const s of [0, 1]) if (R.penalties[s] && R.reason !== "time") parts.push(sideName(s) + " lost " + R.penalties[s] + " points for overtime.");
@@ -1371,6 +1491,7 @@ async function takeback() {
   toast("Taken back. The tiles you drew are back in the bag.", true);
 }
 $("btn-takeback").onclick = takeback;
+$("btn-challenge").onclick = () => challenge();
 $("btn-pause").onclick = () => {
   if (!G || !G.clockMin || (!assistAllowed() && !G.paused)) return;  // Play: only a restored clock can be resumed
   if (!G.paused) { if (G.running >= 0 && G.since) G.used[G.running] += Date.now() - G.since; G.paused = true; G.since = 0; G.pauseNote = ""; G.assisted = true; }
@@ -1581,7 +1702,7 @@ function reviewStatus() {
   if (reviewAt === 0) return "The empty board.";
   const h = S.history[reviewAt - 1];
   const v = verdictAt(reviewAt - 1), cls = classify(v);
-  const text = h.type === "pass" ? "Pass" : h.type === "exchange" ? "Exchange " + h.move.replace(/^exch\s*/i, "") : pretty(h.move);
+  const text = h.type === "play" ? pretty(h.move) : historyLabel(h, reviewAt - 1);
   let s = (cls ? badge(cls, "sm") + " " : "") + "<b>" + esc(sideName(moverOf(reviewAt - 1))) + "</b>: " + esc(text) + (h.type === "play" ? ", +" + h.score : "");
   if (preview) s += ' <span class="dim">· showing ' + esc(moveLabel(preview.move)) + " instead</span>";
   return s;
@@ -1720,7 +1841,7 @@ function graphSvg(pts) {
     const p = seriesAt(pts, k + 1);
     if (p == null) continue;
     svg += '<circle class="wg-dot" style="fill:var(--c-' + cls + ')" cx="' + x(k + 1).toFixed(1) + '" cy="' + y(p).toFixed(1) + '" r="3.6"><title>' +
-      esc(k + 1 + ". " + sideName(moverOf(k)) + ": " + moveLabel(S.history[k].move) + " (" + CLASS_INFO[cls].name + ")") + "</title></circle>";
+      esc(k + 1 + ". " + sideName(moverOf(k)) + ": " + historyLabel(S.history[k], k) + " (" + CLASS_INFO[cls].name + ")") + "</title></circle>";
   }
   return svg + "</svg>";
 }
@@ -2494,7 +2615,7 @@ function renderExports() {
 // the game in the review, replayed and judged by their own browser; nothing is stored
 // anywhere else.  What a link carries goes to the engine only as checked moves (the
 // engine takes ';' between commands) or as a file to import.
-const MOVE_RE = /^(pass|exch [A-Z?]{1,7}|(\d{1,2}[A-O]|[A-O]\d{1,2}) [A-Za-z()]{1,30})$/;
+const MOVE_RE = /^(pass|exch [A-Z?]{1,7}|(phony )?(\d{1,2}[A-O]|[A-O]\d{1,2}) [A-Za-z()]{1,30}( bonus \d{1,4})?)$/;
 const LINK_MAX = 256 * 1024;  // bytes, unpacked
 const shareable = (g) => !!g && (g.over || g.mode === "review") && !g.cgp && (!!g.gcg || g.record.length > 0);
 function b64url(u8) {
@@ -3015,6 +3136,9 @@ function syncStart() {
   $("lex-note").textContent = lexNote(settings.lexicon);
   document.querySelectorAll('.seg[data-name="lexicon"] button').forEach((b) => b.classList.toggle("off", offline() && !onDevice.has(b.dataset.v)));
   $("ot-note").textContent = NOTES[settings.overtime];
+  $("rules-note").textContent = RULES_NOTE[settings.rules] || "";
+  $("wpen-row").hidden = settings.rules !== "wespa";
+  $("wpen-note").textContent = WPEN_NOTE[settings.wpen] || "";
   $("custom-row").hidden = settings.clock !== "custom";
   $("custom-min").value = settings.customMin;
   $("think").value = settings.think;
@@ -3022,7 +3146,7 @@ function syncStart() {
   $("sfx").checked = settings.sfx === "1";
   $("rate").checked = settings.rate !== "0";
   $("btn-start").textContent = settings.mode === "analysis" ? "Open position" : "Start game";
-  const fake = { mode: settings.mode, level: settings.level, lexicon: settings.lexicon, clockMin: clockMinutes(), overtime: settings.overtime };
+  const fake = { mode: settings.mode, level: settings.level, lexicon: settings.lexicon, clockMin: clockMinutes(), overtime: settings.overtime, rules: settings.rules, wpen: settings.wpen };
   let s = describe(fake);
   if (settings.mode === "play" || settings.mode === "practice") s += " · " + (settings.first === "first" ? "you move first" : settings.first === "second" ? "Tilefish moves first" : "first move alternates");
   if (settings.think && settings.mode !== "duo") s += " · Tilefish thinks up to " + settings.think + " s";
@@ -3036,6 +3160,13 @@ document.querySelectorAll(".seg").forEach((seg) => {
     store.set(seg.dataset.name, b.dataset.v);
     if (seg.dataset.name === "theme") applyTheme();
     if (seg.dataset.name === "lexicon") prefetch(b.dataset.v);
+    // Tournament rules come with a tournament's clock: 25 minutes each, and that body's overtime rule.
+    if (seg.dataset.name === "rules" && b.dataset.v !== "checked") {
+      settings.clock = "25";
+      settings.overtime = b.dataset.v;
+      store.set("clock", "25");
+      store.set("overtime", b.dataset.v);
+    }
     syncStart();
   });
 });

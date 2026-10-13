@@ -77,12 +77,19 @@ the same for everyone on the day, more puzzles of the first kind and **endgame p
 bag empty, the opponent's tiles known, only the best play solves it, as the exact endgame
 solver finds); and your **stats** over
 time. Click a square and type, drag tiles, or tap a tile and then a square; Enter plays. As
-you place tiles, every word the move makes is listed with its points and bonus squares, and a
-word not in the list turns red on the board. Practice rates each move once Tilefish has
+you place tiles, every word the move makes is listed with its points and bonus squares, and
+(under Casual rules) a word not in the list turns red on the board. Practice rates each move once Tilefish has
 answered and gives hints in steps (a nudge, then where, then the moves), and can estimate what
 Tilefish kept from its last play (which tiles that play makes likelier than a plain draw). Clocks are
 total time per player: 5, 10, 15 or 25 minutes or your own figure, with the NASPA overtime
-penalty (rules of 1 December 2016) or loss on time. While Tilefish thinks you can already set
+penalty (rules of 1 December 2016), WESPA's (which the ABSP uses) or loss on time. For
+**tournament practice**, Play and Practice offer **NASPA** or **WESPA / ABSP rules**: words are
+not marked as you place them, you may play a phony (Tilefish, which knows every word,
+challenges it off and the turn scores nothing), and you may challenge Tilefish's plays at the
+association's price: your turn (NASPA with NWL, double challenge), 5 points a word (NASPA with
+Collins, and WESPA's preferred penalty), 10 points a word, or nothing (a free challenge, as in
+many ABSP divisions). They start with 25-minute clocks and that body's overtime rule. Under
+*Casual* rules words are checked as you place them, as before. While Tilefish thinks you can already set
 out your next word. After a game, the **game review** works like a chess site's: Tilefish
 judges every move with only what its player could see and classes it (brilliant, great, best,
 excellent, good, inaccuracy, mistake, blunder) by the winning chance it gave up, draws the
