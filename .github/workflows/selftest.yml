@@ -36,11 +36,11 @@ jobs:
       - name: Self-test (CEL, the Common English Lexicon, with its own leave values and win model)
         shell: bash
         run: |
-          ./tilefish --threads 2 --lexicon CEL.txt "selftest quick" | tee cel.txt
-          grep -q "lexicon CEL: 68135 words" cel.txt
-          grep -q "leave values: .*CEL.klv2" cel.txt
-          grep -q "win model from CEL.win" cel.txt
-          grep -q "All self-tests passed" cel.txt
+          ./tilefish --threads 2 --lexicon CEL.txt "selftest quick" | tee celtest.txt
+          grep -q "lexicon CEL: 68135 words" celtest.txt
+          grep -q "leave values: .*CEL.klv2" celtest.txt
+          grep -q "win model from CEL.win" celtest.txt
+          grep -q "All self-tests passed" celtest.txt
       - name: Word-list export matches the source list
         if: runner.os == 'Linux'
         run: |
