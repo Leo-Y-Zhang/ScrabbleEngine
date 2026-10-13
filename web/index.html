@@ -142,9 +142,9 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
 
   <footer class="foot">
     Tilefish is free software (GPL-3.0), <a href="https://github.com/Leo-Y-Zhang/ScrabbleEngine">source on GitHub</a>.
-    Collins Scrabble Words &copy; HarperCollins and NWL &copy; NASPA are not hosted here: your browser downloads them from the
-    <a href="https://github.com/jvc56/MAGPIE-DATA">MAGPIE project's public data</a>
-    (<a href="https://github.com/Leo-Y-Zhang/ScrabbleEngine/blob/main/LEXICONS.md">what that means</a>). ENABLE is public domain.
+    Collins Scrabble Words &copy; HarperCollins and the NASPA Word List &copy; NASPA are neither hosted nor fetched by Tilefish: a player
+    who has a copy loads it from their own device, and it stays there
+    (<a href="https://github.com/Leo-Y-Zhang/ScrabbleEngine/blob/main/LEXICONS.md">word lists and their terms</a>). ENABLE is public domain.
     The Oxford-spelling list is built from the English Speller Database, &copy; Kevin Atkinson, free to use and share; it
     follows the Oxford English Dictionary's spelling but is not that dictionary's word list. The Common English Lexicon (CEL)
     is &copy; Fj00 under the MIT licence.
@@ -193,6 +193,11 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
         <button data-v="OXENDICT">Oxford</button>
       </div>
       <div class="hint-text" id="lex-note"></div>
+      <div class="own-row" id="own-row" hidden>
+        <button class="ctl" id="btn-own" type="button">Load my copy</button>
+        <input type="file" id="own-file" accept=".txt,.kwg,text/plain" hidden>
+        <span class="hint-text" id="own-status" aria-live="polite"></span>
+      </div>
     </div>
     <div class="field" data-for="play practice">
       <div class="label" id="lbl-rules">Rules</div>

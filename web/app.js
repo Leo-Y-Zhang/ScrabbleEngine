@@ -12,9 +12,10 @@ const LEVEL_TIME = { beginner: 0, easy: 0, casual: 0, strong: 3, champion: 10 };
 const WEAK = new Set(["beginner", "easy"]);  // levels that choose among the static best moves in the page
 const LEX_NAME = { CSW24: "Collins 2024", NWL23: "NWL 2023", CEL: "Common English", ENABLE: "ENABLE", OXENDICT: "Oxford spelling" };
 const BUNDLED = new Set(["CEL", "ENABLE", "OXENDICT"]);  // free lists that come with the page
+const OWN = new Set(["CSW24", "NWL23"]);  // lists a player loads from their own copy (Tilefish neither hosts nor fetches them)
 const NOTES = {
-  CSW24: "Collins Scrabble Words, the World Championship list. About 10 MB, downloaded once and kept by this browser.",
-  NWL23: "The North American tournament list. About 8 MB, downloaded once and kept by this browser.",
+  CSW24: "Collins Scrabble Words 2024, the list of WESPA, the ABSP and the World Championship. It is HarperCollins' copyright, so Tilefish does not provide it: if you have a copy you are entitled to use (a word list, one word per line, or a .kwg file), load it here. It stays on this device.",
+  NWL23: "The NASPA Word List 2023, North America's tournament list. It is NASPA's copyright, so Tilefish does not provide it: if you have a copy you are entitled to use (a word list, one word per line, or a .kwg file), load it here. It stays on this device.",
   CEL: "The Common English Lexicon: about 68,000 everyday words, without the obscure ones tournament lists allow. A free list (MIT licence) that comes with Tilefish, good for friendly games and new players.",
   ENABLE: "A free public-domain list that comes with Tilefish.",
   OXENDICT: "British English in Oxford spelling (realize, colour), a free list that comes with Tilefish. Built from the English Speller Database: not the Oxford English Dictionary's own list.",
@@ -83,7 +84,7 @@ const pct = (x) => Math.round(100 * x) + "%";
 
 // ---------- settings ----------
 const settings = {
-  mode: store.get("mode", "play"), level: store.get("level", "strong"), lexicon: store.get("lexicon", "CSW24"),
+  mode: store.get("mode", "play"), level: store.get("level", "strong"), lexicon: store.get("lexicon", "ENABLE"),
   clock: store.get("clock", "0"), customMin: store.get("customMin", "20"), first: store.get("first", "first"),
   overtime: store.get("overtime", "naspa"), think: store.get("think", ""), theme: store.get("theme", "system"),
   rules: store.get("rules", "checked"), wpen: store.get("wpen", "5"),
@@ -3122,9 +3123,29 @@ function openStart() {
   refreshOnDevice();
 }
 function lexNote(lex) {
-  if (onDevice.has(lex)) return NOTES[lex].replace(/ About \d+ MB, downloaded once and kept by this browser\./, "") + " Kept on this device, so it loads without a connection.";
+  if (OWN.has(lex)) return onDevice.has(lex) ? (LEX_NAME[lex] || lex) + ": your own copy is on this device. Tilefish's own leave values and win model come with the page." : NOTES[lex];
+  if (onDevice.has(lex)) return NOTES[lex] + " Kept on this device, so it loads without a connection.";
   return NOTES[lex] + (offline() ? " You are offline, and it is not on this device yet." : "");
 }
+// The player's own copy of Collins or NWL, read here and kept by the worker on this device.
+async function loadOwnCopy(file) {
+  const lex = settings.lexicon;
+  if (!OWN.has(lex) || !file) return;
+  if (!worker) startWorker();
+  $("own-status").textContent = "Reading " + file.name + "...";
+  try {
+    if (file.size > 64e6) throw new Error("that file is too large to be a word list");
+    const words = await call({ own: { lex, name: file.name, bytes: await file.arrayBuffer() } });
+    loadedLex = null;  // the check replaced the engine's list
+    await refreshOnDevice();
+    $("own-status").textContent = "Your copy of " + LEX_NAME[lex] + " is ready: " + (+words).toLocaleString() + " words.";
+  } catch (err) {
+    $("own-status").textContent = capital(err.message) + ".";
+  }
+  syncStart();
+}
+$("own-file").onchange = (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; loadOwnCopy(f); };
+$("btn-own").onclick = () => $("own-file").click();
 function syncStart() {
   document.querySelectorAll(".seg").forEach((seg) => {
     const name = seg.dataset.name;
@@ -3134,6 +3155,8 @@ function syncStart() {
   $("mode-note").textContent = NOTES[settings.mode];
   $("level-note").textContent = NOTES[settings.level];
   $("lex-note").textContent = lexNote(settings.lexicon);
+  $("own-row").hidden = !OWN.has(settings.lexicon);
+  $("btn-own").textContent = (onDevice.has(settings.lexicon) ? "Replace my copy of " : "Load my copy of ") + (LEX_NAME[settings.lexicon] || "");
   document.querySelectorAll('.seg[data-name="lexicon"] button').forEach((b) => b.classList.toggle("off", offline() && !onDevice.has(b.dataset.v)));
   $("ot-note").textContent = NOTES[settings.overtime];
   $("rules-note").textContent = RULES_NOTE[settings.rules] || "";
@@ -3219,8 +3242,8 @@ async function withLoading(lex, fn) {
   } catch (err) {
     setBar(0);
     const kept = [...onDevice].map((l) => LEX_NAME[l] || l);
-    $("loading-text").textContent = capital(err.message) + (!ENGINE_OK ? "." : offline() ? (kept.length ? ". Kept on this device: " + kept.join(", ") + "." : ".")
-      : !BUNDLED.has(lex) ? ". ENABLE works without a download." : ".");
+    $("loading-text").textContent = capital(err.message) + (!ENGINE_OK ? "." : OWN.has(lex) ? ". The free lists (Common English, ENABLE, Oxford spelling) need nothing."
+      : offline() ? (kept.length ? ". Kept on this device: " + kept.join(", ") + "." : ".") : !BUNDLED.has(lex) ? ". ENABLE works without a download." : ".");
   } finally {
     $("loading").classList.remove("busy");
     btn.disabled = false;

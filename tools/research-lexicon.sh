@@ -1,23 +1,23 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Downloads a tournament word list for Tilefish, with its leave values:
-#   CSW24  Collins Scrabble Words 2024: the World Scrabble Championship and most
-#          countries outside North America (the default)
-#   NWL23  NASPA Word List 2023: North America
-# Usage:  sh get-lexicon.sh [CSW24|NWL23]
+# For the project's own strength tests only (.github/workflows/experiment.yml and
+# reanalyse.yml), on GitHub's machines: fetches a tournament word list and the MAGPIE
+# project's leave values for it, which every registered match gives both engines.
+#   CSW24  Collins Scrabble Words 2024        NWL23  NASPA Word List 2023
+# Usage:  sh tools/research-lexicon.sh [CSW24|NWL23]   (writes into the current folder)
 # The files come from the MAGPIE project's public data (github.com/jvc56/MAGPIE-DATA),
-# pinned to one commit and checked against their SHA-256 sums.  The word lists are
-# copyrighted by their publishers, which is why they are not part of Tilefish itself.
+# pinned to one commit and checked against their SHA-256 sums.  The lists are their
+# publishers' copyright: they are used for the length of a job and never published, and
+# Tilefish's site and downloads neither contain nor fetch them (docs/DISTRIBUTING.md).
 set -e
 LEX=${1:-CSW24}
 case "$LEX" in
   CSW24 | NWL23) ;;
   *)
-    echo "usage: sh get-lexicon.sh [CSW24|NWL23]"
+    echo "usage: sh tools/research-lexicon.sh [CSW24|NWL23]"
     exit 1
     ;;
 esac
-cd "$(dirname "$0")"
 URL=https://github.com/jvc56/MAGPIE-DATA/raw/adf29316fcb2d7bd78a832e198c1bdfc112efa89/data/lexica
 
 expected() {
@@ -60,8 +60,4 @@ for f in "$LEX.kwg" "$LEX.klv2"; do
   fi
   mv "$f.part" "$f"
 done
-if [ "$LEX" = CSW24 ]; then
-  echo "Done. Start ./tilefish: it now plays CSW24."
-else
-  echo "Done. Start ./tilefish --lexicon NWL23.kwg to play NWL23 (CSW24 wins when both are here)."
-fi
+echo "Done: $LEX.kwg and $LEX.klv2 (MAGPIE's leave values) are here."

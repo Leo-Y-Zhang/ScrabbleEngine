@@ -5,22 +5,20 @@ To play without installing anything, open
      https://leo-y-zhang.github.io/ScrabbleEngine/
 in any browser. This download is the full engine: every core, game review, analysis.
 
-1. Get the championship word list (once, about 10 MB):
-     Windows:        double-click get-lexicon.bat
-     macOS / Linux:  open a terminal in this folder and type   sh get-lexicon.sh
-   This downloads CSW24 (Collins Scrabble Words 2024, the word list of the World
-   Scrabble Championship) and its leave values. For the North American list, type
-   get-lexicon.bat NWL23   or   sh get-lexicon.sh NWL23.
-
-2. Start Tilefish:
+1. Start Tilefish:
      Windows:        double-click tilefish.exe
      macOS / Linux:  ./tilefish   (or double-click it)
-   It uses CSW24 when it finds it here, and ENABLE (a free word list) otherwise.
-   The first lines it prints say which word list it loaded. For British English in
-   Oxford spelling (a free list that comes with it), type   lexicon OXENDICT.txt
-   at the prompt, or start   tilefish --lexicon OXENDICT.txt
-   For everyday words only, the Common English Lexicon also comes with it:
-   lexicon CEL.txt
+   It plays ENABLE, a free word list that comes with it. Two more free lists come
+   with it too: type   lexicon CEL.txt   for everyday words only (the Common English
+   Lexicon), or   lexicon OXENDICT.txt   for British English in Oxford spelling.
+
+2. Tournament lists. Collins Scrabble Words 2024 (CSW24) and the NASPA Word List 2023
+   (NWL2023) belong to HarperCollins and NASPA, so they are not included and Tilefish
+   does not download them. If you have a copy you are entitled to use (a text file,
+   one word per line, or a .kwg file), save it in this folder as CSW24.txt or
+   NWL2023.txt (or .kwg) and Tilefish uses it when it starts; or start
+   tilefish --lexicon /path/to/your/list. Tilefish's own leave values and win models
+   for both lists (CSW24.klv2, NWL23.klv2, CSW24.win, NWL23.win) come with it.
 
 3. Type one of these at the  tilefish>  prompt:
      play                 play a game against it at full strength (about 12 s a move)
@@ -32,7 +30,8 @@ If macOS says the program cannot be opened, type   xattr -d com.apple.quarantine
 If Windows SmartScreen warns, choose "More info" and then "Run anyway".
 
 README.md is the full manual. Tilefish is free software under the GNU GPL, version 3
-or later (LICENSE). The word lists downloaded in step 1 belong to their publishers.
+or later (LICENSE). Collins Scrabble Words and the NASPA Word List belong to their
+publishers.
 OXENDICT.txt is made from the English Speller Database, (c) Kevin Atkinson, and may be
 shared freely under the notice at its top (see LEXICONS.md); it follows the Oxford
 English Dictionary's spelling but is not that dictionary's word list. CEL.txt, the

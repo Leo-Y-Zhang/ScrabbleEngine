@@ -6659,6 +6659,9 @@ struct App {
     return false;
   }
 
+  // Folders that hold Tilefish's own data files (the current one, then the program's).
+  std::vector<std::string> data_dirs{""};
+
   bool load_lexicon(const std::string& path, bool auto_data) {
     std::string err;
     const double t0 = now_s();
@@ -6678,16 +6681,31 @@ struct App {
       const size_t dot = stem.find_last_of('.');
       const size_t slash = stem.find_last_of("/\\");
       if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) stem = stem.substr(0, dot);
-      // Leave values: our own trained text file first, then KLV2/KLV (wolges, MAGPIE).
-      for (const char* ext : {".leaves", ".klv2", ".klv"}) {
-        std::ifstream f(stem + ext);
-        if (f) {
-          load_leaves(stem + ext);
-          break;
+      // Leave values: our own trained text file first, then KLV2/KLV (wolges, MAGPIE).  Next
+      // to the list first; otherwise Tilefish's own data for that list (CSW24.klv2 for a
+      // player's own copy of CSW24, saved as CSW24.txt or CSW2024.txt, say) in the current
+      // folder or the program's.
+      std::vector<std::string> stems{stem};
+      std::string canon = to_upper(lex.name);
+      if (starts_with(canon, "CSW24") || starts_with(canon, "CSW2024")) canon = "CSW24";
+      else if (starts_with(canon, "NWL23") || starts_with(canon, "NWL2023")) canon = "NWL23";
+      else canon = lex.name;
+      for (const std::string& dir : data_dirs) stems.push_back(dir + canon);
+      bool leaves_found = false, win_found = false;
+      for (const std::string& st : stems) {
+        for (const char* ext : {".leaves", ".klv2", ".klv"}) {
+          std::ifstream f(st + ext);
+          if (!leaves_found && f) {
+            load_leaves(st + ext);
+            leaves_found = true;
+          }
+        }
+        std::ifstream f2(st + ".win");
+        if (!win_found && f2) {
+          load_win(st + ".win");
+          win_found = true;
         }
       }
-      std::ifstream f2(stem + ".win");
-      if (f2) load_win(stem + ".win");
     }
     game.reset(rng);
     return true;
@@ -9126,7 +9144,7 @@ int main(int argc, char** argv) {
     const size_t slash = self.find_last_of("/\\");
     if (slash != std::string::npos) dirs.push_back(self.substr(0, slash + 1));
     for (const std::string& dir : dirs) {
-      for (const char* cand : {"CSW24.kwg", "NWL23.kwg", "CSW24.txt", "NWL2023.txt", "CSW21.kwg", "NWL20.kwg", "CSW21.txt",
+      for (const char* cand : {"CSW24.kwg", "NWL23.kwg", "CSW24.txt", "NWL2023.txt", "NWL23.txt", "CSW21.kwg", "NWL20.kwg", "CSW21.txt",
                                "NWL2020.txt", "lexicon.kwg", "lexicon.txt", "ENABLE.txt", "enable1.txt"}) {
         std::ifstream f(dir + cand);
         if (f) {
@@ -9136,6 +9154,11 @@ int main(int argc, char** argv) {
       }
       if (!lexpath.empty()) break;
     }
+  }
+  {
+    const std::string self = argc > 0 ? argv[0] : "";
+    const size_t slash = self.find_last_of("/\\");
+    if (slash != std::string::npos) app.data_dirs.push_back(self.substr(0, slash + 1));
   }
   if (!lexpath.empty()) app.load_lexicon(lexpath, leavespath.empty() && winpath.empty());
   if (!leavespath.empty()) app.load_leaves(leavespath);

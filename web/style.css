@@ -1,9 +1,10 @@
 :root {
-  /* One palette: warm paper, the felt of the board, terracotta and deep blue from its bonus
-     squares, maple tiles.  "You" is the felt's green, Tilefish the copper of a tile's edge. */
+  /* One palette: warm paper, the felt of the board, maple tiles.  Bonus squares are Tilefish's
+     own: warm terracotta and clay for the word squares, the felt's greens for the letter
+     squares.  "You" is the felt's green, Tilefish the copper of a tile's edge. */
   --paper: #f4efe6; --paper-2: #ece5d7; --card: #f8f4ec; --ink: #1f1a14; --ink-2: #544b40; --ink-3: #7f7668;
   --line: #dbd1bf; --felt: #2b4a41; --felt-2: #355a4f; --sq: #e8dfca; --sq-line: #d1c4a8;
-  --tw: #bb4a30; --dw: #e6a593; --tl: #2b5f88; --dl: #9dc3d8;
+  --tw: #bb4a30; --dw: #dc9f80; --tl: #2f6a58; --dl: #a9c8b2;
   --tile: #efd59c; --tile-hi: #f9ebc8; --tile-edge: #c4a063; --tile-ink: #2a2116; --blank-ink: #9a4f16;
   --accent: #2b4a41; --accent-ink: #f6f1e7; --warn: #b0452b; --you: #2f6a58; --bot: #9a5c2c;
   --label-dark: rgba(34,29,23,.6); --focus: #1f6feb;
@@ -19,14 +20,14 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --paper: #161411; --paper-2: #1f1c17; --card: #1b1915; --ink: #eee7da; --ink-2: #bfb6a7; --ink-3: #8f8677;
-    --line: #36312a; --felt: #1f3a33; --felt-2: #284a41; --sq: #2a2620; --sq-line: #3a352d; --tw: #b34a33; --dw: #7d4a40; --tl: #2c5878; --dl: #34556a;
+    --line: #36312a; --felt: #1f3a33; --felt-2: #284a41; --sq: #2a2620; --sq-line: #3a352d; --tw: #b34a33; --dw: #7d4a40; --tl: #2f6352; --dl: #3e5c4b;
     --accent: #7aa898; --accent-ink: #12100d; --you: #8fbcad; --bot: #d9a874; --label-dark: rgba(255,255,255,.78);
     --focus: #7fb0ff; --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 10px 24px -16px rgba(0,0,0,.7); color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --paper: #161411; --paper-2: #1f1c17; --card: #1b1915; --ink: #eee7da; --ink-2: #bfb6a7; --ink-3: #8f8677;
-  --line: #36312a; --felt: #1f3a33; --felt-2: #284a41; --sq: #2a2620; --sq-line: #3a352d; --tw: #b34a33; --dw: #7d4a40; --tl: #2c5878; --dl: #34556a;
+  --line: #36312a; --felt: #1f3a33; --felt-2: #284a41; --sq: #2a2620; --sq-line: #3a352d; --tw: #b34a33; --dw: #7d4a40; --tl: #2f6352; --dl: #3e5c4b;
   --accent: #7aa898; --accent-ink: #12100d; --you: #8fbcad; --bot: #d9a874; --label-dark: rgba(255,255,255,.78);
   --focus: #7fb0ff; --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 10px 24px -16px rgba(0,0,0,.7); color-scheme: dark;
 }
@@ -559,3 +560,5 @@ textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 .label.sub { margin-top: 10px; }
 button.wchip.pick { cursor: pointer; font: inherit; color: inherit; margin: 0 4px 4px 0; }
 button.wchip.pick:hover { border-color: var(--ink-3); }
+.own-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.own-row .hint-text { margin-top: 0; }

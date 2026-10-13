@@ -1,5 +1,9 @@
 # Windows: the word-list download, and code signing
 
+*The word-list scripts described first (`get-lexicon.bat`, `get-lexicon.ps1`) were removed on
+13 October 2026, when Tilefish stopped fetching Collins and NWL; the section is kept as the
+record of that fix. Code signing, below, still applies.*
+
 ## Why v2.2's `get-lexicon.bat` failed, and what v2.2.1 got wrong about it
 
 **What happened.** On the owner's laptop, v2.2's `get-lexicon.bat` stopped at the checksum:
@@ -98,7 +102,7 @@ done from here):
 1. Apply at signpath.org for SignPath Foundation's open-source programme, for
    `github.com/Leo-Y-Zhang/ScrabbleEngine`, and wait for approval. Both the GitHub
    account and the SignPath account need two-factor authentication.
-2. In SignPath, once approved: create the project with slug `ScrabbleEngine`, connect
+2. In SignPath, once approved: create the project with slug `Tilefish`, connect
    GitHub as its trusted build system (SignPath's GitHub app on this repository), add
    the artifact configuration below, and create the signing policy `release-signing`
    with the owner as approver.

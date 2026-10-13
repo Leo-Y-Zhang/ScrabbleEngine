@@ -69,7 +69,7 @@ jobs:
           if [ "$LEX" = ENABLE ]; then
             echo "LEXFILE=ENABLE.txt" >> "$GITHUB_ENV"; echo "WORDS=ENABLE.txt" >> "$GITHUB_ENV"
           else
-            sh get-lexicon.sh "$LEX"  # the .kwg and .klv2, checked against pinned SHA-256 sums
+            sh tools/research-lexicon.sh "$LEX"  # the .kwg and MAGPIE's .klv2, checked against pinned SHA-256 sums
             g++ -O2 -std=c++17 -pthread tilefish.cpp -o tf_tools
             ./tf_tools --lexicon "$LEX.kwg" "savewords $LEX.txt"  # the referee checks moves against it
             echo "LEXFILE=$LEX.kwg" >> "$GITHUB_ENV"; echo "WORDS=$LEX.txt" >> "$GITHUB_ENV"

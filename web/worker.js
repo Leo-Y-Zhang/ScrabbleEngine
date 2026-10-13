@@ -3,7 +3,8 @@
 // {id, run: "commands"}; each is answered with {id, out} or {id, error}, one at a time
 // and in the order they came.  {prefetch: LEXICON} downloads a list's files into the
 // browser's cache in the background, without touching the engine; {id, onDevice: true}
-// answers with the lists already in that cache.
+// answers with the lists already in that cache; {id, own: {lex, name, bytes}} keeps the
+// player's own copy of a tournament list on this device.
 // The page starts this worker as worker.js?v=CODE&d=DATA (web/build.sh), and every file
 // loaded here carries the same versions, so a browser never mixes files of two releases.
 const Q = new URLSearchParams(self.location.search);
@@ -35,18 +36,20 @@ if ((self.name || "").startsWith("em-pthread")) {
   let engine = null;
   let loaded = "";
 
-  // Word lists.  Collins and NWL are copyrighted and not hosted here: like
-  // get-lexicon.sh, the page fetches them from the MAGPIE project's public data,
-  // pinned to one commit.  CEL, ENABLE and OXENDICT are free and come with the page, compiled
-  // to .kwg by web/build.sh (several times faster to load than building from the text)
-  // and gzipped, which this worker unpacks where the browser can (DecompressionStream).
+  // Word lists.  CEL, ENABLE and OXENDICT are free and come with the page, compiled to .kwg
+  // by web/build.sh (several times faster to load than building from the text) and gzipped,
+  // which this worker unpacks where the browser can (DecompressionStream).  Collins and NWL
+  // are their publishers' copyright, so Tilefish neither hosts nor fetches them: a player who
+  // has a copy loads it from their own device ({own}), and it is kept in this browser's
+  // cache under an address of this site that serves nothing (own/...).  Their leave values
+  // and win models are Tilefish's own, learned by self-play, and come with the page.
   // Each file: [name in the engine's file system, URL, rough size on the wire].
-  const MAGPIE = "https://raw.githubusercontent.com/jvc56/MAGPIE-DATA/adf29316fcb2d7bd78a832e198c1bdfc112efa89/data/lexica/";
   const GZ = typeof DecompressionStream === "function";
   const site = (file, raw, gz) => [file, "data/" + file + (GZ ? ".gz" : "") + DATA, GZ ? gz : raw];
+  const ownUrl = (lex, ext) => new URL("own/" + lex + ext, self.location.href).href.split("?")[0];
   const LISTS = {
-    CSW24: { main: "CSW24.kwg", files: [["CSW24.kwg", MAGPIE + "CSW24.kwg", 5.97e6], ["CSW24.klv2", MAGPIE + "CSW24.klv2", 3.67e6], ["CSW24.win", "data/CSW24.win" + DATA, 2e3]] },
-    NWL23: { main: "NWL23.kwg", files: [["NWL23.kwg", MAGPIE + "NWL23.kwg", 4.72e6], ["NWL23.klv2", MAGPIE + "NWL23.klv2", 3.67e6], ["NWL23.win", "data/NWL23.win" + DATA, 2e3]] },
+    CSW24: { own: true, main: "CSW24.kwg", files: [["CSW24.kwg", ownUrl("CSW24", ".kwg"), 6e6], site("CSW24.klv2", 3.67e6, 2.75e6), ["CSW24.win", "data/CSW24.win" + DATA, 2e3]] },
+    NWL23: { own: true, main: "NWL23.kwg", files: [["NWL23.kwg", ownUrl("NWL23", ".kwg"), 5e6], site("NWL23.klv2", 3.67e6, 2.75e6), ["NWL23.win", "data/NWL23.win" + DATA, 2e3]] },
     CEL: { main: "CEL.kwg", files: [site("CEL.kwg", 1.45e6, 1.06e6), site("CEL.klv2", 3.67e6, 2.71e6), ["CEL.win", "data/CEL.win" + DATA, 2e3]] },
     ENABLE: { main: "ENABLE.kwg", files: [site("ENABLE.kwg", 3.19e6, 2.36e6), site("ENABLE.klv2", 3.67e6, 2.76e6), ["ENABLE.win", "data/ENABLE.win" + DATA, 2e3]] },
     OXENDICT: { main: "OXENDICT.kwg", files: [site("OXENDICT.kwg", 3.68e6, 2.73e6), site("OXENDICT.klv2", 3.67e6, 2.75e6), ["OXENDICT.win", "data/OXENDICT.win" + DATA, 2e3]] },
@@ -75,6 +78,7 @@ if ((self.name || "").startsWith("em-pthread")) {
         cache = null;  // no Cache Storage (private window, file://): just download
       }
       const file = url.split("/").pop().split("?")[0];
+      if (url.includes("/own/")) throw new Error("your copy of this word list is not on this device: load it on the start card");
       let res;
       try {
         res = await fetch(url);
@@ -131,6 +135,37 @@ if ((self.name || "").startsWith("em-pthread")) {
   }
 
   const run = (cmd) => engine.ccall("tf_run", "string", ["string"], [cmd]);
+
+  // The player's own copy of a tournament list: a text file (one word per line) or a .kwg.
+  // A text list is compiled to .kwg here once, so it loads fast next time; only the .kwg is
+  // kept.  Nothing leaves this device.
+  async function keepOwn(lex, name, bytes) {
+    if (!LISTS[lex] || !LISTS[lex].own) throw new Error("not a list you load yourself");
+    engine = engine || (await enginePromise);
+    try { engine.FS.mkdir("/own"); } catch (e) { /* exists */ }
+    const kwg = /\.kwg$/i.test(name);
+    const src = "/own/" + lex + (kwg ? ".kwg" : ".txt"), out = "/own/" + lex + ".kwg";
+    engine.FS.writeFile(src, bytes);
+    // Loading it for a check replaces the engine's list: the next load must load again.
+    loaded = "";
+    const said = run("lexicon " + src);
+    const m = said.match(/: (\d+) words/);
+    if (!m || +m[1] < 1000) {
+      rm(src);
+      throw new Error("this file is not a word list Tilefish can read (" + (said.trim().split("\n").pop() || "no words") + ")");
+    }
+    if (!kwg) {
+      const sv = run("savekwg " + out);
+      if (!/saved/.test(sv)) throw new Error(sv.trim() || "the list could not be compiled");
+    }
+    const data = engine.FS.readFile(out);
+    rm(src);
+    rm(out);
+    const cache = await caches.open("tilefish-data-1");
+    await cache.put(ownUrl(lex, ".kwg"), new Response(data));
+    for (const [, url, size] of LISTS[lex].files) if (!url.includes("/own/")) download(url, size).bytes.catch(() => {});
+    return +m[1];
+  }
   const rm = (path) => { try { engine.FS.unlink(path); } catch (e) { /* not there */ } };
 
   // Progress for the page: the share of the bar done, the stage, and for downloads the
@@ -212,6 +247,14 @@ if ((self.name || "").startsWith("em-pthread")) {
   // the first is still under way, and two loads could finish in either order.  A prefetch
   // only fills the cache, so it runs at once, beside the queue.
   let queue = Promise.resolve();
+  // Earlier versions of the page downloaded Collins and NWL from a third party's copy into
+  // this cache; those copies are removed (a player's own copy is kept under own/).
+  (async () => {
+    try {
+      const cache = await caches.open("tilefish-data-1");
+      for (const k of await cache.keys()) if (/^https:\/\/raw\.githubusercontent\.com\//.test(k.url)) await cache.delete(k);
+    } catch (e) { /* no Cache Storage */ }
+  })();
   // {id, onDevice: true}: the word lists whose files are all kept by this browser, so they
   // load without a connection.  Answered at once, beside the queue.
   async function onDevice() {
@@ -219,7 +262,10 @@ if ((self.name || "").startsWith("em-pthread")) {
     try {
       const cache = await caches.open("tilefish-data-1");
       for (const name of Object.keys(LISTS)) {
-        const hits = await Promise.all(LISTS[name].files.map(([, url]) => cache.match(url)));
+        // A list the player loads is on this device once their copy is (Tilefish's own data
+        // for it comes from this site, and is fetched with it).
+        const files = LISTS[name].own ? LISTS[name].files.filter(([, url]) => url.includes("/own/")) : LISTS[name].files;
+        const hits = await Promise.all(files.map(([, url]) => cache.match(url)));
         if (hits.every(Boolean)) out.push(name);
       }
     } catch (e) { /* no Cache Storage: nothing is kept */ }
@@ -233,7 +279,12 @@ if ((self.name || "").startsWith("em-pthread")) {
     }
     if (data.prefetch) {
       const list = LISTS[data.prefetch];
-      if (list) for (const [, url, size] of list.files) download(url, size).bytes.catch(() => {});
+      if (list) for (const [, url, size] of list.files) if (!url.includes("/own/")) download(url, size).bytes.catch(() => {});
+      return;
+    }
+    if (data.own) {
+      queue = queue.then(() => keepOwn(data.own.lex, data.own.name, new Uint8Array(data.own.bytes))
+        .then((words) => postMessage({ id: data.id, out: words }), (err) => postMessage({ id: data.id, error: String(err && err.message ? err.message : err) })));
       return;
     }
     queue = queue.then(() => handle(data));

@@ -21,6 +21,5 @@ and no third-party program, is signed under this policy.
 
 ## Privacy
 
-Tilefish does not send any information to other networked systems unless the user asks
-it to. The only network access is `get-lexicon`, which the user starts to download a
-word list from a fixed public address.
+Tilefish does not send any information to other networked systems, and the program makes
+no network access at all. Word lists it does not include are files the user supplies.
