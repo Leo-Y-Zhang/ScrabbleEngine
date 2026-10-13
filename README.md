@@ -2,7 +2,7 @@
 
 *A championship-style crossword game engine in one C++ file, for SCRABBLE® players. Stockfish, but for tiles.*
 
-### ▶ **[Play it in your browser: leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**, nothing to install
+### ▶ **[Play it in your browser: leo-y-zhang.github.io/TileFish](https://leo-y-zhang.github.io/TileFish/)**, nothing to install
 
 Everything is in **`tilefish.cpp`**: the lexicon compiler, move generator, evaluation,
 Monte-Carlo simulation, endgame and pre-endgame solvers, opponent-rack inference,
@@ -60,7 +60,7 @@ the failures, is in
 
 ## Quick start
 
-**In your browser:** open **[leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**.
+**In your browser:** open **[leo-y-zhang.github.io/TileFish](https://leo-y-zhang.github.io/TileFish/)**.
 Nothing to install. Choose a mode, a word list (Common English, ENABLE, Oxford: British
 English in Oxford spelling, or Collins 2024 or NWL 2023 from your own copy, which stays on
 your device) and a clock:
@@ -110,7 +110,7 @@ device, and browsers that offer it can install it as an app. Which word lists ar
 **On your computer:**
 
 1. **Download** the zip for your computer from the
-   [latest release](https://github.com/Leo-Y-Zhang/ScrabbleEngine/releases/latest)
+   [latest release](https://github.com/Leo-Y-Zhang/TileFish/releases/latest)
    (Windows, macOS or Linux) and unzip it.
 2. **Start** `tilefish` (double-click `tilefish.exe` on Windows, `./tilefish` elsewhere)
    and type `play` to play it at full strength, or `help`.
@@ -806,7 +806,7 @@ its move lists against full generation (`verifyendgame`). `benchgen`, `benchsim`
 
 ## What changed in 2.2
 
-* **The browser version** ([leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)),
+* **The browser version** ([leo-y-zhang.github.io/TileFish](https://leo-y-zhang.github.io/TileFish/)),
   with Play, Practice, Two-player and Analyse modes, game clocks with the NASPA overtime
   rule, take-backs, saving and resuming, game review, and GCG import and export.
   Screenshots before and after: `docs/ui/`.

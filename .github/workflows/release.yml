@@ -111,7 +111,7 @@ jobs:
         run: |
           cat > notes.md <<'EOF'
           Tilefish, a crossword game engine. To play without installing anything, open
-          https://leo-y-zhang.github.io/ScrabbleEngine/ in any browser.
+          https://leo-y-zhang.github.io/TileFish/ in any browser.
 
           To run it on your computer, download the zip for your system, unzip it and
           follow QUICKSTART.txt inside:
