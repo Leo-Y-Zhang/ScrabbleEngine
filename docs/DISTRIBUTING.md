@@ -6,7 +6,7 @@ trouble. It is a careful summary, **not legal advice**: before selling Tilefish,
 in an app store or making a paid product of it, have an intellectual-property lawyer check
 it for the countries it will be sold in. Checked on 13 October 2026, when the owner asked for
 no risk and left the decisions below to the project: Collins and NWL are no longer fetched
-from anywhere, the repository and site are to be named Tilefish, the board has a palette of its own,
+from anywhere, the repository and site are named TileFish, the board has a palette of its own,
 and a lawyer's review is required before any paid or app-store version (not for the free site).
 
 ## In short
@@ -16,7 +16,7 @@ and a lawyer's review is required before any paid or app-store version (not for 
 | The engine and the page (`tilefish.cpp`, `web/`, `tools/`) | this project | none | GPL-3.0. All of it is this project's own code. |
 | The rules of the game, the board layout, tile values and counts | nobody | none | Rules and methods of play are ideas, which copyright does not protect (the US Copyright Office says so of games in general). |
 | The board's and tiles' appearance | Tilefish's own drawing | none | Artwork on a game's board or box can be protected; Tilefish draws its own board, tiles and icons, in its own colours, and copies no artwork. |
-| The SCRABBLE® name and logo | Hasbro (USA, Canada); J.W. Spear & Sons Ltd, a Mattel company (elsewhere) | very low | The product is named Tilefish (the repository and the site too, once renamed: below). The mark is used only to say whom the program is for, with ® and the notice. See [Trademarks](#trademarks). |
+| The SCRABBLE® name and logo | Hasbro (USA, Canada); J.W. Spear & Sons Ltd, a Mattel company (elsewhere) | very low | The product, the repository and the site are named Tilefish (TileFish). The mark is used only to say whom the program is for, with ® and the notice. See [Trademarks](#trademarks). |
 | ENABLE, OXENDICT, CEL | public domain; Kevin Atkinson (ESDB licence); Fj00 (MIT) | none | Bundled with their notices ([LEXICONS.md](../LEXICONS.md)). |
 | Collins Scrabble Words 2024, NWL2023 | HarperCollins; NASPA | none from Tilefish | Neither hosted nor fetched. A player who has a copy loads their own; it stays on their device. See [Tournament word lists](#tournament-word-lists). |
 | Leave values and win models for CSW24 and NWL23 | this project (learned by self-play) | none | GPL-3.0; numbers only, no words. |
@@ -44,15 +44,14 @@ What Tilefish does, and must keep doing:
 - **The notice** above, and "not affiliated with, sponsored or endorsed by", on the page,
   in the README, in the downloads and in any store listing.
 
-Two further steps, decided on 13 October 2026:
+Two further steps were taken on 13 October 2026:
 
-1. **The repository is to be renamed** from `ScrabbleEngine` to `Tilefish`, so that the mark
-   is in neither the project's name nor the site's address (then
-   `leo-y-zhang.github.io/Tilefish/`). Only the owner can do it: on GitHub, the repository's
-   Settings, General, Repository name, `Tilefish`, Rename. GitHub redirects the repository's
-   old address; the old site address stops working, so the site's address in the README,
-   QUICKSTART, the release notes and `web/index.html` changes with it. Settings and games
-   kept in a browser stay, as the site's origin is the same.
+1. **The repository was renamed** by the owner from `ScrabbleEngine` to `TileFish`, so the
+   mark is in neither the project's name nor the site's address, now
+   `leo-y-zhang.github.io/TileFish/`. GitHub redirects the repository's old address; the old
+   site address no longer works, so older links to it (shared game links among them) need
+   the new address. Settings and games kept in a browser stay, as the site's origin is the
+   same.
 2. **The board has its own colours.** The premium squares were coloured the usual way (red,
    pink, dark blue, light blue). They now use Tilefish's palette: terracotta for triple word,
    maple for double word, felt green for triple letter and sage for double letter, each
@@ -83,7 +82,7 @@ needs a licence. Ask:
 
 A letter can say, in your own words:
 
-> I maintain Tilefish (github.com/Leo-Y-Zhang/ScrabbleEngine), a free, open-source engine for
+> I maintain Tilefish (github.com/Leo-Y-Zhang/TileFish), a free, open-source engine for
 > practising and analysing the crossword board game, which runs in the browser with no
 > accounts, adverts or tracking. Players would like to use [Collins Scrabble Words 2024 /
 > the NASPA Word List 2023] in it. I would like a licence to include the list in the free
@@ -123,9 +122,8 @@ product needs:
 
 ## Before a wider release
 
-1. Rename the repository (above): the owner's one step.
-2. Nothing else is needed for the free site and downloads: every part in the table above is
+1. Nothing else is needed for the free site and downloads: every part in the table above is
    either the project's own, under a licence that allows it, or not provided.
-3. A licence from NASPA or HarperCollins is needed only to offer their lists built in (above).
-4. Before any paid or app-store version, have an intellectual-property lawyer review this page,
+2. A licence from NASPA or HarperCollins is needed only to offer their lists built in (above).
+3. Before any paid or app-store version, have an intellectual-property lawyer review this page,
    the store listing and the privacy statement, for the countries it will be sold in.

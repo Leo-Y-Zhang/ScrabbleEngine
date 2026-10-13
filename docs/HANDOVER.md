@@ -12,9 +12,9 @@ matches: 49.6% and 49.8% (both +/- 0.5), level; registered matches still use MAG
 `get-lexicon` scripts and their Windows CI job are gone; the strength tests fetch the lists
 and MAGPIE's leave values with `tools/research-lexicon.sh`, so registered matches keep their
 conditions. The board's bonus squares have Tilefish's own colours. The default list for new
-visitors is ENABLE. **Owner's step outstanding:** renaming the repository to Tilefish (the
-proxy refuses settings changes from a session); then change the site's address everywhere
-(CLAUDE.md lists where). A lawyer reviews any paid or app-store version first.
+visitors is ENABLE. The owner then renamed the repository to TileFish; the site is at
+https://leo-y-zhang.github.io/TileFish/ and every address was changed (PR #57). A lawyer reviews
+any paid or app-store version first.
 
 **13 October: word lists, trademarks and tournament rules (PRs #54 and #55).** No
 registered experiment ran, and **the default search is unchanged** (checksum `349.2837`).

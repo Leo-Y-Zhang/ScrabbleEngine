@@ -1,9 +1,8 @@
 # Working on Tilefish
 
 Tilefish is a Scrabble engine in one C++ file (`tilefish.cpp`) with a browser version
-(`web/`) published on GitHub Pages at https://leo-y-zhang.github.io/ScrabbleEngine/. The repository is
-to be renamed Tilefish (`docs/DISTRIBUTING.md`); after the owner renames it, change that
-address wherever it appears (README, QUICKSTART, release.yml, index.html's og:url, here).
+(`web/`) published on GitHub Pages at https://leo-y-zhang.github.io/TileFish/ (the repository,
+now Leo-Y-Zhang/TileFish, was called ScrabbleEngine until 13 October 2026).
 Read `docs/HANDOVER.md` before engine or experiment work.
 
 ## How the owner wants changes shipped

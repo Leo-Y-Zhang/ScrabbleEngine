@@ -2,7 +2,7 @@ Tilefish - a crossword game engine
 ==================================
 
 To play without installing anything, open
-     https://leo-y-zhang.github.io/ScrabbleEngine/
+     https://leo-y-zhang.github.io/TileFish/
 in any browser. This download is the full engine: every core, game review, analysis.
 
 1. Start Tilefish:

@@ -100,7 +100,7 @@ public repository, and release builds made from source on GitHub-hosted runners.
 done from here):
 
 1. Apply at signpath.org for SignPath Foundation's open-source programme, for
-   `github.com/Leo-Y-Zhang/ScrabbleEngine`, and wait for approval. Both the GitHub
+   `github.com/Leo-Y-Zhang/TileFish`, and wait for approval. Both the GitHub
    account and the SignPath account need two-factor authentication.
 2. In SignPath, once approved: create the project with slug `Tilefish`, connect
    GitHub as its trusted build system (SignPath's GitHub app on this repository), add
