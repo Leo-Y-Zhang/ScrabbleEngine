@@ -10,11 +10,12 @@ const COLS = "ABCDEFGHIJKLMNO";
 const VALUES = { A: 1, B: 3, C: 3, D: 2, E: 1, F: 4, G: 2, H: 4, I: 1, J: 8, K: 5, L: 1, M: 3, N: 1, O: 1, P: 3, Q: 10, R: 1, S: 1, T: 1, U: 1, V: 4, W: 4, X: 8, Y: 4, Z: 10 };
 const LEVEL_TIME = { beginner: 0, easy: 0, casual: 0, strong: 3, champion: 10 };
 const WEAK = new Set(["beginner", "easy"]);  // levels that choose among the static best moves in the page
-const LEX_NAME = { CSW24: "Collins 2024", NWL23: "NWL 2023", ENABLE: "ENABLE", OXENDICT: "Oxford spelling" };
-const BUNDLED = new Set(["ENABLE", "OXENDICT"]);  // free lists that come with the page
+const LEX_NAME = { CSW24: "Collins 2024", NWL23: "NWL 2023", CEL: "Common English", ENABLE: "ENABLE", OXENDICT: "Oxford spelling" };
+const BUNDLED = new Set(["CEL", "ENABLE", "OXENDICT"]);  // free lists that come with the page
 const NOTES = {
   CSW24: "Collins Scrabble Words, the World Championship list. About 10 MB, downloaded once and kept by this browser.",
   NWL23: "The North American tournament list. About 8 MB, downloaded once and kept by this browser.",
+  CEL: "The Common English Lexicon: about 68,000 everyday words, without the obscure ones tournament lists allow. A free list (MIT licence) that comes with Tilefish, good for friendly games and new players.",
   ENABLE: "A free public-domain list that comes with Tilefish.",
   OXENDICT: "British English in Oxford spelling (realize, colour), a free list that comes with Tilefish. Built from the English Speller Database: not the Oxford English Dictionary's own list.",
   beginner: "Plays short, everyday words, scores modestly and rarely bingos: a gentle game for learning.",
@@ -2563,7 +2564,7 @@ async function shareGame(g) {
   let url;
   try { url = location.href.split("#")[0] + "#game=" + (await packGame(g)); } catch (e) { toast("This game could not be put in a link."); return; }
   if (navigator.share && matchMedia("(pointer: coarse)").matches) {
-    try { await navigator.share({ title: "A game of Scrabble on Tilefish", url }); return; } catch (e) { if (e && e.name === "AbortError") return; }
+    try { await navigator.share({ title: "A game on Tilefish", url }); return; } catch (e) { if (e && e.name === "AbortError") return; }
   }
   try { await navigator.clipboard.writeText(url); }
   catch (e) {
@@ -3350,6 +3351,7 @@ $("file-in").onchange = async (e) => {
   const lexLine = text.match(/^#lexicon\s+(\S+)/m);
   if (lexLine && /^(CSW|NWL)/i.test(lexLine[1])) G.lexicon = /^CSW/i.test(lexLine[1]) ? "CSW24" : "NWL23";
   else if (lexLine && /^OXENDICT/i.test(lexLine[1])) G.lexicon = "OXENDICT";
+  else if (lexLine && /^(CEL|ECWL)/i.test(lexLine[1])) G.lexicon = "CEL";
   resetView();
   await withLoading(G.lexicon, async () => {
     if (wasBusy) await restartEngine();  // as in startGame: nothing still running for the old game carries on

@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Tilefish: play Scrabble against a strong engine</title>
-<meta name="description" content="Play, practise and analyse Scrabble against Tilefish, a strong open-source engine, in your browser. Collins, NWL, ENABLE or British English in Oxford spelling.">
+<title>Tilefish: a strong crossword game engine</title>
+<meta name="description" content="Play, practise and analyse the crossword board game against Tilefish, a strong open-source engine for SCRABBLE&reg; players, in your browser. Collins, NWL, Common English, ENABLE or British English in Oxford spelling.">
 <meta name="theme-color" content="#f3eee4" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#171512" media="(prefers-color-scheme: dark)">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://leo-y-zhang.github.io/ScrabbleEngine/">
-<meta property="og:title" content="Tilefish: play Scrabble against a strong engine">
+<meta property="og:title" content="Tilefish: a strong crossword game engine">
 <meta property="og:description" content="Play, practise and analyse in your browser. Free and open source; nothing to install.">
 <meta name="twitter:card" content="summary">
 <link rel="manifest" href="manifest.webmanifest">
@@ -63,7 +63,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
         <div class="coords-top" aria-hidden="true" id="coords-top"></div>
         <div class="coords-left" aria-hidden="true" id="coords-left"></div>
         <div class="board-wrap">
-          <div class="board" id="board" role="grid" aria-label="Scrabble board"></div>
+          <div class="board" id="board" role="grid" aria-label="Game board"></div>
         </div>
       </div>
       </div>
@@ -145,16 +145,17 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
     <a href="https://github.com/jvc56/MAGPIE-DATA">MAGPIE project's public data</a>
     (<a href="https://github.com/Leo-Y-Zhang/ScrabbleEngine/blob/main/LEXICONS.md">what that means</a>). ENABLE is public domain.
     The Oxford-spelling list is built from the English Speller Database, &copy; Kevin Atkinson, free to use and share; it
-    follows the Oxford English Dictionary's spelling but is not that dictionary's word list.
-    Scrabble is a trademark of Hasbro in the USA and Canada and of Mattel elsewhere.
-    Tilefish is an independent project, not affiliated with or endorsed by Hasbro, Mattel, HarperCollins, NASPA, Oxford University Press or Woogles.
+    follows the Oxford English Dictionary's spelling but is not that dictionary's word list. The Common English Lexicon (CEL)
+    is &copy; Fj00 under the MIT licence.
+    SCRABBLE&reg; is a registered trademark of Hasbro, Inc. in the USA and Canada and of J.W. Spear &amp; Sons Ltd, a subsidiary of Mattel, Inc., elsewhere.
+    Tilefish is an independent project, not affiliated with, sponsored or endorsed by Hasbro, Mattel, HarperCollins, NASPA, WESPA, the ABSP, Oxford University Press or Woogles.
   </footer>
 </div>
 
 <div class="sheet" id="start" role="dialog" aria-modal="true" aria-labelledby="start-title">
   <div class="card">
     <div class="card-head"><h2 class="card-title" id="start-title">Tilefish</h2><button class="link" id="btn-start-close" hidden>Close</button></div>
-    <p class="card-sub">Play, practise and analyse Scrabble against a strong engine.</p>
+    <p class="card-sub">Play, practise and analyse the crossword game against a strong engine.</p>
     <button class="puzzle-cta" id="btn-start-puzzle"><span class="pz-ico" aria-hidden="true">?</span><span><b>Daily puzzle</b><span class="dim"> Find the best move in one position.</span></span><span class="pz-go" aria-hidden="true">›</span></button>
     <div class="resume" id="resume" hidden>
       <div><b>Unfinished game</b> <span class="dim" id="resume-text"></span></div>
@@ -186,6 +187,7 @@ if (!self.crossOriginIsolated && "serviceWorker" in navigator && self.isSecureCo
       <div class="seg" data-name="lexicon" role="radiogroup" aria-labelledby="lbl-lex">
         <button data-v="CSW24">Collins 2024</button>
         <button data-v="NWL23">NWL 2023</button>
+        <button data-v="CEL">Common</button>
         <button data-v="ENABLE">ENABLE</button>
         <button data-v="OXENDICT">Oxford</button>
       </div>

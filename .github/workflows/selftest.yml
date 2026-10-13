@@ -33,6 +33,14 @@ jobs:
           grep -q "leave values: .*OXENDICT.klv2" ox.txt
           grep -q "win model from OXENDICT.win" ox.txt
           grep -q "All self-tests passed" ox.txt
+      - name: Self-test (CEL, the Common English Lexicon, with its own leave values and win model)
+        shell: bash
+        run: |
+          ./tilefish --threads 2 --lexicon CEL.txt "selftest quick" | tee celtest.txt
+          grep -q "lexicon CEL: 68135 words" celtest.txt
+          grep -q "leave values: .*CEL.klv2" celtest.txt
+          grep -q "win model from CEL.win" celtest.txt
+          grep -q "All self-tests passed" celtest.txt
       - name: Word-list export matches the source list
         if: runner.os == 'Linux'
         run: |
@@ -43,7 +51,7 @@ jobs:
           cmp words.txt kwgwords.txt && echo "savekwg: the .kwg holds the same 168551 words"
       - name: Referee script parses
         if: runner.os == 'Linux'
-        run: python3 -m py_compile tools/referee.py tools/analyze.py tools/positions.py tools/latecheck.py tools/keepfit.py tools/exactpeg.py tools/latebias.py tools/check_history.py tools/screen.py tools/report.py tools/make_oxendict.py
+        run: python3 -m py_compile tools/referee.py tools/analyze.py tools/positions.py tools/latecheck.py tools/keepfit.py tools/exactpeg.py tools/latebias.py tools/check_history.py tools/screen.py tools/report.py tools/make_oxendict.py tools/make_cel.py
       - name: Allocation study tool builds and replays (experiments section 13)
         if: runner.os == 'Linux'
         run: |

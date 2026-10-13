@@ -12,6 +12,8 @@ page does not claim one where none exists.
 | `CSW24.win`, `NWL23.win` | this project (fitted by self-play) | yes | bundled | GPL-3.0. They hold win probabilities only, not words. |
 | `OXENDICT.txt` (British English, Oxford spelling) | Kevin Atkinson (English Speller Database) | yes | bundled | ESDB's licence: free to use, copy, change, share and sell, keeping its notice ([below](#oxendict-british-english-in-oxford-spelling)). |
 | `OXENDICT.klv2`, `OXENDICT.win` | this project (learned by self-play) | yes | bundled | GPL-3.0. |
+| `CEL.txt` (Common English Lexicon) | Eric Smith (Fj00) and Kenji Matsumoto | yes | bundled | MIT licence: free to use, copy, change, share and sell, keeping its notice ([below](#cel-the-common-english-lexicon)). |
+| `CEL.klv2`, `CEL.win` | this project (learned by self-play) | yes | bundled | GPL-3.0. |
 | Collins Scrabble Words 2024 (`CSW24.kwg`) | HarperCollins | **no** | downloaded from [jvc56/MAGPIE-DATA](https://github.com/jvc56/MAGPIE-DATA), commit `adf2931`, SHA-256 checked | **None granted to this project.** |
 | NASPA Word List 2023 (`NWL23.kwg`) | NASPA | **no** | as above | **None granted to this project.** |
 | `CSW24.klv2`, `NWL23.klv2` (leave values) | the MAGPIE project | no | as above | MAGPIE-DATA declares no licence. |
@@ -62,6 +64,51 @@ ESDB is derived from many sources, most of them in the public domain; its primar
 are 12dicts and ENABLE2K, by Alan Beale and others. In the browser version the page serves
 `OXENDICT.txt` and its leave values from the Tilefish site itself, like ENABLE.
 
+## CEL: the Common English Lexicon
+
+`CEL.txt` is made by `tools/make_cel.py` from the Common English Lexicon,
+[github.com/Fj00/CEL](https://github.com/Fj00/CEL), pinned to commit `5836e95`: every word of
+2 to 15 letters (68,135). Eric Smith (Fj00) and Kenji Matsumoto (strataji) chose its words by
+how often they are used in books, articles and on the web, keeping words that are also valid
+in tournament play and leaving out expletives, slurs and obscure words. It is published under
+the MIT licence, which allows using, copying, changing, sharing and selling it provided the
+copyright and permission notice go with every copy. The notice is at the top of `CEL.txt` and
+is copied below. CEL is not made, checked or endorsed by HarperCollins, NASPA or Woogles. In
+the browser version the page serves `CEL.txt` (compiled) and its leave values from the
+Tilefish site itself, like ENABLE.
+
+> MIT License
+>
+> Copyright (c) 2021-2022 Fj00
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+## Which lists are current
+
+Checked on 13 October 2026. Collins Scrabble Words 2024 (CSW24, seventh edition, in WESPA
+tournament play since 1 January 2025) and the NASPA Word List 2023 (NWL2023, in NASPA play
+since 29 February 2024) are the latest editions of the two tournament lists; MAGPIE-DATA's
+latest commit (8 October 2026) has no newer English list. When a new edition appears there,
+the pinned commit and checksums in `get-lexicon.sh`, `get-lexicon.ps1` and `web/worker.js`
+are the places to change. Older editions (CSW21, NWL2020, TWL06 and earlier) are left out on
+purpose: no rated tournament uses them now.
+
 ## What this means
 
 Tilefish does not distribute either list. It points to a third-party copy and fetches it
@@ -69,6 +116,8 @@ when you ask. Many players and tools use that same copy, but neither HarperColli
 NASPA has given this project permission, and the MAGPIE-DATA repository states no licence.
 If you need certainty, for an event or a commercial use, obtain the list under licence from
 its publisher and load it with `--lexicon FILE` or the `lexicon` command. ENABLE needs no
-permission, and neither does OXENDICT, under ESDB's licence above. If a rights holder
+permission, and neither do OXENDICT, under ESDB's licence above, or CEL, under the MIT
+licence. [docs/DISTRIBUTING.md](docs/DISTRIBUTING.md) sets out what is safe to distribute
+and how to obtain the licences. If a rights holder
 objects, the download links in the scripts and in `web/worker.js` are the only places to
 change.

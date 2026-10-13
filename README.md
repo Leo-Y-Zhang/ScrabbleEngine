@@ -1,6 +1,6 @@
 # Tilefish
 
-*A championship-style Scrabble engine in one C++ file. Stockfish, but for tiles.*
+*A championship-style crossword game engine in one C++ file, for SCRABBLE® players. Stockfish, but for tiles.*
 
 ### ▶ **[Play it in your browser: leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**, nothing to install
 
@@ -61,8 +61,8 @@ the failures, is in
 ## Quick start
 
 **In your browser:** open **[leo-y-zhang.github.io/ScrabbleEngine](https://leo-y-zhang.github.io/ScrabbleEngine/)**.
-Nothing to install. Choose a mode, a word list (Collins 2024, NWL 2023, ENABLE, or Oxford:
-British English in Oxford spelling) and a clock:
+Nothing to install. Choose a mode, a word list (Collins 2024, NWL 2023, Common English,
+ENABLE, or Oxford: British English in Oxford spelling) and a clock:
 
 - **Play** against Tilefish (Casual, Strong or Champion) with no help.
 - **Practice** with hints (Tilefish's best moves, with what each keeps and an estimated winning
@@ -116,7 +116,8 @@ next to it, otherwise ENABLE, a free list that comes with it. For North American
 `get-lexicon.bat NWL23` or `sh get-lexicon.sh NWL23` fetches NWL23 instead, used with
 `tilefish --lexicon NWL23.kwg`. For British English in Oxford spelling, start
 `tilefish --lexicon OXENDICT.txt` or type `lexicon OXENDICT.txt` at the prompt; that list
-comes with Tilefish ([below](#british-english-in-oxford-spelling-oxendict)). The ready-made
+comes with Tilefish ([below](#british-english-in-oxford-spelling-oxendict)), and so does the
+Common English Lexicon (`--lexicon CEL.txt`, [below](#common-english-cel)). The ready-made
 programs run on any recent computer.
 
 **Windows and unsigned programs.** The downloads are not code-signed yet. SmartScreen's
@@ -143,12 +144,16 @@ Building from source (below) gives one tuned to your processor, which is somewha
 | `CSW24.win`, `NWL23.win` | Win-probability models for CSW24 and NWL23, each fitted on 100,000 self-play games (the word lists themselves are not included). |
 | `OXENDICT.txt` | British English in Oxford spelling (188,980 words), a free list built from the English Speller Database by `tools/make_oxendict.py`. |
 | `OXENDICT.klv2`, `OXENDICT.win` | Leave values and win model Tilefish learned for it by playing itself (800,000 self-play games). |
+| `CEL.txt` | The Common English Lexicon (68,135 everyday words), a free list (MIT licence) built by `tools/make_cel.py`. |
+| `CEL.klv2`, `CEL.win` | Leave values and win model Tilefish learned for it by playing itself (800,000 self-play games). |
 | `build.sh`, `build.bat` | One-line builds for Linux/macOS and Windows. |
 | `get-lexicon.sh`, `get-lexicon.bat`, `get-lexicon.ps1` | Download CSW24 (or NWL23) and its leave values, checked against known checksums. |
 | `LICENSE` | The GNU General Public License, version 3. |
 | `web/` | The browser version: the page, the worker that runs the engine (compiled to WebAssembly), `build.sh` and a test that plays whole games through it. |
 | `experiments/` | Every engine change screened against the frozen 2.1: hypothesis, setup, result, decision and raw logs, failures included. |
 | `tools/make_oxendict.py` | Rebuilds `OXENDICT.txt` from a pinned version of the English Speller Database. |
+| `tools/make_cel.py` | Rebuilds `CEL.txt` from a pinned version of the Common English Lexicon. |
+| `docs/DISTRIBUTING.md` | What may be shared freely, what needs permission, and how to obtain it. |
 | `tools/referee.py` | Neutral referee for engine-vs-engine matches (its own rules code, paired games, parallel play). |
 | `tools/analyze.py` | Statistics for the referee's raw logs: wins, draws, losses, Elo and spread with intervals over deal pairs, and match lengths. |
 | `tools/magpie_bot.c`, `tools/build_magpie_bot.sh` | Lets MAGPIE play through the same protocol, for head-to-head matches. |
@@ -444,6 +449,33 @@ the static player on this list (95% intervals):
 Training from ENABLE's values and from nothing ended level, so 800,000 games are enough
 for this list; ENABLE's leaves turn out to be as good here, being an English list of
 much the same words.
+
+### Common English (CEL)
+
+`CEL.txt` comes with Tilefish: the Common English Lexicon by Eric Smith and Kenji Matsumoto,
+68,135 everyday words of 2 to 15 letters, chosen by how often they are used in books,
+articles and on the web, and only words that are also valid in tournament play. It leaves out
+the obscure words tournament lists allow (QI and XI are in, but not AA or ZA) and expletives
+and slurs, so it suits friendly games and new players. It is published under the MIT
+licence; `tools/make_cel.py` rebuilds it from a pinned commit, and [LEXICONS.md](LEXICONS.md)
+has the terms.
+
+```sh
+./tilefish --lexicon CEL.txt          # loads CEL.klv2 / CEL.win from the same folder
+```
+
+Its leave values and win model were learned for this list by self-play: starting from
+ENABLE's leave values, `train games=100000 gens=8`, 800,000 games. Measured in matches of
+the static player on this list (95% intervals):
+
+| Leave values, A vs B | Games | A's win rate | A's spread per game |
+|---|---|---|---|
+| CEL's vs the built-in values (what a list without its own gets) | 40,000 | 52.6% ± 0.5 | +5.5 ± 0.9 |
+| CEL's vs ENABLE's | 40,000 | 51.6% ± 0.5 | +3.5 ± 0.9 |
+
+Unlike OXENDICT, a list about a third the size of ENABLE plays differently enough that
+ENABLE's values are measurably worse on it: with fewer hooks and plurals, an S is worth less
+(+5.7 against +7.4) and a Q costs less (-4.7 against -10.6).
 
 ## How strong is it?
 
@@ -855,7 +887,8 @@ Kevin Atkinson, under its permissive licence (the notice is at the top of the fi
 [LEXICONS.md](LEXICONS.md)).
 
 ---
-Scrabble is a trademark of Hasbro, Inc. in the USA and Canada and of Mattel elsewhere.
-Tilefish is an independent project. It is not affiliated with or endorsed by Hasbro, Mattel,
-HarperCollins, NASPA, Oxford University Press or Woogles.
+SCRABBLE® is a registered trademark of Hasbro, Inc. in the USA and Canada and of J.W. Spear &
+Sons Ltd, a subsidiary of Mattel, Inc., elsewhere. Tilefish is an independent project. It is
+not affiliated with, sponsored or endorsed by Hasbro, Mattel, HarperCollins, NASPA, WESPA, the
+ABSP, Oxford University Press or Woogles.
 ENABLE (Enhanced North American Benchmark Lexicon) is in the public domain.

@@ -1,7 +1,7 @@
 {
   "name": "Tilefish",
   "short_name": "Tilefish",
-  "description": "Play, practise and analyse Scrabble against a strong engine. Works offline once opened.",
+  "description": "Play, practise and analyse the crossword game against a strong engine. Works offline once opened.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

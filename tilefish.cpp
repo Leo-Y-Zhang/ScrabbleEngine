@@ -9008,7 +9008,7 @@ int main(int argc, char** argv) {
   std::streambuf* saved = nullptr;
   std::ostringstream sink;
   if (quiet) saved = std::cout.rdbuf(sink.rdbuf());  // silence start-up messages
-  std::cout << "Tilefish 2.2 - Scrabble engine (" << app.threads << " threads)\n";
+  std::cout << "Tilefish 2.2 - crossword game engine (" << app.threads << " threads)\n";
   if (lexpath.empty()) {
     // A tournament lexicon placed in the folder wins over the bundled ENABLE list.  The
     // folder is the current one or else the program's own, since a program started by
