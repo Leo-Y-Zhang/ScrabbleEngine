@@ -22,6 +22,9 @@ Read `docs/HANDOVER.md` before engine or experiment work.
   The strength tests may still fetch the lists onto GitHub's machines for a job
   (`tools/research-lexicon.sh`); nothing from them is published.
 - No word lookup in the app: it would be a cheat during play.
+- No personal details of the owner anywhere in the project (files, page, commit messages);
+  name the project, not the person. See `docs/DISTRIBUTING.md` on moving the repository to an
+  organisation.
 
 ## Build and check
 - Native: `g++ -O2 -std=c++17 -pthread -Wall -Werror tilefish.cpp -o tilefish` (CI also

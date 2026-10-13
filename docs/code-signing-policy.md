@@ -14,8 +14,7 @@ and no third-party program, is signed under this policy.
 
 ## Team roles
 
-- **Committers and reviewers:** the members of the `Leo-Y-Zhang` GitHub account with write
-  access to this repository.
+- **Committers and reviewers:** the people with write access to this repository.
 - **Approvers:** the repository owner. Every signing request is approved by hand in
   SignPath before a release is signed.
 

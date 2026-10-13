@@ -120,10 +120,33 @@ product needs:
   finder; its analysis is for practice and review, as tournament rules forbid electronic aids
   during play.
 
+## Keeping the maintainer's name out of it
+
+The code, the data, the page and the downloads hold no personal details of anyone who works
+on Tilefish, and the page collects none from players. Two things still tie the project to the
+personal GitHub account that holds it:
+
+- **The address.** A repository under a personal account is served at
+  `<account>.github.io/<repository>/`, so the account's name is in the site's address and on
+  the repository's page.
+- **Commit authors.** Commits and merges made through that account show its display name
+  (with GitHub's private no-reply address, not a real email).
+
+To separate the project from the person, the owner can create a free GitHub organisation (for
+example `tilefish-app`) and transfer the repository to it: on GitHub, Settings, General,
+Danger zone, Transfer ownership. GitHub redirects the repository's old addresses; the site
+moves to `<organisation>.github.io/TileFish/`, and the address in the files changes again
+(CLAUDE.md lists where). Changing the account's public display name also changes how future
+commits and merges show. Past commits keep their author names: removing them would mean
+rewriting the project's whole history, which breaks every existing copy and link, and GitHub
+can keep old commits reachable for some time, so it is not recommended.
+
 ## Before a wider release
 
-1. Nothing else is needed for the free site and downloads: every part in the table above is
+1. Optionally, move the repository to an organisation (above), to keep a personal name out of
+   its address.
+2. Nothing else is needed for the free site and downloads: every part in the table above is
    either the project's own, under a licence that allows it, or not provided.
-2. A licence from NASPA or HarperCollins is needed only to offer their lists built in (above).
-3. Before any paid or app-store version, have an intellectual-property lawyer review this page,
+3. A licence from NASPA or HarperCollins is needed only to offer their lists built in (above).
+4. Before any paid or app-store version, have an intellectual-property lawyer review this page,
    the store listing and the privacy statement, for the countries it will be sold in.
