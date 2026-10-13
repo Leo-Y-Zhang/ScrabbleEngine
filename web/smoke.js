@@ -17,7 +17,7 @@ Tilefish().then((m) => {
   const data = path.join(__dirname, "dist", "data");
   m.FS.mkdir("/data");
   // The gzipped copies the page downloads unpack to exactly the files themselves.
-  for (const f of ["ENABLE.kwg", "ENABLE.klv2", "OXENDICT.kwg", "OXENDICT.klv2"])
+  for (const f of ["ENABLE.kwg", "ENABLE.klv2", "OXENDICT.kwg", "OXENDICT.klv2", "CEL.kwg", "CEL.klv2"])
     check(Buffer.compare(require("zlib").gunzipSync(fs.readFileSync(path.join(data, f + ".gz"))), fs.readFileSync(path.join(data, f))) === 0, f + ".gz unpacks to " + f);
   // The files the page loads: the free lists compiled to .kwg by web/build.sh.
   for (const f of ["ENABLE.kwg", "ENABLE.klv2", "ENABLE.win"]) m.FS.writeFile("/data/" + f, fs.readFileSync(path.join(data, f)));
@@ -139,6 +139,18 @@ Tilefish().then((m) => {
     check(r.ok, "OXENDICT: engine move: " + r.error);
   }
   console.log("OXENDICT: " + r.state.you + "-" + r.state.bot + " after 4 moves each");
+  // So does the Common English Lexicon.
+  for (const f of ["CEL.kwg", "CEL.klv2", "CEL.win"]) m.FS.writeFile("/data/" + f, fs.readFileSync(path.join(data, f)));
+  const cel = run("lexicon /data/CEL.kwg");
+  check(/CEL: 68135 words/.test(cel) && /CEL\.klv2/.test(cel) && /CEL\.win/.test(cel), "CEL loads with its leaves and win model");
+  r = ui("new first 6");
+  for (let k = 0; k < 4 && !r.state.over; k++) {
+    const h = ui("hint 0.2");
+    check(h.ok && ui("move " + h.hint.best).ok, "CEL: hint move is accepted");
+    r = ui("bot sim:time=0.2");
+    check(r.ok, "CEL: engine move: " + r.error);
+  }
+  console.log("CEL: " + r.state.you + "-" + r.state.bot + " after 4 moves each");
   // The multi-core build (used where the page is cross-origin isolated) gives the same
   // fixed-work checksum on one thread and on two, and plays through the ui commands.
   const single = run("lexicon /data/ENABLE.kwg") && run("benchsim 0 1 1000").match(/checksum ([\d.-]+)/)[1];

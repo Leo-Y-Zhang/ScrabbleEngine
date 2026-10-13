@@ -81,7 +81,7 @@ jobs:
           else
             cp tilefish get-lexicon.sh "$PKG/"
           fi
-          cp ENABLE.txt ENABLE.leaves ENABLE.win CSW24.win NWL23.win OXENDICT.txt OXENDICT.klv2 OXENDICT.win README.md LEXICONS.md LICENSE \
+          cp ENABLE.txt ENABLE.leaves ENABLE.win CSW24.win NWL23.win OXENDICT.txt OXENDICT.klv2 OXENDICT.win CEL.txt CEL.klv2 CEL.win README.md LEXICONS.md LICENSE \
             tools/release/QUICKSTART.txt "$PKG/"
           if [ "$RUNNER_OS" = Windows ]; then 7z a -tzip "$PKG.zip" "$PKG" > /dev/null; else zip -qr "$PKG.zip" "$PKG"; fi
       - name: The CSW24 download works, and the engine picks it up
@@ -117,7 +117,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'EOF'
-          Tilefish, a Scrabble engine. To play without installing anything, open
+          Tilefish, a crossword game engine. To play without installing anything, open
           https://leo-y-zhang.github.io/ScrabbleEngine/ in any browser.
 
           To run it on your computer, download the zip for your system, unzip it and

@@ -37,7 +37,7 @@ if ((self.name || "").startsWith("em-pthread")) {
 
   // Word lists.  Collins and NWL are copyrighted and not hosted here: like
   // get-lexicon.sh, the page fetches them from the MAGPIE project's public data,
-  // pinned to one commit.  ENABLE and OXENDICT are free and come with the page, compiled
+  // pinned to one commit.  CEL, ENABLE and OXENDICT are free and come with the page, compiled
   // to .kwg by web/build.sh (several times faster to load than building from the text)
   // and gzipped, which this worker unpacks where the browser can (DecompressionStream).
   // Each file: [name in the engine's file system, URL, rough size on the wire].
@@ -47,6 +47,7 @@ if ((self.name || "").startsWith("em-pthread")) {
   const LISTS = {
     CSW24: { main: "CSW24.kwg", files: [["CSW24.kwg", MAGPIE + "CSW24.kwg", 5.97e6], ["CSW24.klv2", MAGPIE + "CSW24.klv2", 3.67e6], ["CSW24.win", "data/CSW24.win" + DATA, 2e3]] },
     NWL23: { main: "NWL23.kwg", files: [["NWL23.kwg", MAGPIE + "NWL23.kwg", 4.72e6], ["NWL23.klv2", MAGPIE + "NWL23.klv2", 3.67e6], ["NWL23.win", "data/NWL23.win" + DATA, 2e3]] },
+    CEL: { main: "CEL.kwg", files: [site("CEL.kwg", 1.45e6, 1.06e6), site("CEL.klv2", 3.67e6, 2.71e6), ["CEL.win", "data/CEL.win" + DATA, 2e3]] },
     ENABLE: { main: "ENABLE.kwg", files: [site("ENABLE.kwg", 3.19e6, 2.36e6), site("ENABLE.klv2", 3.67e6, 2.76e6), ["ENABLE.win", "data/ENABLE.win" + DATA, 2e3]] },
     OXENDICT: { main: "OXENDICT.kwg", files: [site("OXENDICT.kwg", 3.68e6, 2.73e6), site("OXENDICT.klv2", 3.67e6, 2.75e6), ["OXENDICT.win", "data/OXENDICT.win" + DATA, 2e3]] },
   };
